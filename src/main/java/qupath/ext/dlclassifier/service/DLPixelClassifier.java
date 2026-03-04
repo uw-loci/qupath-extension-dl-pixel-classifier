@@ -79,8 +79,7 @@ public class DLPixelClassifier implements PixelClassifier {
     private final int inputPadding;
 
     /** Probability map cache and tile boundary blending. */
-    private final TileBlendCache blendCache = new TileBlendCache(100,
-            () -> OverlayService.getInstance().refreshOverlayForBlending());
+    private final TileBlendCache blendCache;
 
     /** Cached channel config with precomputed normalization stats (lazy init). */
     private volatile ChannelConfiguration channelConfigWithStats;
@@ -104,6 +103,8 @@ public class DLPixelClassifier implements PixelClassifier {
         this.downsample = metadata.getDownsample();
         this.contextScale = metadata.getContextScale();
         this.inputPadding = computeOverlayPadding(inferenceConfig.getTileSize());
+        this.blendCache = new TileBlendCache(100, inputPadding,
+                () -> OverlayService.getInstance().refreshOverlayForBlending());
         this.pixelMetadata = buildPixelMetadata(imageData);
         this.colorModel = buildColorModel();
         this.backend = BackendFactory.getBackend();
