@@ -34,6 +34,7 @@ from pathlib import Path
 from dlclassifier_server.services.training_service import (
     TrainingService, SegmentationDataset
 )
+from dlclassifier_server.utils.batchrenorm import replace_bn_with_batchrenorm
 
 # Set up cancellation bridge
 cancel_flag = threading.Event()
@@ -70,25 +71,40 @@ try:
     for entry in patches_meta:
         meta_by_filename[entry["filename"]] = entry
 
-    # Load model
+    # Load model metadata to get correct architecture config
+    model_dir = Path(model_path)
+    model_metadata_path = model_dir / "metadata.json"
+    model_arch = dict(architecture)  # start with what was passed
+    if model_metadata_path.exists():
+        with open(model_metadata_path) as f:
+            model_metadata = json.load(f)
+        # Use the saved architecture config (includes use_batchrenorm, etc.)
+        saved_arch = model_metadata.get("architecture", {})
+        model_arch.update(saved_arch)
+        logger.info("Loaded model metadata from %s", model_metadata_path)
+
     training_service = TrainingService(gpu_manager=gpu_manager)
     num_channels = input_config.get("num_channels", 3)
-    context_scale = architecture.get("context_scale", 1)
+    context_scale = model_arch.get("context_scale", 1)
     if context_scale > 1:
         num_channels = num_channels * 2
     num_classes = len(classes)
-    model_type = architecture.get("type", "unet")
+    model_type = model_arch.get("type", "unet")
 
     # Use the same model creation logic as training
     model = training_service._create_model(
         model_type=model_type,
-        architecture=architecture,
+        architecture=model_arch,
         num_channels=num_channels,
         num_classes=num_classes
     )
 
+    # Replace BatchNorm with BatchRenorm if the model was trained with it
+    if model_arch.get("use_batchrenorm", False):
+        replace_bn_with_batchrenorm(model)
+        logger.info("Applied BatchRenorm replacement for evaluation")
+
     # Load trained weights
-    model_dir = Path(model_path)
     pt_path = model_dir / "model.pt"
     if pt_path.exists():
         state_dict = torch.load(pt_path, map_location='cpu', weights_only=True)

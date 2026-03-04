@@ -180,6 +180,13 @@ try:
                 classes=num_classes
             )
 
+            # Replace BatchNorm with BatchRenorm if model was trained with it
+            if arch.get("use_batchrenorm", False):
+                from dlclassifier_server.utils.batchrenorm import (
+                    replace_bn_with_batchrenorm)
+                replace_bn_with_batchrenorm(model)
+                logger.info("Applied BatchRenorm replacement for inference")
+
             model.load_state_dict(state_dict)
             model = model.to(self.device)
             model.eval()
