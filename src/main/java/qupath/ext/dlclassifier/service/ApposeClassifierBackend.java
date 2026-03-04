@@ -496,6 +496,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             String backbone,
             Map<String, Object> inputConfig,
             List<String> classNames,
+            Map<String, Integer> classColors,
             Consumer<ClassifierClient.EvaluationProgress> progressCallback,
             Supplier<Boolean> cancelledCheck) throws IOException {
 
@@ -517,6 +518,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         inputs.put("architecture", archMap);
         inputs.put("input_config", inputConfig);
         inputs.put("classes", classNames);
+        if (classColors != null && !classColors.isEmpty()) {
+            inputs.put("class_colors", classColors);
+        }
 
         ClassLoader extensionCL = ApposeService.class.getClassLoader();
         ClassLoader originalCL = Thread.currentThread().getContextClassLoader();
@@ -606,6 +610,11 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 }
             }
 
+            String disagreementImagePath = obj.has("disagreement_image") && !obj.get("disagreement_image").isJsonNull()
+                    ? obj.get("disagreement_image").getAsString() : null;
+            String tileImagePath = obj.has("tile_image") && !obj.get("tile_image").isJsonNull()
+                    ? obj.get("tile_image").getAsString() : null;
+
             results.add(new ClassifierClient.TileEvaluationResult(
                     obj.has("filename") ? obj.get("filename").getAsString() : "",
                     obj.has("split") ? obj.get("split").getAsString() : "",
@@ -616,7 +625,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     obj.has("x") ? obj.get("x").getAsInt() : 0,
                     obj.has("y") ? obj.get("y").getAsInt() : 0,
                     obj.has("source_image") ? obj.get("source_image").getAsString() : "",
-                    obj.has("source_image_id") ? obj.get("source_image_id").getAsString() : ""
+                    obj.has("source_image_id") ? obj.get("source_image_id").getAsString() : "",
+                    disagreementImagePath,
+                    tileImagePath
             ));
         }
 

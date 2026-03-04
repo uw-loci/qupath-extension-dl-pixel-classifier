@@ -11,7 +11,11 @@ import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Rectangle;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.slf4j.Logger;
@@ -19,8 +23,14 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.viewer.QuPathViewer;
-import qupath.lib.projects.ProjectImageEntry;
+import qupath.lib.objects.PathObject;
+import qupath.lib.objects.PathObjects;
+import qupath.lib.objects.classes.PathClass;
+import qupath.lib.regions.ImagePlane;
+import qupath.lib.roi.ROIs;
 
+import java.io.File;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -28,8 +38,9 @@ import java.util.Map;
  * Modeless dialog showing per-tile evaluation results from post-training analysis.
  * <p>
  * Displays tiles sorted by loss (descending) to help users identify annotation
- * errors, hard cases, and model failures. Double-clicking a row navigates the
- * QuPath viewer to the tile location.
+ * errors, hard cases, and model failures. Selecting a row navigates the
+ * QuPath viewer to the tile location and shows a highlight rectangle.
+ * A preview pane shows the disagreement map overlay.
  *
  * @author UW-LOCI
  * @since 0.3.0
@@ -44,6 +55,16 @@ public class TrainingAreaIssuesDialog {
     private final FilteredList<TileRow> filteredRows;
     private final Label summaryLabel;
     private final double downsample;
+    private final Map<String, Integer> classColors;
+
+    // Feature 1: tile highlight tracking
+    private PathObject currentHighlight;
+    private qupath.lib.images.ImageData<?> highlightImageData;
+
+    // Feature 3: preview pane components
+    private final ImageView tileImageView;
+    private final ImageView disagreeImageView;
+    private final VBox legendBox;
 
     /**
      * Creates the training area issues dialog.
@@ -51,11 +72,14 @@ public class TrainingAreaIssuesDialog {
      * @param classifierName name of the classifier for the title
      * @param results        per-tile evaluation results sorted by loss descending
      * @param downsample     downsample factor used during training
+     * @param classColors    map of class name to packed RGB color, or null
      */
     public TrainingAreaIssuesDialog(String classifierName,
                                     List<ClassifierClient.TileEvaluationResult> results,
-                                    double downsample) {
+                                    double downsample,
+                                    Map<String, Integer> classColors) {
         this.downsample = downsample;
+        this.classColors = classColors != null ? classColors : Map.of();
         this.stage = new Stage();
         stage.initStyle(StageStyle.DECORATED);
         stage.setTitle("Training Area Issues - " + classifierName);
@@ -130,36 +154,93 @@ public class TrainingAreaIssuesDialog {
         iouCol.setPrefWidth(65);
         iouCol.setCellFactory(col -> new FormattedDoubleCell<>("%.3f"));
 
+        // Feature 2: Worst Class column
+        TableColumn<TileRow, String> worstClassCol = new TableColumn<>("Worst Class");
+        worstClassCol.setCellValueFactory(new PropertyValueFactory<>("worstClass"));
+        worstClassCol.setPrefWidth(120);
+
         TableColumn<TileRow, String> classesCol = new TableColumn<>("Classes");
         classesCol.setCellValueFactory(new PropertyValueFactory<>("classesPresent"));
         classesCol.setPrefWidth(150);
 
-        table.getColumns().addAll(List.of(imageCol, splitCol, lossCol, disagreeCol, iouCol, classesCol));
+        table.getColumns().addAll(List.of(imageCol, splitCol, lossCol, disagreeCol,
+                iouCol, worstClassCol, classesCol));
         table.getSortOrder().add(lossCol);
 
-        // Double-click to navigate
-        table.setRowFactory(tv -> {
-            TableRow<TileRow> row = new TableRow<>();
-            row.setOnMouseClicked(event -> {
-                if (event.getClickCount() == 2 && !row.isEmpty()) {
-                    navigateToTile(row.getItem());
-                }
-            });
-            return row;
+        // Feature 1: Single-click selection navigates to tile
+        table.getSelectionModel().selectedItemProperty().addListener((obs, oldRow, newRow) -> {
+            if (newRow != null) {
+                navigateToTile(newRow);
+                updatePreview(newRow);
+            } else {
+                clearPreview();
+            }
         });
 
         // Status bar
-        Label statusLabel = new Label("Double-click a row to navigate to the tile location");
+        Label statusLabel = new Label("Select a row to navigate to the tile location");
         statusLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
 
-        // Layout
-        VBox root = new VBox(10);
-        root.setPadding(new Insets(15));
-        root.getChildren().addAll(summaryLabel, filterBox, table, statusLabel);
-        VBox.setVgrow(table, Priority.ALWAYS);
+        // Feature 3: Preview pane
+        tileImageView = new ImageView();
+        tileImageView.setFitWidth(256);
+        tileImageView.setFitHeight(256);
+        tileImageView.setPreserveRatio(true);
+        tileImageView.setSmooth(false); // nearest-neighbor for sharp pixel view
 
-        Scene scene = new Scene(root, 650, 500);
+        disagreeImageView = new ImageView();
+        disagreeImageView.setFitWidth(256);
+        disagreeImageView.setFitHeight(256);
+        disagreeImageView.setPreserveRatio(true);
+        disagreeImageView.setSmooth(false);
+        disagreeImageView.setOpacity(0.6);
+
+        StackPane previewStack = new StackPane(tileImageView, disagreeImageView);
+        previewStack.setStyle("-fx-background-color: #222; -fx-border-color: #666; -fx-border-width: 1;");
+        previewStack.setPrefSize(260, 260);
+        previewStack.setMaxSize(260, 260);
+        previewStack.setMinSize(260, 260);
+
+        Label opacityLabel = new Label("Overlay: 60%");
+        Slider opacitySlider = new Slider(0, 100, 60);
+        opacitySlider.setPrefWidth(200);
+        opacitySlider.setShowTickLabels(true);
+        opacitySlider.setMajorTickUnit(25);
+        opacitySlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+            double opacity = newVal.doubleValue() / 100.0;
+            disagreeImageView.setOpacity(opacity);
+            opacityLabel.setText(String.format("Overlay: %.0f%%", newVal.doubleValue()));
+        });
+
+        legendBox = new VBox(3);
+        legendBox.setPadding(new Insets(5, 0, 0, 0));
+        buildLegend();
+
+        Label previewTitle = new Label("Disagreement Preview");
+        previewTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;");
+
+        VBox previewPane = new VBox(8, previewTitle, previewStack, opacityLabel, opacitySlider, legendBox);
+        previewPane.setPadding(new Insets(0, 0, 0, 10));
+        previewPane.setAlignment(Pos.TOP_CENTER);
+        previewPane.setMinWidth(280);
+        previewPane.setPrefWidth(280);
+        previewPane.setMaxWidth(280);
+
+        // Layout: table on left, preview on right
+        VBox tablePane = new VBox(10, summaryLabel, filterBox, table, statusLabel);
+        tablePane.setPadding(new Insets(15));
+        VBox.setVgrow(table, Priority.ALWAYS);
+        HBox.setHgrow(tablePane, Priority.ALWAYS);
+
+        HBox mainLayout = new HBox(0, tablePane, previewPane);
+        mainLayout.setPadding(new Insets(0, 10, 10, 0));
+        HBox.setHgrow(tablePane, Priority.ALWAYS);
+
+        Scene scene = new Scene(mainLayout, 960, 550);
         stage.setScene(scene);
+
+        // Clean up highlight on close
+        stage.setOnHidden(e -> removeCurrentHighlight());
     }
 
     /**
@@ -233,7 +314,6 @@ public class TrainingAreaIssuesDialog {
         QuPathViewer viewer = qupath.getViewer();
         if (viewer == null) return;
 
-        // Center on the tile (x, y are top-left corner in full-res coordinates)
         var imageData = viewer.getImageData();
         if (imageData == null) return;
 
@@ -246,7 +326,132 @@ public class TrainingAreaIssuesDialog {
 
         viewer.setCenterPixelLocation(centerX, centerY);
         viewer.setDownsampleFactor(downsample);
+
+        // Feature 1: Add highlight rectangle
+        addTileHighlight(imageData, row.getX(), row.getY(), regionSize);
     }
+
+    /**
+     * Adds a temporary Region* rectangle annotation at the tile boundary.
+     */
+    private void addTileHighlight(qupath.lib.images.ImageData<?> imageData,
+                                  int tileX, int tileY, double regionSize) {
+        removeCurrentHighlight();
+
+        try {
+            var roi = ROIs.createRectangleROI(tileX, tileY, regionSize, regionSize,
+                    ImagePlane.getDefaultPlane());
+            var highlight = PathObjects.createAnnotationObject(roi,
+                    PathClass.fromString("Region*"));
+            highlight.setLocked(true);
+
+            var hierarchy = imageData.getHierarchy();
+            hierarchy.addObject(highlight);
+            hierarchy.getSelectionModel().setSelectedObject(highlight);
+
+            currentHighlight = highlight;
+            highlightImageData = imageData;
+        } catch (Exception e) {
+            logger.debug("Failed to create tile highlight: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Removes the current highlight rectangle from the hierarchy.
+     */
+    private void removeCurrentHighlight() {
+        if (currentHighlight != null && highlightImageData != null) {
+            try {
+                highlightImageData.getHierarchy().removeObject(currentHighlight, false);
+            } catch (Exception e) {
+                logger.debug("Failed to remove highlight: {}", e.getMessage());
+            }
+            currentHighlight = null;
+            highlightImageData = null;
+        }
+    }
+
+    // ==================== Feature 3: Preview ====================
+
+    /**
+     * Updates the preview pane with tile and disagreement images.
+     */
+    private void updatePreview(TileRow row) {
+        String tilePath = row.getTileImagePath();
+        String disagreePath = row.getDisagreementImagePath();
+
+        if (tilePath != null && !tilePath.isEmpty()) {
+            try {
+                File tileFile = new File(tilePath);
+                if (tileFile.exists()) {
+                    Image tileImage = new Image(tileFile.toURI().toString());
+                    tileImageView.setImage(tileImage);
+                } else {
+                    tileImageView.setImage(null);
+                }
+            } catch (Exception e) {
+                logger.debug("Failed to load tile image: {}", e.getMessage());
+                tileImageView.setImage(null);
+            }
+        } else {
+            tileImageView.setImage(null);
+        }
+
+        if (disagreePath != null && !disagreePath.isEmpty()) {
+            try {
+                File disagreeFile = new File(disagreePath);
+                if (disagreeFile.exists()) {
+                    Image disagreeImage = new Image(disagreeFile.toURI().toString());
+                    disagreeImageView.setImage(disagreeImage);
+                } else {
+                    disagreeImageView.setImage(null);
+                }
+            } catch (Exception e) {
+                logger.debug("Failed to load disagreement image: {}", e.getMessage());
+                disagreeImageView.setImage(null);
+            }
+        } else {
+            disagreeImageView.setImage(null);
+        }
+    }
+
+    private void clearPreview() {
+        tileImageView.setImage(null);
+        disagreeImageView.setImage(null);
+    }
+
+    /**
+     * Builds the color legend from class colors.
+     */
+    private void buildLegend() {
+        legendBox.getChildren().clear();
+        if (classColors.isEmpty()) return;
+
+        Label legendTitle = new Label("Class Colors:");
+        legendTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #888;");
+        legendBox.getChildren().add(legendTitle);
+
+        for (Map.Entry<String, Integer> entry : classColors.entrySet()) {
+            int packed = entry.getValue() & 0xFFFFFF;
+            int r = (packed >> 16) & 0xFF;
+            int g = (packed >> 8) & 0xFF;
+            int b = packed & 0xFF;
+
+            Rectangle swatch = new Rectangle(12, 12);
+            swatch.setFill(Color.rgb(r, g, b));
+            swatch.setStroke(Color.gray(0.5));
+            swatch.setStrokeWidth(0.5);
+
+            Label name = new Label(entry.getKey());
+            name.setStyle("-fx-font-size: 11px;");
+
+            HBox legendItem = new HBox(5, swatch, name);
+            legendItem.setAlignment(Pos.CENTER_LEFT);
+            legendBox.getChildren().add(legendItem);
+        }
+    }
+
+    // ==================== Helper Classes ====================
 
     /**
      * Table cell that formats doubles with a format string.
@@ -286,9 +491,12 @@ public class TrainingAreaIssuesDialog {
         private final DoubleProperty disagreementPct;
         private final DoubleProperty meanIoU;
         private final StringProperty classesPresent;
+        private final StringProperty worstClass;
         private final IntegerProperty x;
         private final IntegerProperty y;
         private final StringProperty filename;
+        private final StringProperty disagreementImagePath;
+        private final StringProperty tileImagePath;
 
         public TileRow(ClassifierClient.TileEvaluationResult result) {
             this.sourceImage = new SimpleStringProperty(result.sourceImage());
@@ -300,18 +508,28 @@ public class TrainingAreaIssuesDialog {
             this.x = new SimpleIntegerProperty(result.x());
             this.y = new SimpleIntegerProperty(result.y());
             this.filename = new SimpleStringProperty(result.filename());
+            this.disagreementImagePath = new SimpleStringProperty(result.disagreementImagePath());
+            this.tileImagePath = new SimpleStringProperty(result.tileImagePath());
 
             // Build classes present string from per-class IoU
             StringBuilder classes = new StringBuilder();
+            String worst = "";
+            double worstIoU = Double.MAX_VALUE;
             if (result.perClassIoU() != null) {
                 for (Map.Entry<String, Double> entry : result.perClassIoU().entrySet()) {
                     if (entry.getValue() != null) {
                         if (classes.length() > 0) classes.append(", ");
                         classes.append(entry.getKey());
+                        if (entry.getValue() < worstIoU) {
+                            worstIoU = entry.getValue();
+                            worst = entry.getKey();
+                        }
                     }
                 }
             }
             this.classesPresent = new SimpleStringProperty(classes.toString());
+            this.worstClass = new SimpleStringProperty(
+                    worst.isEmpty() ? "" : String.format("%s (%.2f)", worst, worstIoU));
         }
 
         public String getSourceImage() { return sourceImage.get(); }
@@ -334,9 +552,15 @@ public class TrainingAreaIssuesDialog {
         public String getClassesPresent() { return classesPresent.get(); }
         public StringProperty classesPresentProperty() { return classesPresent; }
 
+        public String getWorstClass() { return worstClass.get(); }
+        public StringProperty worstClassProperty() { return worstClass; }
+
         public int getX() { return x.get(); }
         public int getY() { return y.get(); }
 
         public String getFilename() { return filename.get(); }
+
+        public String getDisagreementImagePath() { return disagreementImagePath.get(); }
+        public String getTileImagePath() { return tileImagePath.get(); }
     }
 }

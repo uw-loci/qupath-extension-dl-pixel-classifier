@@ -226,7 +226,9 @@ public class ClassifierClient {
             int x,
             int y,
             String sourceImage,
-            String sourceImageId
+            String sourceImageId,
+            String disagreementImagePath,
+            String tileImagePath
     ) {}
 
     /**

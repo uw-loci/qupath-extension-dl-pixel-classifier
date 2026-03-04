@@ -234,6 +234,7 @@ public interface ClassifierBackend {
      * @param backbone         encoder backbone name (e.g. "resnet34")
      * @param inputConfig      channel configuration as map
      * @param classNames       list of class names
+     * @param classColors      map of class name to packed RGB color, or null
      * @param progressCallback callback for progress updates
      * @param cancelledCheck   supplier that returns true when cancelled
      * @return list of per-tile evaluation results sorted by loss descending
@@ -246,6 +247,7 @@ public interface ClassifierBackend {
             String backbone,
             Map<String, Object> inputConfig,
             List<String> classNames,
+            Map<String, Integer> classColors,
             Consumer<ClassifierClient.EvaluationProgress> progressCallback,
             Supplier<Boolean> cancelledCheck) throws IOException;
 

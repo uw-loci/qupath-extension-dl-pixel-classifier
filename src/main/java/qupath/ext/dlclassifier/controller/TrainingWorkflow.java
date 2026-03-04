@@ -450,6 +450,7 @@ public class TrainingWorkflow {
                             trainingConfig.getBackbone(),
                             inputConfig,
                             classNames,
+                            classColors,
                             evalProgress -> {
                                 progress.setDetail(evalProgress.message());
                                 double pct = evalProgress.totalTiles() > 0
@@ -467,7 +468,8 @@ public class TrainingWorkflow {
                     // Open the results dialog on the FX thread
                     Platform.runLater(() -> {
                         TrainingAreaIssuesDialog dialog = new TrainingAreaIssuesDialog(
-                                classifierName, results, trainingConfig.getDownsample());
+                                classifierName, results, trainingConfig.getDownsample(),
+                                classColors);
                         dialog.show();
                     });
                 } catch (Exception e) {

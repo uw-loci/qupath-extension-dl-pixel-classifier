@@ -30,11 +30,117 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from pathlib import Path
+from PIL import Image
 
 from dlclassifier_server.services.training_service import (
     TrainingService, SegmentationDataset
 )
 from dlclassifier_server.utils.batchrenorm import replace_bn_with_batchrenorm
+
+
+# Default class colors (used when class_colors input is not provided)
+DEFAULT_COLORS = [
+    (255, 0, 0),      # red
+    (0, 255, 0),      # green
+    (0, 0, 255),      # blue
+    (255, 255, 0),    # yellow
+    (255, 0, 255),    # magenta
+    (0, 255, 255),    # cyan
+    (255, 128, 0),    # orange
+    (128, 0, 255),    # purple
+    (0, 128, 255),    # light blue
+    (255, 0, 128),    # pink
+]
+
+
+def get_class_color(class_idx, class_name, class_colors_map):
+    """Get (R, G, B) for a class index, using provided colors or defaults."""
+    if class_colors_map and class_name in class_colors_map:
+        packed = class_colors_map[class_name]
+        # Packed RGB integer: 0xRRGGBB (may be negative in Java signed int)
+        packed = packed & 0xFFFFFF
+        r = (packed >> 16) & 0xFF
+        g = (packed >> 8) & 0xFF
+        b = packed & 0xFF
+        return (r, g, b)
+    return DEFAULT_COLORS[class_idx % len(DEFAULT_COLORS)]
+
+
+def save_disagreement_map(pred, mask, ignore_index, classes, class_colors_map,
+                          output_path, patch_size):
+    """Save a color-coded RGBA disagreement map.
+
+    Pixels where pred != mask are colored by the PREDICTED class.
+    Pixels where pred == mask (agreement) are fully transparent.
+    Unlabeled pixels (ignore_index) are fully transparent.
+    """
+    h, w = pred.shape
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+
+    labeled = mask != ignore_index
+    disagree = (pred != mask) & labeled
+
+    for c_idx, c_name in enumerate(classes):
+        # Pixels where model predicted this class but ground truth differs
+        class_disagree = disagree & (pred == c_idx)
+        if not class_disagree.any():
+            continue
+        r, g, b = get_class_color(c_idx, c_name, class_colors_map)
+        rgba[class_disagree] = [r, g, b, 255]
+
+    img = Image.fromarray(rgba, 'RGBA')
+    img.save(str(output_path))
+
+
+def save_tile_image(img_path, output_path):
+    """Save a displayable RGB PNG of the training tile."""
+    suffix = img_path.suffix.lower()
+    if suffix == '.raw':
+        # Raw float32 N-channel - load and convert to RGB
+        with open(img_path, 'rb') as f:
+            header = np.frombuffer(f.read(12), dtype=np.int32)
+            h, w, c = int(header[0]), int(header[1]), int(header[2])
+            data = np.frombuffer(f.read(), dtype=np.float32)
+        arr = data.reshape(h, w, c)
+        # Take first 3 channels or single channel
+        if c >= 3:
+            arr = arr[:, :, :3]
+        elif c == 1:
+            arr = np.repeat(arr, 3, axis=2)
+        else:
+            arr = np.concatenate([arr, np.zeros((h, w, 3 - c), dtype=np.float32)], axis=2)
+        # Normalize to 0-255
+        vmin, vmax = arr.min(), arr.max()
+        if vmax > vmin:
+            arr = ((arr - vmin) / (vmax - vmin) * 255).astype(np.uint8)
+        else:
+            arr = np.zeros_like(arr, dtype=np.uint8)
+        img = Image.fromarray(arr, 'RGB')
+    elif suffix in ('.tif', '.tiff'):
+        try:
+            import tifffile
+            arr = tifffile.imread(str(img_path))
+            if arr.dtype == np.float32 or arr.dtype == np.float64:
+                if arr.ndim == 3 and arr.shape[0] < arr.shape[2]:
+                    arr = arr.transpose(1, 2, 0)
+                if arr.ndim == 3 and arr.shape[2] >= 3:
+                    arr = arr[:, :, :3]
+                elif arr.ndim == 2:
+                    arr = np.stack([arr] * 3, axis=2)
+                vmin, vmax = arr.min(), arr.max()
+                if vmax > vmin:
+                    arr = ((arr - vmin) / (vmax - vmin) * 255).astype(np.uint8)
+                else:
+                    arr = np.zeros_like(arr, dtype=np.uint8)
+                img = Image.fromarray(arr, 'RGB')
+            else:
+                img = Image.fromarray(arr)
+                img = img.convert('RGB')
+        except ImportError:
+            img = Image.open(img_path).convert('RGB')
+    else:
+        img = Image.open(img_path).convert('RGB')
+    img.save(str(output_path))
 
 # Set up cancellation bridge
 cancel_flag = threading.Event()
@@ -130,6 +236,16 @@ try:
         with open(config_path) as f:
             config = json.load(f)
         ignore_index = config.get("unlabeled_index", 255)
+
+    # class_colors: optional dict of class_name -> packed RGB int from Java
+    class_colors_map = globals().get("class_colors", None)
+    if class_colors_map:
+        logger.info("Received class colors for %d classes", len(class_colors_map))
+
+    # Create disagreement output directory in the model directory (persistent)
+    disagree_dir = model_dir / "disagreement"
+    disagree_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Disagreement maps will be saved to %s", disagree_dir)
 
     # Create datasets for train and val splits (no augmentation)
     data_root = Path(data_path)
@@ -234,6 +350,28 @@ try:
                               if not (v != v)]  # filter NaN
                 mean_iou = sum(valid_ious) / len(valid_ious) if valid_ious else 0.0
 
+                # Save disagreement map and tile image
+                disagree_path = None
+                tile_img_path = None
+                try:
+                    pred_np = pred_i.cpu().numpy()
+                    mask_np = mask_i.cpu().numpy()
+                    disagree_file = disagree_dir / f"{stem}_disagree.png"
+                    save_disagreement_map(
+                        pred_np, mask_np, ignore_index, classes,
+                        class_colors_map, disagree_file, patch_size
+                    )
+                    disagree_path = str(disagree_file)
+
+                    # Save tile image (from original training data)
+                    tile_file = disagree_dir / f"{stem}_tile.png"
+                    img_path = dataset.image_files[file_idx]
+                    save_tile_image(img_path, tile_file)
+                    tile_img_path = str(tile_file)
+                except Exception as save_err:
+                    logger.warning("Failed to save disagreement map for %s: %s",
+                                   stem, save_err)
+
                 results.append({
                     "filename": manifest_filename,
                     "split": split_name,
@@ -246,6 +384,8 @@ try:
                     "y": meta.get("y", 0),
                     "source_image": meta.get("source_image", ""),
                     "source_image_id": meta.get("source_image_id", ""),
+                    "disagreement_image": disagree_path,
+                    "tile_image": tile_img_path,
                 })
 
             tile_idx += batch_size
