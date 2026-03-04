@@ -180,12 +180,17 @@ try:
                 classes=num_classes
             )
 
-            # Replace BatchNorm with BatchRenorm if model was trained with it
-            if arch.get("use_batchrenorm", False):
+            # Auto-detect BatchRenorm from state dict keys (rmax/dmax are
+            # unique to BatchRenorm2d). Metadata flag may be lost when Java
+            # overwrites metadata.json, so detection from weights is robust.
+            has_batchrenorm = any(
+                k.endswith('.rmax') or k.endswith('.dmax')
+                for k in state_dict)
+            if has_batchrenorm:
                 from dlclassifier_server.utils.batchrenorm import (
                     replace_bn_with_batchrenorm)
                 replace_bn_with_batchrenorm(model)
-                logger.info("Applied BatchRenorm replacement for inference")
+                logger.info("Auto-detected BatchRenorm from state dict keys")
 
             model.load_state_dict(state_dict)
             model = model.to(self.device)

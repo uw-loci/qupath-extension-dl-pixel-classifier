@@ -361,6 +361,17 @@ public class ModelManager {
                         javaMetadata.put(key, gson.fromJson(pythonMeta.get(key), Object.class));
                     }
                 }
+                // Merge Python-only architecture fields (e.g. use_batchrenorm)
+                // into the Java architecture map so they survive the overwrite
+                if (pythonMeta.has("architecture")) {
+                    JsonObject pyArch = pythonMeta.getAsJsonObject("architecture");
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> javaArch = (Map<String, Object>) javaMetadata.get("architecture");
+                    if (javaArch != null && pyArch.has("use_batchrenorm")) {
+                        javaArch.put("use_batchrenorm",
+                                pyArch.get("use_batchrenorm").getAsBoolean());
+                    }
+                }
             } catch (Exception e) {
                 logger.warn("Could not merge Python metadata: {}", e.getMessage());
             }

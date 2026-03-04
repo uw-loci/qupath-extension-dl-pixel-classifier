@@ -99,15 +99,21 @@ try:
         num_classes=num_classes
     )
 
-    # Replace BatchNorm with BatchRenorm if the model was trained with it
-    if model_arch.get("use_batchrenorm", False):
-        replace_bn_with_batchrenorm(model)
-        logger.info("Applied BatchRenorm replacement for evaluation")
-
     # Load trained weights
     pt_path = model_dir / "model.pt"
     if pt_path.exists():
         state_dict = torch.load(pt_path, map_location='cpu', weights_only=True)
+
+        # Auto-detect BatchRenorm from state dict keys (rmax/dmax are
+        # unique to BatchRenorm2d). More robust than metadata flag which
+        # may be lost when Java overwrites metadata.json.
+        has_batchrenorm = any(
+            k.endswith('.rmax') or k.endswith('.dmax')
+            for k in state_dict)
+        if has_batchrenorm:
+            replace_bn_with_batchrenorm(model)
+            logger.info("Auto-detected BatchRenorm from state dict keys")
+
         model.load_state_dict(state_dict)
         logger.info("Loaded model weights from %s", pt_path)
     else:

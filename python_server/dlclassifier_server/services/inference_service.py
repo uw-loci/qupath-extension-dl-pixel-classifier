@@ -718,13 +718,20 @@ class InferenceService:
                 classes=num_classes
             )
 
-            # Replace BatchNorm with BatchRenorm if model was trained with it
-            if arch.get("use_batchrenorm", False):
-                replace_bn_with_batchrenorm(model)
+            state_dict = torch.load(
+                pt_path, map_location=self.device, weights_only=True)
 
-            model.load_state_dict(
-                torch.load(pt_path, map_location=self.device, weights_only=True)
-            )
+            # Auto-detect BatchRenorm from state dict keys (rmax/dmax are
+            # unique to BatchRenorm2d). More robust than metadata flag which
+            # may be lost when Java overwrites metadata.json.
+            has_batchrenorm = any(
+                k.endswith('.rmax') or k.endswith('.dmax')
+                for k in state_dict)
+            if has_batchrenorm:
+                replace_bn_with_batchrenorm(model)
+                logger.info("Auto-detected BatchRenorm from state dict keys")
+
+            model.load_state_dict(state_dict)
             model = model.to(self.device)
             model.eval()
 
