@@ -386,9 +386,11 @@ public class ProgressMonitorController {
                                        Map<String, Double> perClassIoU,
                                        Map<String, Double> perClassLoss) {
         Platform.runLater(() -> {
-            var trainPoint = new XYChart.Data<Number, Number>(epoch, trainLoss);
-            trainLossSeries.getData().add(trainPoint);
-            installDataPointTooltip(trainPoint, "Train Loss", epoch, trainLoss);
+            if (!Double.isNaN(trainLoss)) {
+                var trainPoint = new XYChart.Data<Number, Number>(epoch, trainLoss);
+                trainLossSeries.getData().add(trainPoint);
+                installDataPointTooltip(trainPoint, "Train Loss", epoch, trainLoss);
+            }
 
             if (!Double.isNaN(valLoss)) {
                 var valPoint = new XYChart.Data<Number, Number>(epoch, valLoss);
