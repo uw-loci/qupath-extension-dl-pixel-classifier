@@ -155,7 +155,7 @@ public class ProgressMonitorController {
         yAxis.setAutoRanging(true);
 
         lossChart = new LineChart<>(xAxis, yAxis);
-        lossChart.setTitle("Training Progress");
+        lossChart.setTitle("Training Progress (Blue = Train Loss, Red = Val Loss)");
         lossChart.setCreateSymbols(true);
         lossChart.setAnimated(false);
         lossChart.setPrefHeight(200);
