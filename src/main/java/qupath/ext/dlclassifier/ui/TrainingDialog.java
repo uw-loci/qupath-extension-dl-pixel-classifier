@@ -1917,7 +1917,7 @@ public class TrainingDialog {
 
             backboneCombo.setItems(FXCollections.observableArrayList(backboneList));
 
-            // Show display names via custom cell factory
+            // Show display names via custom cell factory (handler-specific lookup)
             backboneCombo.setCellFactory(lv -> new ListCell<>() {
                 @Override
                 protected void updateItem(String item, boolean empty) {
@@ -1925,8 +1925,7 @@ public class TrainingDialog {
                     if (empty || item == null) {
                         setText(null);
                     } else {
-                        setText(qupath.ext.dlclassifier.classifier.handlers.UNetHandler
-                                .getBackboneDisplayName(item));
+                        setText(handler.getBackboneDisplayName(item));
                     }
                 }
             });
@@ -1937,8 +1936,7 @@ public class TrainingDialog {
                     if (empty || item == null) {
                         setText(null);
                     } else {
-                        setText(qupath.ext.dlclassifier.classifier.handlers.UNetHandler
-                                .getBackboneDisplayName(item));
+                        setText(handler.getBackboneDisplayName(item));
                     }
                 }
             });

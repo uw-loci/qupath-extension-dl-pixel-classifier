@@ -75,7 +75,12 @@ public class UNetHandler implements ClassifierHandler {
      * @param backbone the backbone identifier string
      * @return display name, or the backbone string itself if not found
      */
-    public static String getBackboneDisplayName(String backbone) {
+    public static String getStaticBackboneDisplayName(String backbone) {
+        return BACKBONE_DISPLAY_NAMES.getOrDefault(backbone, backbone);
+    }
+
+    @Override
+    public String getBackboneDisplayName(String backbone) {
         return BACKBONE_DISPLAY_NAMES.getOrDefault(backbone, backbone);
     }
 
@@ -278,14 +283,14 @@ public class UNetHandler implements ClassifierHandler {
                 @Override
                 protected void updateItem(String item, boolean empty) {
                     super.updateItem(item, empty);
-                    setText(empty || item == null ? null : getBackboneDisplayName(item));
+                    setText(empty || item == null ? null : getStaticBackboneDisplayName(item));
                 }
             });
             backboneCombo.setButtonCell(new ListCell<>() {
                 @Override
                 protected void updateItem(String item, boolean empty) {
                     super.updateItem(item, empty);
-                    setText(empty || item == null ? null : getBackboneDisplayName(item));
+                    setText(empty || item == null ? null : getStaticBackboneDisplayName(item));
                 }
             });
 

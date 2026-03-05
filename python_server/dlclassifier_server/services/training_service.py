@@ -662,10 +662,10 @@ class TrainingService:
 
         # Replace BatchNorm with BatchRenorm to eliminate tiling artifacts
         # during sliding-window inference (see arXiv:2503.19545).
-        # Start with rmax=1, dmax=0 (equivalent to BatchNorm) and warm up
-        # to rmax=3, dmax=5 over the first 20% of epochs.
-        replace_bn_with_batchrenorm(model)
-        set_batchrenorm_limits(model, rmax=1.0, dmax=0.0)
+        # Skip for MuViT which uses LayerNorm (no BatchNorm to replace).
+        if model_type != "muvit":
+            replace_bn_with_batchrenorm(model)
+            set_batchrenorm_limits(model, rmax=1.0, dmax=0.0)
 
         model = model.to(self.device)
 
@@ -1893,9 +1893,20 @@ class TrainingService:
                 "pan": smp.PAN,
             }
 
+            # MuViT transformer: delegate to dedicated factory
+            if model_type == "muvit":
+                from .muvit_model import create_muvit_model
+                model = create_muvit_model(
+                    architecture=architecture,
+                    num_channels=num_channels,
+                    num_classes=num_classes,
+                )
+                logger.info(f"Created MuViT model ({architecture.get('model_config', 'muvit-base')})")
+                return model
+
             if model_type not in model_map:
                 raise ValueError(f"Unknown model type: {model_type}. "
-                               f"Available: {list(model_map.keys())}")
+                               f"Available: {list(model_map.keys()) + ['muvit']}")
 
             # Check if this is a histology-pretrained encoder
             if encoder_name in PretrainedModelsService.HISTOLOGY_ENCODERS:
@@ -1958,35 +1969,38 @@ class TrainingService:
         model_path = output_dir / "model.pt"
         torch.save(model.state_dict(), model_path)
 
-        # Export to ONNX
-        try:
-            model.eval()
-            input_size = architecture.get("input_size", [512, 512])
-            # Detect actual in_channels from model weights (handles context_scale > 1
-            # where model has 2*C channels but input_config.num_channels is C)
+        # Export to ONNX (skip for MuViT -- custom ops not ONNX-compatible)
+        if model_type == "muvit":
+            logger.info("Skipping ONNX export for MuViT model (not supported)")
+        else:
             try:
-                actual_channels = model.encoder.conv1.weight.shape[1]
-            except AttributeError:
-                actual_channels = input_config["num_channels"]
-            dummy_input = torch.randn(1, actual_channels, input_size[0], input_size[1])
-            dummy_input = dummy_input.to(self.device)
+                model.eval()
+                input_size = architecture.get("input_size", [512, 512])
+                # Detect actual in_channels from model weights (handles context_scale > 1
+                # where model has 2*C channels but input_config.num_channels is C)
+                try:
+                    actual_channels = model.encoder.conv1.weight.shape[1]
+                except AttributeError:
+                    actual_channels = input_config["num_channels"]
+                dummy_input = torch.randn(1, actual_channels, input_size[0], input_size[1])
+                dummy_input = dummy_input.to(self.device)
 
-            onnx_path = output_dir / "model.onnx"
-            torch.onnx.export(
-                model,
-                dummy_input,
-                str(onnx_path),
-                opset_version=14,
-                input_names=["input"],
-                output_names=["output"],
-                dynamic_axes={
-                    "input": {0: "batch", 2: "height", 3: "width"},
-                    "output": {0: "batch", 2: "height", 3: "width"}
-                }
-            )
-            logger.info(f"Exported ONNX model to {onnx_path}")
-        except Exception as e:
-            logger.warning(f"ONNX export failed: {e}")
+                onnx_path = output_dir / "model.onnx"
+                torch.onnx.export(
+                    model,
+                    dummy_input,
+                    str(onnx_path),
+                    opset_version=14,
+                    input_names=["input"],
+                    output_names=["output"],
+                    dynamic_axes={
+                        "input": {0: "batch", 2: "height", 3: "width"},
+                        "output": {0: "batch", 2: "height", 3: "width"}
+                    }
+                )
+                logger.info(f"Exported ONNX model to {onnx_path}")
+            except Exception as e:
+                logger.warning(f"ONNX export failed: {e}")
 
         # Read class colors from training config.json if available
         class_colors = {}

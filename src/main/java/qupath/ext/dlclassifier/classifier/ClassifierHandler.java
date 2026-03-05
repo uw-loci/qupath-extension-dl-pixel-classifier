@@ -144,6 +144,19 @@ public interface ClassifierHandler {
     Map<String, Object> getArchitectureParams(TrainingConfig config);
 
     /**
+     * Returns a human-readable display name for a backbone/config identifier.
+     * <p>
+     * Used by the training dialog to show user-friendly names in the backbone
+     * dropdown. The default implementation returns the identifier as-is.
+     *
+     * @param backbone the backbone or config identifier
+     * @return display name for UI presentation
+     */
+    default String getBackboneDisplayName(String backbone) {
+        return backbone;
+    }
+
+    /**
      * Creates an optional UI component for classifier-specific training parameters.
      * <p>
      * If this classifier has parameters beyond the standard training options

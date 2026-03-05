@@ -710,13 +710,22 @@ class InferenceService:
                 "pan": smp.PAN,
             }
 
-            model_cls = model_map.get(model_type, smp.Unet)
-            model = model_cls(
-                encoder_name=encoder_name,
-                encoder_weights=None,
-                in_channels=num_channels,
-                classes=num_classes
-            )
+            # MuViT transformer: use dedicated factory
+            if model_type == "muvit":
+                from .muvit_model import create_muvit_model
+                model = create_muvit_model(
+                    architecture=arch,
+                    num_channels=num_channels,
+                    num_classes=num_classes,
+                )
+            else:
+                model_cls = model_map.get(model_type, smp.Unet)
+                model = model_cls(
+                    encoder_name=encoder_name,
+                    encoder_weights=None,
+                    in_channels=num_channels,
+                    classes=num_classes
+                )
 
             state_dict = torch.load(
                 pt_path, map_location=self.device, weights_only=True)

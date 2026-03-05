@@ -9,6 +9,7 @@ import org.apposed.appose.Service.Task;
 import org.apposed.appose.TaskEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.classifier.ClassifierRegistry;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
@@ -162,6 +163,21 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         if (frozenLayers != null && !frozenLayers.isEmpty()) {
             architecture.put("frozen_layers", frozenLayers);
         }
+
+        // Merge handler-specific architecture params (e.g., MuViT patch_size,
+        // level_scales, rope_mode). Excludes keys already set above.
+        ClassifierRegistry.getHandler(trainingConfig.getModelType()).ifPresent(handler -> {
+            Map<String, Object> handlerParams = handler.getArchitectureParams(trainingConfig);
+            for (Map.Entry<String, Object> entry : handlerParams.entrySet()) {
+                String key = entry.getKey();
+                // Skip keys that are already populated or UI-only metadata
+                if (!architecture.containsKey(key)
+                        && !"available_backbones".equals(key)
+                        && !"architecture".equals(key)) {
+                    architecture.put(key, entry.getValue());
+                }
+            }
+        });
 
         Map<String, Object> inputConfig = buildInputConfig(channelConfig);
 
