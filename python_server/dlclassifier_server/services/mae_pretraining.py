@@ -349,10 +349,12 @@ class MAEPretrainingService:
         mask_ratio = float(config.get("mask_ratio", 0.75))
         epochs = int(config.get("epochs", 100))
         batch_size = int(config.get("batch_size", 8))
+        grad_accum_steps = int(config.get("grad_accum_steps", 1))
         learning_rate = float(config.get("learning_rate", 1.5e-4))
         weight_decay = float(config.get("weight_decay", 0.05))
         warmup_epochs = int(config.get("warmup_epochs", 5))
         tile_size = int(config.get("tile_size", 256))
+        checkpoint_interval = int(config.get("checkpoint_interval", 50))
 
         cfg = MODEL_CONFIGS.get(model_config, MODEL_CONFIGS["muvit-base"])
 
@@ -381,8 +383,40 @@ class MAEPretrainingService:
             normalize_stats=norm_stats,
         )
         num_channels = dataset.n_channels
+        num_images = len(dataset)
         logger.info("Dataset: %d images, %d channels, tile_size=%d",
-                     len(dataset), num_channels, tile_size)
+                     num_images, num_channels, tile_size)
+
+        # Dataset size recommendations
+        if num_images < 10:
+            logger.warning(
+                "Very few images (%d). MAE pretraining may not be effective. "
+                "Consider collecting more unlabeled images for better results.",
+                num_images)
+        elif num_images < 50:
+            logger.info(
+                "Small dataset (%d images). Random masking will create "
+                "diverse reconstruction tasks. Consider 300-500 epochs.",
+                num_images)
+        elif num_images < 200:
+            logger.info(
+                "Moderate dataset (%d images). 100-200 epochs recommended.",
+                num_images)
+        else:
+            logger.info(
+                "Good dataset size (%d images). 50-100 epochs should suffice.",
+                num_images)
+
+        # Auto-adjust batch size if larger than dataset
+        if batch_size > num_images:
+            old_bs = batch_size
+            batch_size = max(1, num_images // 2)
+            if grad_accum_steps == 1:
+                grad_accum_steps = max(1, old_bs // batch_size)
+            logger.info(
+                "Batch size reduced %d -> %d (dataset has only %d images), "
+                "grad accum = %d",
+                old_bs, batch_size, num_images, grad_accum_steps)
 
         dataloader = DataLoader(
             dataset,
@@ -390,7 +424,7 @@ class MAEPretrainingService:
             shuffle=True,
             num_workers=min(4, os.cpu_count() or 1),
             pin_memory=self._device_str == "cuda",
-            drop_last=True,
+            drop_last=len(dataset) > batch_size,
         )
 
         # --- Create model ---
@@ -444,9 +478,12 @@ class MAEPretrainingService:
 
         # --- Training loop ---
         _report("starting_training")
+        effective_batch = batch_size * grad_accum_steps
         logger.info(
-            "MAE pretraining: %d epochs, batch=%d, lr=%.2e, mask=%.0f%%",
-            epochs, batch_size, learning_rate, mask_ratio * 100)
+            "MAE pretraining: %d epochs, batch=%d (effective %d, accum=%d), "
+            "lr=%.2e, mask=%.0f%%",
+            epochs, batch_size, effective_batch, grad_accum_steps,
+            learning_rate, mask_ratio * 100)
 
         best_loss = float('inf')
         best_state = None
@@ -461,35 +498,46 @@ class MAEPretrainingService:
             epoch_loss = 0.0
             n_batches = 0
 
-            for images in dataloader:
+            optimizer.zero_grad(set_to_none=True)
+
+            for batch_idx, images in enumerate(dataloader):
                 if cancel_flag and cancel_flag.is_set():
                     break
 
                 images = images.to(self.device, non_blocking=True)
-                optimizer.zero_grad(set_to_none=True)
 
                 if use_amp:
                     with torch.amp.autocast("cuda", dtype=amp_dtype):
                         loss = model(images)
+                    loss = loss / grad_accum_steps
                     if use_grad_scaler:
                         scaler.scale(loss).backward()
+                    else:
+                        loss.backward()
+                else:
+                    loss = model(images)
+                    loss = loss / grad_accum_steps
+                    loss.backward()
+
+                if (batch_idx + 1) % grad_accum_steps == 0 or \
+                        (batch_idx + 1) == len(dataloader):
+                    if use_amp and use_grad_scaler:
                         scaler.unscale_(optimizer)
                         torch.nn.utils.clip_grad_norm_(
                             model.parameters(), 1.0)
                         scaler.step(optimizer)
                         scaler.update()
-                    else:
-                        loss.backward()
+                    elif use_amp:
                         torch.nn.utils.clip_grad_norm_(
                             model.parameters(), 1.0)
                         optimizer.step()
-                else:
-                    loss = model(images)
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                    optimizer.step()
+                    else:
+                        torch.nn.utils.clip_grad_norm_(
+                            model.parameters(), 1.0)
+                        optimizer.step()
+                    optimizer.zero_grad(set_to_none=True)
 
-                epoch_loss += loss.item()
+                epoch_loss += loss.item() * grad_accum_steps
                 n_batches += 1
 
             scheduler.step()
@@ -519,6 +567,12 @@ class MAEPretrainingService:
             if epoch % 10 == 0 or epoch == 1:
                 logger.info("Epoch %d/%d: loss=%.6f, lr=%.2e",
                             epoch, epochs, avg_loss, current_lr)
+
+            # Periodic checkpoint
+            if checkpoint_interval > 0 and epoch % checkpoint_interval == 0:
+                ckpt_path = output_dir / ("checkpoint_epoch_%d.pt" % epoch)
+                torch.save(model.state_dict(), str(ckpt_path))
+                logger.info("Saved checkpoint: %s", ckpt_path)
 
         # --- Save ---
         _report("saving_model")

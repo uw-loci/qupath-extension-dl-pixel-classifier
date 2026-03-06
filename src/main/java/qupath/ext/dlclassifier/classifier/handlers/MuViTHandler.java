@@ -5,6 +5,8 @@ import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import qupath.ext.dlclassifier.classifier.ClassifierHandler;
@@ -14,6 +16,7 @@ import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
 
 import java.io.File;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -258,6 +261,7 @@ public class MuViTHandler implements ClassifierHandler {
         // MAE pretraining controls
         private final CheckBox pretrainCheck;
         private final TextField pretrainDataPathField;
+        private final Label datasetInfoLabel;
         private final Spinner<Integer> pretrainEpochsSpinner;
         private final Spinner<Double> maskRatioSpinner;
         private final Spinner<Integer> warmupEpochsSpinner;
@@ -350,7 +354,13 @@ public class MuViTHandler implements ClassifierHandler {
                     "masked autoencoder reconstruction before fine-tuning.\n" +
                     "This improves accuracy when labeled data is limited.\n" +
                     "Requires a directory of image tiles (no labels needed)."));
-            root.getChildren().add(pretrainCheck);
+
+            Hyperlink tipsLink = new Hyperlink("Pretraining tips");
+            tipsLink.setOnAction(e -> showPretrainingTipsDialog());
+            tipsLink.setStyle("-fx-font-size: 11px;");
+
+            HBox pretrainHeader = new HBox(10, pretrainCheck, tipsLink);
+            root.getChildren().add(pretrainHeader);
 
             GridPane pretrainGrid = new GridPane();
             pretrainGrid.setHgap(10);
@@ -362,6 +372,9 @@ public class MuViTHandler implements ClassifierHandler {
             pretrainDataPathField = new TextField();
             pretrainDataPathField.setPromptText("Directory of unlabeled image tiles...");
             pretrainDataPathField.setPrefWidth(200);
+            datasetInfoLabel = new Label();
+            datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+            datasetInfoLabel.setWrapText(true);
             Button browseBtn = new Button("Browse...");
             browseBtn.setOnAction(e -> {
                 DirectoryChooser dc = new DirectoryChooser();
@@ -369,23 +382,27 @@ public class MuViTHandler implements ClassifierHandler {
                 File dir = dc.showDialog(root.getScene() != null ? root.getScene().getWindow() : null);
                 if (dir != null) {
                     pretrainDataPathField.setText(dir.getAbsolutePath());
+                    scanDatasetAndUpdateInfo(dir);
                 }
             });
             pretrainGrid.add(dataLabel, 0, 0);
             pretrainGrid.add(pretrainDataPathField, 1, 0);
             pretrainGrid.add(browseBtn, 2, 0);
+            pretrainGrid.add(datasetInfoLabel, 0, 1, 3, 1);
 
             // Pretraining epochs
             Label epochsLabel = new Label("Pretrain epochs:");
-            pretrainEpochsSpinner = new Spinner<>(10, 1000, 100, 10);
+            pretrainEpochsSpinner = new Spinner<>(10, 2000, 100, 10);
             pretrainEpochsSpinner.setEditable(true);
             pretrainEpochsSpinner.setPrefWidth(100);
             pretrainEpochsSpinner.setTooltip(new Tooltip(
                     "Number of MAE pretraining epochs.\n" +
-                    "100 is a reasonable default for moderate datasets.\n" +
-                    "More epochs may improve encoder quality."));
-            pretrainGrid.add(epochsLabel, 0, 1);
-            pretrainGrid.add(pretrainEpochsSpinner, 1, 1);
+                    "More epochs always helps -- no saturation observed up to 1600.\n" +
+                    "Small datasets (<100 images): use 200-500 epochs.\n" +
+                    "Medium datasets (100-1000): 100-200 epochs.\n" +
+                    "Large datasets (>1000): 50-100 epochs."));
+            pretrainGrid.add(epochsLabel, 0, 2);
+            pretrainGrid.add(pretrainEpochsSpinner, 1, 2);
 
             // Mask ratio
             Label maskLabel = new Label("Mask ratio:");
@@ -394,10 +411,12 @@ public class MuViTHandler implements ClassifierHandler {
             maskRatioSpinner.setPrefWidth(100);
             maskRatioSpinner.setTooltip(new Tooltip(
                     "Fraction of patches to mask during pretraining.\n" +
-                    "0.75 (75%) is the standard default.\n" +
-                    "Higher ratios force the model to learn stronger representations."));
-            pretrainGrid.add(maskLabel, 0, 2);
-            pretrainGrid.add(maskRatioSpinner, 1, 2);
+                    "0.75 (75%) is the standard default from MAE literature.\n" +
+                    "For very small datasets (<50 images), try 0.60-0.70.\n" +
+                    "Higher ratios force the model to learn stronger representations\n" +
+                    "but need sufficient data diversity."));
+            pretrainGrid.add(maskLabel, 0, 3);
+            pretrainGrid.add(maskRatioSpinner, 1, 3);
 
             // Warmup epochs
             Label warmupLabel = new Label("Warmup epochs:");
@@ -407,8 +426,8 @@ public class MuViTHandler implements ClassifierHandler {
             warmupEpochsSpinner.setTooltip(new Tooltip(
                     "Number of epochs for learning rate warmup.\n" +
                     "Transformers typically benefit from 2-10 warmup epochs."));
-            pretrainGrid.add(warmupLabel, 0, 3);
-            pretrainGrid.add(warmupEpochsSpinner, 1, 3);
+            pretrainGrid.add(warmupLabel, 0, 4);
+            pretrainGrid.add(warmupEpochsSpinner, 1, 4);
 
             root.getChildren().add(pretrainGrid);
 
@@ -479,6 +498,149 @@ public class MuViTHandler implements ClassifierHandler {
             }
 
             return Optional.empty();
+        }
+
+        /**
+         * Scans a dataset directory and updates the info label with image count
+         * and recommended settings.
+         */
+        private void scanDatasetAndUpdateInfo(File dir) {
+            java.util.Set<String> extensions = java.util.Set.of(
+                    ".png", ".tif", ".tiff", ".jpg", ".jpeg", ".raw");
+            Path dirPath = dir.toPath();
+
+            // Check for train/images subdirectory
+            Path imageDir = dirPath.resolve("train").resolve("images");
+            if (!java.nio.file.Files.isDirectory(imageDir)) {
+                imageDir = dirPath.resolve("images");
+                if (!java.nio.file.Files.isDirectory(imageDir)) {
+                    imageDir = dirPath;
+                }
+            }
+
+            int count = 0;
+            try (var stream = java.nio.file.Files.walk(imageDir)) {
+                count = (int) stream
+                        .filter(java.nio.file.Files::isRegularFile)
+                        .filter(p -> {
+                            String name = p.getFileName().toString().toLowerCase();
+                            return extensions.stream().anyMatch(name::endsWith);
+                        })
+                        .count();
+            } catch (Exception ignored) {
+                // Fall through with count = 0
+            }
+
+            if (count == 0) {
+                datasetInfoLabel.setText("No supported images found in directory.");
+                datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #c00;");
+                return;
+            }
+
+            datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+
+            String sizeCategory;
+            int suggestedEpochs;
+            if (count < 50) {
+                sizeCategory = "Very small";
+                suggestedEpochs = 500;
+            } else if (count < 200) {
+                sizeCategory = "Small";
+                suggestedEpochs = 300;
+            } else if (count < 1000) {
+                sizeCategory = "Medium";
+                suggestedEpochs = 100;
+            } else {
+                sizeCategory = "Large";
+                suggestedEpochs = 50;
+            }
+
+            datasetInfoLabel.setText(String.format(
+                    "%s dataset: %,d images found. Suggested epochs: %d",
+                    sizeCategory, count, suggestedEpochs));
+
+            // Auto-set recommended epochs
+            pretrainEpochsSpinner.getValueFactory().setValue(suggestedEpochs);
+        }
+
+        /**
+         * Shows a dialog with tips for different pretraining scenarios.
+         */
+        private void showPretrainingTipsDialog() {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("MAE Pretraining Tips");
+            alert.setHeaderText("Self-Supervised Pretraining Guide");
+            alert.setResizable(true);
+            alert.getDialogPane().setPrefWidth(600);
+
+            String content = """
+                    WHAT IS MAE PRETRAINING?
+                    Masked Autoencoder (MAE) pretraining teaches the encoder to understand \
+                    image structure by masking random patches and learning to reconstruct them. \
+                    No labels are needed -- the model learns from the images themselves. \
+                    After pretraining, the encoder is fine-tuned with your labeled training data.
+
+                    WHEN TO USE IT
+                    - You have LIMITED LABELED DATA but plenty of unlabeled images
+                    - Your images are from a specialized domain (not typical photos)
+                    - Domain-specific pretraining consistently outperforms ImageNet-pretrained \
+                    models for specialized microscopy and pathology data
+
+                    IMAGE DIRECTORY
+                    Point to a directory of image tiles (PNG, TIFF, JPG, or RAW). \
+                    These can be unlabeled crops from your whole-slide images. \
+                    Subdirectories are scanned recursively. If the directory contains a \
+                    train/images/ subdirectory, that will be used automatically.
+
+                    SMALL DATASETS (< 100 images)
+                    - Use 300-500 pretraining epochs (more epochs = more passes over data)
+                    - MAE is well-suited for small datasets because random masking creates \
+                    diverse reconstruction tasks even from limited images
+                    - Consider lowering mask ratio to 0.60-0.65 to make reconstruction \
+                    easier when diversity is low
+                    - The model will see each image hundreds of times with different masks \
+                    and augmentations, learning robust features
+
+                    MEDIUM DATASETS (100 - 1000 images)
+                    - Use 100-200 pretraining epochs
+                    - Default mask ratio of 0.75 works well
+                    - This is the sweet spot for pretraining benefit
+
+                    LARGE DATASETS (> 1000 images)
+                    - Use 50-100 pretraining epochs (sufficient data diversity)
+                    - Default mask ratio of 0.75 is optimal
+                    - Longer training always helps but with diminishing returns
+
+                    MULTICHANNEL IMAGES (fluorescence, multispectral)
+                    - MAE pretraining works natively with any number of channels
+                    - The encoder learns per-channel and cross-channel relationships
+                    - Channel count is detected automatically from your images
+                    - Ensure all images in the directory have the same number of channels
+
+                    MASK RATIO
+                    - 0.75 (75%) is optimal for most cases per the MAE literature
+                    - Higher ratios force the model to learn global/semantic features
+                    - Lower ratios (0.50-0.65) are easier and may help with very small \
+                    or low-diversity datasets
+                    - The model must infer missing patches from surrounding context, \
+                    learning useful representations in the process
+
+                    REFERENCES
+                    - He et al., "Masked Autoencoders Are Scalable Vision Learners" (CVPR 2022)
+                    - Xie et al., "SimMIM: A Simple Framework for Masked Image Modeling" (CVPR 2022)
+                    - Caron et al., "Emerging Properties in Self-Supervised Vision Transformers" (ICCV 2021)
+                    - Filiot et al., "Self-Supervised Vision Transformers Learn Visual Concepts \
+                    in Histopathology" (2022)""";
+
+            TextArea textArea = new TextArea(content);
+            textArea.setEditable(false);
+            textArea.setWrapText(true);
+            textArea.setPrefRowCount(25);
+            textArea.setStyle("-fx-font-size: 13px;");
+            VBox.setVgrow(textArea, Priority.ALWAYS);
+
+            alert.getDialogPane().setContent(textArea);
+            alert.show();
         }
     }
 }
