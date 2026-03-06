@@ -1,14 +1,19 @@
 """MAE (Masked Autoencoder) pretraining service for MuViT encoder.
 
-Trains the MuViT encoder in a self-supervised manner using masked image
-modeling (SimMIM-style). No labels required -- the model learns to
-reconstruct randomly masked patches from visible context across multiple
-resolution levels.
+Trains the MuViT encoder in a self-supervised manner using the muvit
+package's built-in MuViTMAE2d masked autoencoder. No labels required --
+the model learns to reconstruct randomly masked patches from visible
+context across multiple resolution levels.
 
 After pretraining, encoder weights are saved as a standard model.pt that
 can be loaded via the "Continue from model" feature in the training
 dialog. The encoder.* keys transfer directly to MuViTSegmentation while
 MAE-specific keys (decoder, mask_token) are automatically skipped.
+
+The muvit package exposes:
+  - muvit.mae.MuViTMAE2d : full MAE model (encoder + decoder)
+  - muvit.mae.MuViTEncoder: encoder-only (extracted via .encoder)
+  - muvit.data.MuViTDataset: base dataset class
 """
 import json
 import logging
@@ -146,137 +151,77 @@ class MAEImageDataset(Dataset):
         return 1 if img.ndim == 2 else img.shape[2]
 
 
-# ==================== MAE Model ====================
+# ==================== MAE Model Wrapper ====================
 
-class MuViTMAEWrapper(nn.Module):
-    """SimMIM-style masked autoencoder around MuViT2d encoder.
+class MuViTMAEPretrainer(nn.Module):
+    """Wrapper around muvit's MuViTMAE2d for self-supervised pretraining.
 
-    Masking strategy: patches in the level-0 input image are zeroed out.
-    The encoder processes the partially-masked multi-resolution input
-    (context levels remain intact, providing global cues). A lightweight
-    MLP decoder predicts original pixel values from encoder features.
-    MSE loss is computed only on masked patch locations.
+    Uses the muvit package's built-in MAE model which handles:
+    - Patch embedding and masking
+    - Encoder processing of visible patches
+    - Decoder reconstruction of masked patches
+    - Reconstruction loss computation
 
-    The encoder learns useful representations because:
-    - 75% of detail-level patches are masked (strong bottleneck)
-    - Cross-resolution attention lets context tokens guide reconstruction
-    - Per-patch target normalization prevents trivial solutions
+    This wrapper handles the multi-resolution input preparation:
+    converting (B, C, H, W) images into (B, L, C, H, W) multi-level
+    views with corresponding bounding boxes.
+
+    After pretraining, the encoder weights (model.encoder.*) transfer
+    directly to MuViTSegmentation for downstream pixel classification.
     """
 
     def __init__(
         self,
-        n_channels: int,
+        in_channels: int,
         patch_size: int = 16,
         levels: Tuple[float, ...] = (1.0, 4.0),
-        dim: int = 512,
-        depth: int = 12,
-        heads: int = 8,
-        rope: str = "per_layer",
+        num_layers: int = 12,
+        num_layers_decoder: int = 4,
         mask_ratio: float = 0.75,
-        decoder_dim: int = 256,
-        decoder_depth: int = 2,
     ):
         super().__init__()
-        self.n_channels = n_channels
+        self.in_channels = in_channels
         self.patch_size = patch_size
         self.levels = levels
-        self.dim = dim
         self.mask_ratio = mask_ratio
 
-        from muvit import MuViT2d
+        try:
+            from muvit.mae import MuViTMAE2d
+        except ImportError:
+            raise ImportError(
+                "muvit package not installed. Install with: pip install muvit"
+            )
 
-        self.encoder = MuViT2d(
-            n_channels=n_channels,
-            patch_size=patch_size,
+        # MuViTMAE2d is a complete MAE model with encoder + decoder
+        self.mae = MuViTMAE2d(
+            in_channels=in_channels,
             levels=levels,
-            dim=dim,
-            depth=depth,
-            heads=heads,
-            rope=rope,
-            use_level_embed=True,
+            patch_size=patch_size,
+            num_layers=num_layers,
+            num_layers_decoder=num_layers_decoder,
         )
-
-        # Lightweight decoder for pixel reconstruction
-        decoder_layers = []
-        current_dim = dim
-        for _ in range(decoder_depth):
-            decoder_layers.extend([
-                nn.Linear(current_dim, decoder_dim),
-                nn.GELU(),
-                nn.LayerNorm(decoder_dim),
-            ])
-            current_dim = decoder_dim
-        decoder_layers.append(
-            nn.Linear(decoder_dim, patch_size * patch_size * n_channels)
-        )
-        self.decoder = nn.Sequential(*decoder_layers)
 
         logger.info(
-            "Created MuViTMAEWrapper: dim=%d, depth=%d, heads=%d, "
-            "mask_ratio=%.2f, levels=%s",
-            dim, depth, heads, mask_ratio, levels
+            "Created MuViTMAEPretrainer: num_layers=%d, decoder_layers=%d, "
+            "patch=%d, mask_ratio=%.2f, levels=%s",
+            num_layers, num_layers_decoder, patch_size, mask_ratio, levels
         )
 
-    def _patchify(self, imgs: torch.Tensor) -> torch.Tensor:
-        """Convert (B, C, H, W) -> (B, N, patch_size^2 * C)."""
-        B, C, H, W = imgs.shape
-        p = self.patch_size
-        # (B, C, nH, nW, p, p) -> (B, nH, nW, C, p, p) -> (B, N, C*p*p)
-        patches = imgs.unfold(2, p, p).unfold(3, p, p)
-        patches = patches.permute(0, 2, 3, 1, 4, 5)
-        return patches.reshape(B, -1, C * p * p)
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass: mask, encode, decode, compute reconstruction loss.
+        """Forward pass: prepare multi-res input, run MAE, return loss.
 
         Args:
             x: (B, C, H, W) input images
 
         Returns:
-            Scalar MSE loss on masked patches
+            Scalar reconstruction loss from the MAE model
         """
-        B, C, H, W = x.shape
-        p = self.patch_size
-        patches_h = H // p
-        patches_w = W // p
-        n_patches = patches_h * patches_w
-        n_masked = int(n_patches * self.mask_ratio)
-
-        # Random mask for level 0
-        noise = torch.rand(B, n_patches, device=x.device)
-        ids_shuffle = torch.argsort(noise, dim=1)
-        mask = torch.zeros(B, n_patches, device=x.device, dtype=torch.bool)
-        mask.scatter_(1, ids_shuffle[:, :n_masked], True)
-
-        # Create multi-resolution views
+        # Convert (B, C, H, W) -> (B, L, C, H, W) + (B, L, 2, 2)
         imgs, bboxes = extract_multi_resolution(x, self.levels, self.patch_size)
 
-        # Zero out masked patches in level-0 image only
-        mask_spatial = mask.float().view(B, patches_h, patches_w)
-        mask_pixels = mask_spatial.repeat_interleave(
-            p, dim=1).repeat_interleave(p, dim=2)
-        masked_imgs = imgs.clone()
-        masked_imgs[:, 0] = imgs[:, 0] * (1.0 - mask_pixels.unsqueeze(1))
+        # MuViTMAE2d forward returns reconstruction loss
+        loss = self.mae(imgs, bboxes, mask_ratio=self.mask_ratio)
 
-        # Encode (processes masked image + intact context levels)
-        features = self.encoder(masked_imgs, bboxes)  # (B, N_total, dim)
-
-        # Extract level 0 features only
-        level0_features = features[:, :n_patches, :]
-
-        # Decode to pixel predictions
-        pred_pixels = self.decoder(level0_features)  # (B, N, p*p*C)
-
-        # Original patches as target
-        orig_patches = self._patchify(x)  # (B, N, p*p*C)
-
-        # Per-patch normalization of targets (standard in MAE literature)
-        target_mean = orig_patches.mean(dim=-1, keepdim=True)
-        target_var = orig_patches.var(dim=-1, keepdim=True)
-        target = (orig_patches - target_mean) / (target_var + 1e-6).sqrt()
-
-        # MSE loss on masked patches only
-        loss = F.mse_loss(pred_pixels[mask], target[mask])
         return loss
 
 
@@ -345,7 +290,6 @@ class MAEPretrainingService:
         patch_size = int(config.get("patch_size", 16))
         level_scales = config.get("level_scales", "1,4")
         levels = tuple(float(s.strip()) for s in level_scales.split(","))
-        rope_mode = config.get("rope_mode", "per_layer")
         mask_ratio = float(config.get("mask_ratio", 0.75))
         epochs = int(config.get("epochs", 100))
         batch_size = int(config.get("batch_size", 8))
@@ -355,6 +299,7 @@ class MAEPretrainingService:
         warmup_epochs = int(config.get("warmup_epochs", 5))
         tile_size = int(config.get("tile_size", 256))
         checkpoint_interval = int(config.get("checkpoint_interval", 50))
+        num_layers_decoder = int(config.get("num_layers_decoder", 4))
 
         cfg = MODEL_CONFIGS.get(model_config, MODEL_CONFIGS["muvit-base"])
 
@@ -429,20 +374,13 @@ class MAEPretrainingService:
 
         # --- Create model ---
         _report("creating_model")
-        num_heads = config.get("num_heads")
-        if num_heads is not None:
-            num_heads = int(num_heads)
-        else:
-            num_heads = cfg["heads"]
 
-        model = MuViTMAEWrapper(
-            n_channels=num_channels,
+        model = MuViTMAEPretrainer(
+            in_channels=num_channels,
             patch_size=patch_size,
             levels=levels,
-            dim=cfg["dim"],
-            depth=cfg["enc_layers"],
-            heads=num_heads,
-            rope=rope_mode,
+            num_layers=cfg["num_layers"],
+            num_layers_decoder=num_layers_decoder,
             mask_ratio=mask_ratio,
         )
         model = model.to(self.device)
@@ -590,10 +528,8 @@ class MAEPretrainingService:
                 "model_config": model_config,
                 "patch_size": patch_size,
                 "level_scales": level_scales,
-                "rope_mode": rope_mode,
-                "dim": cfg["dim"],
-                "depth": cfg["enc_layers"],
-                "heads": num_heads,
+                "num_layers": cfg["num_layers"],
+                "num_layers_decoder": num_layers_decoder,
                 "input_channels": num_channels,
             },
             "pretraining": {

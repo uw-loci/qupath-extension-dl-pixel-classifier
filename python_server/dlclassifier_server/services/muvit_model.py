@@ -1,12 +1,17 @@
 """
 MuViT model wrapper for the DL pixel classifier.
 
-Wraps the MuViT encoder with a lightweight pixel classification head to produce
-per-pixel segmentation predictions compatible with the existing training and
-inference pipeline.
+Wraps the muvit library's MuViTMAE2d encoder with a lightweight pixel
+classification head to produce per-pixel segmentation predictions
+compatible with the existing training and inference pipeline.
 
-Phase 1: Trains from scratch (no MAE pretraining). Single forward pass produces
-(B, num_classes, H, W) output matching the smp model interface.
+The muvit package exposes:
+  - muvit.mae.MuViTMAE2d : full MAE model (encoder + decoder)
+  - muvit.mae.MuViTEncoder: encoder-only (extracted via .encoder)
+  - muvit.data.MuViTDataset: base dataset class
+
+To create a standalone encoder for segmentation, we instantiate MuViTMAE2d
+with a minimal decoder and extract its .encoder attribute.
 """
 import logging
 from typing import Dict, Any, List, Optional, Tuple
@@ -18,10 +23,11 @@ import torch.nn.functional as F
 logger = logging.getLogger(__name__)
 
 # Model size configurations
+# num_layers maps to MuViTMAE2d's num_layers parameter
 MODEL_CONFIGS = {
-    "muvit-small": {"enc_layers": 6, "dim": 256, "dec_layers": 1, "dec_dim": 128, "heads": 4},
-    "muvit-base": {"enc_layers": 12, "dim": 512, "dec_layers": 2, "dec_dim": 256, "heads": 8},
-    "muvit-large": {"enc_layers": 16, "dim": 768, "dec_layers": 2, "dec_dim": 384, "heads": 12},
+    "muvit-small": {"num_layers": 6, "dec_dim": 128},
+    "muvit-base": {"num_layers": 12, "dec_dim": 256},
+    "muvit-large": {"num_layers": 16, "dec_dim": 384},
 }
 
 
@@ -92,9 +98,9 @@ def extract_multi_resolution(
 class MuViTSegmentation(nn.Module):
     """MuViT encoder with a pixel classification segmentation head.
 
-    Wraps the muvit library's MuViT2d encoder and adds a simple convolutional
-    decoder head that upsamples encoder features to the input resolution and
-    produces per-pixel class logits.
+    Uses the muvit library's MuViTMAE2d to create an encoder, then adds a
+    convolutional decoder head that upsamples encoder features to the input
+    resolution and produces per-pixel class logits.
 
     The model accepts standard (B, C, H, W) input tensors. Multi-resolution
     level extraction is handled internally by cropping the input at different
@@ -121,48 +127,56 @@ class MuViTSegmentation(nn.Module):
         self.rope_mode = rope_mode
 
         cfg = MODEL_CONFIGS.get(model_config, MODEL_CONFIGS["muvit-base"])
-        self.dim = cfg["dim"]
-        self.enc_layers = cfg["enc_layers"]
         self.dec_dim = cfg["dec_dim"]
-        heads = num_heads if num_heads is not None else cfg["heads"]
 
         try:
-            from muvit import MuViT2d
+            from muvit.mae import MuViTMAE2d
         except ImportError:
             raise ImportError(
                 "muvit package not installed. Install with: pip install muvit"
             )
 
-        self.encoder = MuViT2d(
-            n_channels=in_channels,
-            patch_size=patch_size,
+        # Create MAE model and extract its encoder.
+        # We pass a minimal decoder (1 layer) since we discard it.
+        mae = MuViTMAE2d(
+            in_channels=in_channels,
             levels=self.levels,
-            dim=self.dim,
-            depth=self.enc_layers,
-            heads=heads,
-            rope=rope_mode,
-            use_level_embed=True,
+            patch_size=patch_size,
+            num_layers=cfg["num_layers"],
+            num_layers_decoder=1,
         )
+        self.encoder = mae.encoder
 
-        # Segmentation head: project encoder features to class logits
-        # MuViT encoder output: (B, N_total, dim) where N_total is across all levels
-        # We only decode the highest-resolution level (level 0) for pixel prediction
+        # Probe encoder output dimension with a dummy forward pass
+        self.encoder_dim = self._probe_encoder_dim()
+
+        # Segmentation head: spatial Conv2d on encoder features
+        # Uses compute_features() output shape (B, L, D, H', W')
         self.seg_head = nn.Sequential(
-            nn.Linear(self.dim, self.dec_dim),
+            nn.Conv2d(self.encoder_dim, self.dec_dim, kernel_size=1),
             nn.GELU(),
-            nn.Linear(self.dec_dim, self.num_classes),
+            nn.Conv2d(self.dec_dim, self.num_classes, kernel_size=1),
         )
-
-        # Track input size for reshape
-        self._input_h = None
-        self._input_w = None
 
         logger.info(
             "Created MuViTSegmentation: config=%s, patch=%d, levels=%s, "
-            "dim=%d, depth=%d, heads=%d, rope=%s, classes=%d",
+            "encoder_dim=%d, num_layers=%d, classes=%d",
             model_config, patch_size, self.levels,
-            self.dim, self.enc_layers, heads, rope_mode, classes,
+            self.encoder_dim, cfg["num_layers"], classes,
         )
+
+    def _probe_encoder_dim(self) -> int:
+        """Determine encoder output dimension via a dummy forward pass."""
+        size = self.patch_size * 2  # minimal valid spatial size
+        dummy_img = torch.zeros(
+            1, len(self.levels), self.in_channels, size, size)
+        dummy_bbox = torch.zeros(1, len(self.levels), 2, 2)
+        dummy_bbox[:, :, 1, :] = 1.0
+        with torch.no_grad():
+            out = self.encoder(dummy_img, dummy_bbox)
+        dim = out.shape[-1]
+        logger.debug("Probed encoder dim: %d", dim)
+        return dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass producing (B, num_classes, H, W) logits.
@@ -171,32 +185,21 @@ class MuViTSegmentation(nn.Module):
         extraction internally.
         """
         B, C, H, W = x.shape
-        self._input_h = H
-        self._input_w = W
 
         # Extract multi-resolution views
         imgs, bboxes = extract_multi_resolution(x, self.levels, self.patch_size)
 
-        # MuViT encoder: (B, L, C, H, W) + (B, L, 2, 2) -> (B, N_total, dim)
-        features = self.encoder(imgs, bboxes)
+        # Encoder: (B, L, C, H, W) + (B, L, 2, 2) -> spatial (B, L, D, H', W')
+        features = self.encoder.compute_features(imgs, bboxes)
 
-        # Compute number of patches for level 0 (highest resolution)
-        patches_h = H // self.patch_size
-        patches_w = W // self.patch_size
-        n_patches_level0 = patches_h * patches_w
+        # Use level-0 (highest resolution) features: (B, D, H', W')
+        level0 = features[:, 0]
 
-        # Extract only level 0 tokens (first n_patches_level0 tokens)
-        level0_features = features[:, :n_patches_level0, :]  # (B, n_patches, dim)
-
-        # Apply segmentation head
-        logits = self.seg_head(level0_features)  # (B, n_patches, num_classes)
-
-        # Reshape to spatial grid and upsample to input resolution
-        logits = logits.permute(0, 2, 1)  # (B, num_classes, n_patches)
-        logits = logits.view(B, self.num_classes, patches_h, patches_w)
+        # Apply segmentation head: (B, num_classes, H', W')
+        logits = self.seg_head(level0)
 
         # Upsample to original input size
-        if patches_h != H or patches_w != W:
+        if logits.shape[2] != H or logits.shape[3] != W:
             logits = F.interpolate(logits, size=(H, W), mode="bilinear",
                                    align_corners=False)
 
