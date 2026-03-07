@@ -15,13 +15,17 @@ import qupath.ext.dlclassifier.controller.DLClassifierController;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
+import qupath.ext.dlclassifier.service.ApposeClassifierBackend;
 import qupath.ext.dlclassifier.service.ApposeService;
 import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
+import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.DLPixelClassifier;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
+import qupath.ext.dlclassifier.ui.MAEPretrainingDialog;
+import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
 import qupath.ext.dlclassifier.ui.SetupEnvironmentDialog;
 import qupath.ext.dlclassifier.ui.TooltipHelper;
@@ -35,8 +39,12 @@ import qupath.lib.images.ImageData;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.ResourceBundle;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Entry point for the Deep Learning Pixel Classifier extension.
@@ -315,6 +323,15 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         });
         freeGpuOption.visibleProperty().bind(environmentReady);
 
+        // MAE Pretrain Encoder - visible when environment ready
+        MenuItem maePretrainOption = new MenuItem("MAE Pretrain Encoder...");
+        TooltipHelper.installOnMenuItem(maePretrainOption,
+                "Self-supervised pretraining for MuViT encoder.\n" +
+                "Train on unlabeled image tiles using masked autoencoder.\n" +
+                "The resulting encoder can be loaded via 'Continue from model'.");
+        maePretrainOption.setOnAction(e -> startMAEPretraining());
+        maePretrainOption.visibleProperty().bind(environmentReady);
+
         // Rebuild DL Environment - always visible so users can fix broken environments
         MenuItem rebuildItem = new MenuItem(res.getString("menu.rebuildEnvironment"));
         TooltipHelper.installOnMenuItem(rebuildItem,
@@ -339,7 +356,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         pythonConsoleOption.setOnAction(e -> PythonConsoleWindow.getInstance().show());
         pythonConsoleOption.visibleProperty().bind(environmentReady);
 
-        utilitiesMenu.getItems().addAll(freeGpuOption, systemInfoOption,
+        utilitiesMenu.getItems().addAll(freeGpuOption, maePretrainOption,
+                new SeparatorMenuItem(), systemInfoOption,
                 pythonConsoleOption, new SeparatorMenuItem(), rebuildItem);
 
         // === BUILD FINAL MENU ===
@@ -504,6 +522,127 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         environmentReady.set(false);
         serverAvailable = false;
         showSetupDialog(qupath);
+    }
+
+    /**
+     * Launches the MAE pretraining workflow: health check, config dialog, progress monitor.
+     */
+    private void startMAEPretraining() {
+        Dialogs.showInfoNotification(EXTENSION_NAME,
+                "Connecting to classification backend...");
+
+        CompletableFuture.supplyAsync(() -> DLClassifierChecks.checkServerHealth())
+                .thenAcceptAsync(healthy -> {
+                    if (healthy) {
+                        showMAEPretrainingDialog();
+                    } else {
+                        Dialogs.showErrorNotification(EXTENSION_NAME,
+                                "Cannot connect to classification backend.\n\n" +
+                                "If this is the first launch, the Python environment\n" +
+                                "may still be downloading (~2-4 GB). Check the QuPath\n" +
+                                "log for progress and try again in a few minutes.");
+                    }
+                }, Platform::runLater);
+    }
+
+    /**
+     * Shows the MAE pretraining config dialog and launches pretraining on success.
+     */
+    private void showMAEPretrainingDialog() {
+        var configOpt = MAEPretrainingDialog.showDialog();
+        if (configOpt.isEmpty()) return;
+
+        var config = configOpt.get();
+
+        // Ensure output directory exists
+        try {
+            Files.createDirectories(config.outputDir());
+        } catch (IOException e) {
+            Dialogs.showErrorNotification(EXTENSION_NAME,
+                    "Cannot create output directory: " + e.getMessage());
+            return;
+        }
+
+        // Get Appose backend (MAE pretraining is Appose-only)
+        ClassifierBackend backend = BackendFactory.getBackend();
+        if (!(backend instanceof ApposeClassifierBackend apposeBackend)) {
+            Dialogs.showErrorNotification(EXTENSION_NAME,
+                    "MAE pretraining requires the Appose backend.");
+            return;
+        }
+
+        // Create progress monitor with loss chart
+        ProgressMonitorController progress = new ProgressMonitorController("MAE Pretraining", true);
+        progress.show();
+
+        // Launch pretraining on daemon thread
+        Thread pretrainThread = new Thread(() -> {
+            try {
+                ClassifierClient.TrainingResult result = apposeBackend.startPretraining(
+                        config.config(),
+                        config.dataPath(),
+                        config.outputDir(),
+                        maeProgress -> {
+                            String statusMsg = String.format(
+                                    "MAE pretraining: epoch %d/%d (loss: %.4f)",
+                                    maeProgress.epoch(), maeProgress.totalEpochs(),
+                                    maeProgress.loss());
+
+                            // Show setup phase if still initializing
+                            if (maeProgress.setupPhase() != null
+                                    && !maeProgress.setupPhase().isEmpty()) {
+                                progress.setStatus(maeProgress.setupPhase());
+                                progress.setDetail(maeProgress.deviceInfo());
+                                return;
+                            }
+
+                            progress.setStatus(statusMsg);
+                            progress.setDetail(maeProgress.deviceInfo());
+
+                            if (maeProgress.totalEpochs() > 0) {
+                                progress.setOverallProgress(
+                                        (double) maeProgress.epoch() / maeProgress.totalEpochs());
+                            }
+
+                            // Update loss chart
+                            progress.updateTrainingMetrics(
+                                    maeProgress.epoch(),
+                                    maeProgress.loss(),
+                                    Double.NaN,
+                                    null, null);
+                        },
+                        progress::isCancelled
+                );
+
+                // Success
+                String encoderPath = result.modelPath();
+                String message = String.format(
+                        "Encoder saved to:\n%s\n\n" +
+                        "Final reconstruction loss: %.4f\n\n" +
+                        "To use: In the training dialog, select MuViT and\n" +
+                        "choose 'Continue from model' to load this encoder.",
+                        encoderPath, result.finalLoss());
+                progress.complete(true, message);
+                Platform.runLater(() ->
+                        Dialogs.showInfoNotification(EXTENSION_NAME,
+                                "MAE pretraining complete! Encoder saved to:\n" + encoderPath));
+
+            } catch (IOException e) {
+                if (progress.isCancelled()) {
+                    progress.complete(false, "MAE pretraining cancelled.");
+                    logger.info("MAE pretraining cancelled by user");
+                } else {
+                    logger.error("MAE pretraining failed", e);
+                    progress.complete(false,
+                            "MAE pretraining failed: " + e.getMessage());
+                    Platform.runLater(() ->
+                            Dialogs.showErrorNotification(EXTENSION_NAME,
+                                    "MAE pretraining failed: " + e.getMessage()));
+                }
+            }
+        }, "DLClassifier-MAEPretrain");
+        pretrainThread.setDaemon(true);
+        pretrainThread.start();
     }
 
     /**
