@@ -255,13 +255,15 @@ class MuViTMAEPretrainer(nn.Module):
                 "muvit package not installed. Install with: pip install muvit"
             )
 
-        # MuViTMAE2d is a complete MAE model with encoder + decoder
+        # MuViTMAE2d is a complete MAE model with encoder + decoder.
+        # masking_ratio is a constructor arg (not a forward() arg).
         self.mae = MuViTMAE2d(
             in_channels=in_channels,
             levels=levels,
             patch_size=patch_size,
             num_layers=num_layers,
             num_layers_decoder=num_layers_decoder,
+            masking_ratio=mask_ratio,
         )
 
         logger.info(
@@ -282,10 +284,10 @@ class MuViTMAEPretrainer(nn.Module):
         # Convert (B, C, H, W) -> (B, L, C, H, W) + (B, L, 2, 2)
         imgs, bboxes = extract_multi_resolution(x, self.levels, self.patch_size)
 
-        # MuViTMAE2d forward returns reconstruction loss
-        loss = self.mae(imgs, bboxes, mask_ratio=self.mask_ratio)
+        # MuViTMAE2d forward returns a dict with "loss", "input", "output"
+        result = self.mae(imgs, bboxes)
 
-        return loss
+        return result["loss"]
 
 
 # ==================== Pretraining Service ====================
