@@ -57,22 +57,85 @@ class MAEImageDataset(Dataset):
         self.normalize_stats = normalize_stats
 
         image_dir = Path(image_dir)
-        self.image_paths = sorted([
+        candidates = sorted([
             p for p in image_dir.rglob("*")
             if p.suffix.lower() in self.SUPPORTED_EXTENSIONS
+               and not p.name.startswith('.')  # Skip hidden/resource fork files
         ])
 
-        if not self.image_paths:
+        if not candidates:
             raise ValueError("No image files found in %s" % image_dir)
 
-        logger.info("MAEImageDataset: found %d images in %s",
+        # Validate file headers to filter out corrupt/non-image files
+        self.image_paths = []
+        skipped = []
+        for p in candidates:
+            if self._validate_file(p):
+                self.image_paths.append(p)
+            else:
+                skipped.append(p.name)
+
+        if skipped:
+            logger.warning(
+                "Skipped %d of %d files (invalid/corrupt headers): %s",
+                len(skipped), len(candidates),
+                ", ".join(skipped[:10]) + ("..." if len(skipped) > 10 else ""))
+
+        if not self.image_paths:
+            raise ValueError(
+                "No valid image files found in %s "
+                "(%d files had invalid headers)" % (image_dir, len(skipped)))
+
+        logger.info("MAEImageDataset: %d valid images in %s",
                      len(self.image_paths), image_dir)
 
     def __len__(self):
         return len(self.image_paths)
 
+    @staticmethod
+    def _validate_file(path: Path) -> bool:
+        """Quick header check -- rejects files that are not valid images."""
+        try:
+            with open(path, 'rb') as f:
+                header = f.read(8)
+            if len(header) < 4:
+                return False
+            suffix = path.suffix.lower()
+            if suffix in ('.tif', '.tiff'):
+                # Standard TIFF and BigTIFF magic bytes
+                return header[:4] in (
+                    b'II*\x00', b'MM\x00*',   # TIFF
+                    b'II+\x00', b'MM\x00+',   # BigTIFF
+                )
+            if suffix == '.png':
+                return header[:4] == b'\x89PNG'
+            if suffix in ('.jpg', '.jpeg'):
+                return header[:2] == b'\xff\xd8'
+            if suffix == '.raw':
+                return len(header) >= 12
+            return True  # Unknown extension -- let PIL try later
+        except OSError:
+            return False
+
     def __getitem__(self, idx):
-        img = self._load_image(self.image_paths[idx])
+        try:
+            img = self._load_image(self.image_paths[idx])
+        except Exception as e:
+            # File passed header check but failed full load -- substitute
+            logger.warning("Failed to load %s: %s -- using random substitute",
+                           self.image_paths[idx].name, e)
+            for _ in range(5):
+                alt = np.random.randint(0, len(self.image_paths))
+                if alt != idx:
+                    try:
+                        img = self._load_image(self.image_paths[alt])
+                        break
+                    except Exception:
+                        continue
+            else:
+                # All attempts failed -- return zeros
+                img = np.zeros(
+                    (self.tile_size, self.tile_size, 1), dtype=np.float32)
 
         # Ensure HWC
         if img.ndim == 2:
@@ -591,6 +654,8 @@ class MAEPretrainingService:
         all_images = sorted([
             p for p in image_dir.rglob("*")
             if p.suffix.lower() in MAEImageDataset.SUPPORTED_EXTENSIONS
+               and not p.name.startswith('.')
+               and MAEImageDataset._validate_file(p)
         ])
         if not all_images:
             return {"mean": [0.5], "std": [0.5]}
