@@ -37,7 +37,7 @@ public class MAEPretrainingDialog {
     private static final Logger logger = LoggerFactory.getLogger(MAEPretrainingDialog.class);
 
     private static final Set<String> IMAGE_EXTENSIONS = Set.of(
-            ".png", ".tif", ".tiff", ".jpg", ".jpeg", ".raw");
+            ".png", ".tif", ".tiff", ".jpg", ".jpeg", ".bmp", ".raw");
 
     private static final Map<String, String> CONFIG_DISPLAY_NAMES = Map.of(
             "muvit-small", "MuViT-Small (6 layers, 256 dim)",

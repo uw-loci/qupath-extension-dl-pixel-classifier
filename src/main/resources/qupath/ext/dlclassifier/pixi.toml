@@ -44,5 +44,5 @@ onnx = ">=1.15.0"
 onnxruntime = ">=1.16.0"
 
 # DL classifier server (from GitHub)
-# Bump this comment to force pixi re-fetch: v0.2.5+mae-fix
+# Bump this comment to force pixi re-fetch: v0.2.5+bmp-support
 dlclassifier-server = { git = "https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier.git", subdirectory = "python_server" }
