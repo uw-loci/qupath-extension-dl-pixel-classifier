@@ -227,12 +227,13 @@ def create_muvit_model(
     Returns:
         MuViTSegmentation model instance
     """
-    model_config = architecture.get("model_config", "muvit-base")
-    # Also accept from "backbone" key (how Java sends it)
+    # Check both "model_config" (Python convention) and "backbone" (Java convention).
+    # Must not use a valid default for model_config -- that shadows the backbone value.
+    model_config = architecture.get("model_config")
     if model_config not in MODEL_CONFIGS:
-        backbone = architecture.get("backbone", "muvit-base")
-        if backbone in MODEL_CONFIGS:
-            model_config = backbone
+        model_config = architecture.get("backbone", "muvit-base")
+    if model_config not in MODEL_CONFIGS:
+        model_config = "muvit-base"
 
     patch_size = int(architecture.get("patch_size", 16))
     level_scales = str(architecture.get("level_scales", "1,4"))
