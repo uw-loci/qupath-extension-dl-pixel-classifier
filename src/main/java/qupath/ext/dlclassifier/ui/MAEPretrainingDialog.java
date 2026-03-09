@@ -209,7 +209,7 @@ public class MAEPretrainingDialog {
         dataPathField.setPrefWidth(250);
         TooltipHelper.install(dataPathField,
                 "Path to a directory containing unlabeled image tiles for pretraining.\n" +
-                "Supported formats: PNG, TIFF, JPEG, RAW.\n\n" +
+                "Supported formats: PNG, TIFF, JPEG, BMP, RAW.\n\n" +
                 "These can be any crops from your whole-slide images -- no annotations\n" +
                 "or labels are needed. The encoder learns from the image structure itself.\n" +
                 "Subdirectories are scanned recursively. If a 'train/images/' subdirectory\n" +
@@ -233,16 +233,27 @@ public class MAEPretrainingDialog {
                 "and load the weights via 'Continue from model'.\n" +
                 "The directory is created automatically if it does not exist.");
 
-        // Set default output dir from project if available
+        // Set default output dir from project if available (unique subdirectory per run)
         var qupath = QuPathGUI.getInstance();
         if (qupath != null && qupath.getProject() != null) {
             try {
                 Path projectDir = qupath.getProject().getPath().getParent();
-                outputDirField.setText(projectDir.resolve("mae_pretrained").toString());
+                String timestamp = java.time.LocalDateTime.now()
+                        .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+                outputDirField.setText(projectDir.resolve("mae_pretrained")
+                        .resolve(modelConfigCombo.getValue() + "_" + timestamp).toString());
             } catch (Exception e) {
                 logger.debug("Could not set default output dir from project: {}", e.getMessage());
             }
         }
+
+        // Update subdirectory name when model config changes (only if still auto-generated)
+        modelConfigCombo.valueProperty().addListener((obs, old, newVal) -> {
+            String current = outputDirField.getText();
+            if (current.contains("mae_pretrained" + File.separator) && old != null) {
+                outputDirField.setText(current.replace(old + "_", newVal + "_"));
+            }
+        });
     }
 
     /**
@@ -528,7 +539,7 @@ public class MAEPretrainingDialog {
                 + "- Domain-specific pretraining consistently outperforms ImageNet-pretrained "
                 + "models for specialized microscopy and pathology data\n\n"
                 + "IMAGE DIRECTORY\n"
-                + "Point to a directory of image tiles (PNG, TIFF, JPG, or RAW). "
+                + "Point to a directory of image tiles (PNG, TIFF, JPG, BMP, or RAW). "
                 + "These can be unlabeled crops from your whole-slide images. "
                 + "Subdirectories are scanned recursively. If the directory contains a "
                 + "train/images/ subdirectory, that will be used automatically.\n\n"

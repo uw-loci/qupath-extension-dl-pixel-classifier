@@ -389,6 +389,27 @@ public class MuViTHandler implements ClassifierHandler {
 
             return Optional.empty();
         }
+
+        @Override
+        public void applyParameters(Map<String, Object> params) {
+            if (params.containsKey("model_config"))
+                modelConfigCombo.setValue((String) params.get("model_config"));
+            if (params.containsKey("patch_size"))
+                patchSizeCombo.setValue(((Number) params.get("patch_size")).intValue());
+            if (params.containsKey("level_scales"))
+                levelScalesField.setText(String.valueOf(params.get("level_scales")));
+            if (params.containsKey("rope_mode"))
+                ropeModeCombo.setValue((String) params.get("rope_mode"));
+        }
+
+        @Override
+        public void setLocked(boolean locked) {
+            modelConfigCombo.setDisable(locked);
+            patchSizeCombo.setDisable(locked);
+            levelScalesField.setEditable(!locked);
+            levelScalesField.setDisable(locked);
+            ropeModeCombo.setDisable(locked);
+        }
     }
 }
 

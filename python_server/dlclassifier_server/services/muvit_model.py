@@ -166,15 +166,20 @@ class MuViTSegmentation(nn.Module):
         )
 
     def _probe_encoder_dim(self) -> int:
-        """Determine encoder output dimension via a dummy forward pass."""
+        """Determine encoder output dimension via a dummy forward pass.
+
+        Uses compute_features() which returns (B, L, D, H', W') spatial
+        features -- the same method used in the real forward pass.
+        """
         size = self.patch_size * 2  # minimal valid spatial size
         dummy_img = torch.zeros(
             1, len(self.levels), self.in_channels, size, size)
         dummy_bbox = torch.zeros(1, len(self.levels), 2, 2)
         dummy_bbox[:, :, 1, :] = 1.0
         with torch.no_grad():
-            out = self.encoder(dummy_img, dummy_bbox)
-        dim = out.shape[-1]
+            out = self.encoder.compute_features(dummy_img, dummy_bbox)
+        # out shape: (B, L, D, H', W') -- D is at index 2
+        dim = out.shape[2]
         logger.debug("Probed encoder dim: %d", dim)
         return dim
 

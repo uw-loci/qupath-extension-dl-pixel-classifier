@@ -246,5 +246,22 @@ public interface ClassifierHandler {
          * @return empty if valid, or error message if invalid
          */
         Optional<String> validate();
+
+        /**
+         * Applies architecture parameters to the UI controls.
+         * Used to set values from metadata (e.g., when loading an MAE encoder).
+         *
+         * @param params map of parameter names to values
+         */
+        default void applyParameters(Map<String, Object> params) { }
+
+        /**
+         * Locks or unlocks architecture controls.
+         * When locked, the user cannot change architecture settings that must
+         * match a loaded MAE encoder.
+         *
+         * @param locked true to disable architecture controls, false to re-enable
+         */
+        default void setLocked(boolean locked) { }
     }
 }

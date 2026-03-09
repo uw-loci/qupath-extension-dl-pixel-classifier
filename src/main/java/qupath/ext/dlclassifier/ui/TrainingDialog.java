@@ -35,7 +35,11 @@ import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
 import qupath.lib.scripting.QP;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+
 import java.awt.image.BufferedImage;
+import java.io.FileReader;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
@@ -195,6 +199,7 @@ public class TrainingDialog {
         private VBox maeEncoderContent;
         private VBox continueTrainingContent;
         private TextField maeEncoderPathField;
+        private Label maeEncoderInfoLabel;
         private LayerFreezePanel layerFreezePanel;
         private ClassifierBackend backend;
 
@@ -457,18 +462,33 @@ public class TrainingDialog {
                         dialog.getDialogPane().getScene().getWindow());
                 if (file != null) {
                     maeEncoderPathField.setText(file.getAbsolutePath());
+                    loadMaeEncoderMetadata(file);
                 }
             });
             maeBrowseButton.setTooltip(new Tooltip("Browse for a .pt encoder file"));
 
             Button maeClearButton = new Button("Clear");
-            maeClearButton.setOnAction(e -> maeEncoderPathField.setText(""));
+            maeClearButton.setOnAction(e -> {
+                maeEncoderPathField.setText("");
+                if (currentHandlerUI != null) {
+                    currentHandlerUI.setLocked(false);
+                }
+                maeEncoderInfoLabel.setText("");
+                maeEncoderInfoLabel.setVisible(false);
+                maeEncoderInfoLabel.setManaged(false);
+            });
 
             HBox maeFileRow = new HBox(5, maeEncoderPathField, maeBrowseButton, maeClearButton);
             maeFileRow.setAlignment(Pos.CENTER_LEFT);
             HBox.setHgrow(maeEncoderPathField, Priority.ALWAYS);
 
-            maeEncoderContent = new VBox(5, maeFileRow);
+            maeEncoderInfoLabel = new Label();
+            maeEncoderInfoLabel.setWrapText(true);
+            maeEncoderInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #336699;");
+            maeEncoderInfoLabel.setVisible(false);
+            maeEncoderInfoLabel.setManaged(false);
+
+            maeEncoderContent = new VBox(5, maeFileRow, maeEncoderInfoLabel);
             maeEncoderContent.setPadding(new Insets(0, 0, 0, 20));
 
             // --- Continue training from saved model ---
@@ -555,6 +575,17 @@ public class TrainingDialog {
             if (selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED) {
                 updateLayerFreezePanel();
             }
+
+            // Unlock architecture controls when switching away from MAE_ENCODER
+            if (selected != ClassifierHandler.WeightInitStrategy.MAE_ENCODER
+                    && currentHandlerUI != null) {
+                currentHandlerUI.setLocked(false);
+                if (maeEncoderInfoLabel != null) {
+                    maeEncoderInfoLabel.setText("");
+                    maeEncoderInfoLabel.setVisible(false);
+                    maeEncoderInfoLabel.setManaged(false);
+                }
+            }
         }
 
         /**
@@ -621,6 +652,67 @@ public class TrainingDialog {
                     toggle.setSelected(true);
                     return;
                 }
+            }
+        }
+
+        /**
+         * Reads metadata.json alongside an MAE encoder .pt file and locks
+         * architecture controls to match the encoder configuration.
+         */
+        private void loadMaeEncoderMetadata(java.io.File ptFile) {
+            java.io.File metadataFile = new java.io.File(ptFile.getParentFile(), "metadata.json");
+            if (!metadataFile.exists()) {
+                logger.warn("No metadata.json found alongside {}. "
+                        + "Architecture settings will not be locked.", ptFile.getName());
+                maeEncoderInfoLabel.setText("");
+                maeEncoderInfoLabel.setVisible(false);
+                maeEncoderInfoLabel.setManaged(false);
+                return;
+            }
+
+            try (FileReader reader = new FileReader(metadataFile)) {
+                JsonObject root = new Gson().fromJson(reader, JsonObject.class);
+                JsonObject arch = root.has("architecture")
+                        ? root.getAsJsonObject("architecture") : null;
+                if (arch == null) {
+                    logger.warn("metadata.json has no 'architecture' key; cannot lock settings.");
+                    return;
+                }
+
+                Map<String, Object> archParams = new HashMap<>();
+                if (arch.has("model_config"))
+                    archParams.put("model_config", arch.get("model_config").getAsString());
+                if (arch.has("patch_size"))
+                    archParams.put("patch_size", arch.get("patch_size").getAsInt());
+                if (arch.has("level_scales"))
+                    archParams.put("level_scales", arch.get("level_scales").getAsString());
+                if (arch.has("rope_mode"))
+                    archParams.put("rope_mode", arch.get("rope_mode").getAsString());
+
+                if (currentHandlerUI != null) {
+                    currentHandlerUI.applyParameters(archParams);
+                    currentHandlerUI.setLocked(true);
+                }
+
+                // Build a summary string for the info label
+                StringBuilder info = new StringBuilder("Architecture locked to match encoder:");
+                if (archParams.containsKey("model_config"))
+                    info.append(" ").append(archParams.get("model_config"));
+                if (archParams.containsKey("patch_size"))
+                    info.append(", patch ").append(archParams.get("patch_size"));
+                if (archParams.containsKey("level_scales"))
+                    info.append(", scales ").append(archParams.get("level_scales"));
+
+                maeEncoderInfoLabel.setText(info.toString());
+                maeEncoderInfoLabel.setVisible(true);
+                maeEncoderInfoLabel.setManaged(true);
+
+                logger.info("Loaded MAE encoder metadata: {}", archParams);
+            } catch (Exception e) {
+                logger.warn("Failed to read metadata.json: {}", e.getMessage());
+                maeEncoderInfoLabel.setText("");
+                maeEncoderInfoLabel.setVisible(false);
+                maeEncoderInfoLabel.setManaged(false);
             }
         }
 
