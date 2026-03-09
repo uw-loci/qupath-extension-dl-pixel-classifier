@@ -45,7 +45,7 @@ class MAEImageDataset(Dataset):
     are reflection-padded.
     """
 
-    SUPPORTED_EXTENSIONS = {'.png', '.tif', '.tiff', '.jpg', '.jpeg', '.raw'}
+    SUPPORTED_EXTENSIONS = {'.png', '.tif', '.tiff', '.jpg', '.jpeg', '.bmp', '.raw'}
 
     def __init__(
         self,
@@ -111,6 +111,8 @@ class MAEImageDataset(Dataset):
                 return header[:4] == b'\x89PNG'
             if suffix in ('.jpg', '.jpeg'):
                 return header[:2] == b'\xff\xd8'
+            if suffix == '.bmp':
+                return header[:2] == b'BM'
             if suffix == '.raw':
                 return len(header) >= 12
             return True  # Unknown extension -- let PIL try later
