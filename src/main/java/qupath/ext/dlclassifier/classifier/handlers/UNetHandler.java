@@ -1,9 +1,5 @@
 package qupath.ext.dlclassifier.classifier.handlers;
 
-import javafx.geometry.Insets;
-import javafx.scene.Node;
-import javafx.scene.control.*;
-import javafx.scene.layout.GridPane;
 import qupath.ext.dlclassifier.classifier.ClassifierHandler;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
@@ -198,10 +194,9 @@ public class UNetHandler implements ClassifierHandler {
         return params;
     }
 
-    @Override
-    public Optional<TrainingUI> createTrainingUI() {
-        return Optional.of(new UNetTrainingUI());
-    }
+    // No handler-specific training UI needed for UNet.
+    // Encoder selection and layer freezing are handled by TrainingDialog's
+    // generic backbone combo and LayerFreezePanel respectively.
 
     @Override
     public ClassifierMetadata buildMetadata(TrainingConfig config,
@@ -255,50 +250,4 @@ public class UNetHandler implements ClassifierHandler {
         return colors[index % colors.length];
     }
 
-    /**
-     * UI component for UNet-specific training parameters.
-     */
-    private static class UNetTrainingUI implements TrainingUI {
-
-        private final GridPane root;
-        private final Spinner<Integer> freezeLayersSpinner;
-
-        public UNetTrainingUI() {
-            root = new GridPane();
-            root.setHgap(10);
-            root.setVgap(10);
-            root.setPadding(new Insets(10));
-
-            // Encoder selection is handled by TrainingDialog's backbone combo.
-            // This UI only provides UNet-specific parameters.
-
-            // Freeze layers
-            Label freezeLabel = new Label("Freeze Encoder Layers:");
-            freezeLayersSpinner = new Spinner<>();
-            freezeLayersSpinner.setValueFactory(
-                    new SpinnerValueFactory.IntegerSpinnerValueFactory(0, 5, 0));
-            freezeLayersSpinner.setEditable(true);
-            freezeLayersSpinner.setMaxWidth(100);
-
-            root.add(freezeLabel, 0, 0);
-            root.add(freezeLayersSpinner, 1, 0);
-        }
-
-        @Override
-        public Node getNode() {
-            return root;
-        }
-
-        @Override
-        public Map<String, Object> getParameters() {
-            Map<String, Object> params = new HashMap<>();
-            params.put("freeze_encoder_layers", freezeLayersSpinner.getValue());
-            return params;
-        }
-
-        @Override
-        public Optional<String> validate() {
-            return Optional.empty();
-        }
-    }
 }
