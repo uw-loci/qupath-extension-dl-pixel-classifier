@@ -34,7 +34,9 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 ## Installation
 
 1. **Download** the latest JAR from the [GitHub Releases](https://github.com/MichaelSNelson/qupath-extension-DL-pixel-classifier/releases) page
-2. **Copy** the JAR to your QuPath extensions directory:
+2. **Install** the JAR using one of these methods:
+   - **Drag and drop** the JAR file directly onto the open QuPath window (easiest), or
+   - **Copy** the JAR manually to your QuPath extensions directory:
 
 | OS | Extensions path |
 |----|----------------|
@@ -50,9 +52,12 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and G
 
 ## Getting Started
 
-1. **Set up the Python environment** -- **Extensions > DL Pixel Classifier > Setup DL Environment...** downloads and configures everything automatically (~2-4 GB, first time only)
-2. **Train a classifier** -- create annotations, open **Train Classifier...**, and click Start Training
-3. **Apply the classifier** -- open **Apply Classifier...**, select a model, choose an output type, and click Apply
+1. **Set up the Python environment** -- go to **Extensions > DL Pixel Classifier > Setup DL Environment...** in the QuPath menu bar. This downloads and configures PyTorch, CUDA, and all dependencies automatically (~2-4 GB, first time only).
+
+   > **After updating the extension:** If you install a new version of this extension, you may need to re-run **Setup DL Environment...** to update the Python environment to match. The setup wizard will handle this automatically -- just run it again from the same menu location.
+
+2. **Train a classifier** -- create annotations, open **Extensions > DL Pixel Classifier > Train Classifier...**, and click Start Training
+3. **Apply the classifier** -- open **Extensions > DL Pixel Classifier > Apply Classifier...**, select a model, choose an output type, and click Apply
 
 See [QUICKSTART.md](QUICKSTART.md) for a complete walkthrough (zero to classifier in ~10 minutes).
 
