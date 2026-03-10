@@ -507,7 +507,8 @@ public class TrainingDialog {
                     "Load all weights from a previously trained model as the starting point.\n" +
                     "The optimizer and learning rate schedule start fresh.\n" +
                     "Useful for fine-tuning on additional data or adjusted classes.");
-            continueTrainingRadio.setDisable(true); // Enabled after loading a model
+            // Radio is always selectable so the user can see the "Select model..." button.
+            // The Train button validates that a model has actually been loaded.
 
             Button selectModelButton = new Button("Select model...");
             selectModelButton.setOnAction(e -> {
@@ -532,9 +533,11 @@ public class TrainingDialog {
             continueTrainingContent = new VBox(5, new HBox(10, selectModelButton, loadedModelLabel));
             continueTrainingContent.setPadding(new Insets(0, 0, 0, 20));
 
-            // Toggle group listener: show/hide sub-content
-            weightInitGroup.selectedToggleProperty().addListener((obs, old, newVal) ->
-                    updateWeightInitSubContent());
+            // Toggle group listener: show/hide sub-content + re-validate
+            weightInitGroup.selectedToggleProperty().addListener((obs, old, newVal) -> {
+                    updateWeightInitSubContent();
+                    updateValidation();
+            });
 
             // Assemble all options
             content.getChildren().addAll(
@@ -928,19 +931,17 @@ public class TrainingDialog {
                 }
             });
             if (pretrainedModelPtPath == null) {
-                continueTrainingRadio.setDisable(true);
                 logger.warn("No model.pt found for '{}' -- continue training not available",
                         metadata.getName());
+                loadedModelLabel.setText("No model.pt found for: " + metadata.getName());
+                loadedModelLabel.setStyle("-fx-text-fill: #cc6600; -fx-font-style: italic;");
             } else {
                 validatePretrainedModelCompatibility();
                 // Auto-select continue training since user picked a model
-                if (!continueTrainingRadio.isDisabled()) {
-                    selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
-                }
+                selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
+                loadedModelLabel.setText("Loaded from: " + metadata.getName());
+                loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
             }
-
-            // Update UI label
-            loadedModelLabel.setText("Loaded from: " + metadata.getName());
 
             logger.info("Settings loaded from model '{}'. {} training settings fields applied.",
                     metadata.getName(), ts != null ? ts.size() : 0);
@@ -963,22 +964,24 @@ public class TrainingDialog {
             boolean archMatch = Objects.equals(currentArch, pretrainedModelArchitecture);
             boolean backboneMatch = Objects.equals(currentBackbone, pretrainedModelBackbone);
 
-            if (archMatch && backboneMatch) {
-                continueTrainingRadio.setDisable(false);
-            } else {
-                continueTrainingRadio.setDisable(true);
+            if (!archMatch || !backboneMatch) {
+                // Warn but don't disable -- let updateValidation() handle blocking
+                loadedModelLabel.setText(String.format(
+                        "Loaded: %s (architecture mismatch: %s/%s)",
+                        loadedModelLabel.getText().replace("Loaded from: ", ""),
+                        currentArch, currentBackbone));
+                loadedModelLabel.setStyle("-fx-text-fill: #cc6600; -fx-font-style: italic;");
+                // Clear the path so validation blocks training
+                pretrainedModelPtPath = null;
                 if (getSelectedWeightInitStrategy() ==
                         ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING) {
-                    // Fall back to handler's default strategy
-                    ClassifierHandler handler = ClassifierRegistry.getHandler(currentArch)
-                            .orElse(ClassifierRegistry.getDefaultHandler());
-                    selectWeightInitStrategy(handler.getDefaultWeightInitStrategy());
-                    logger.info("Reset weight init -- architecture/backbone changed " +
-                            "from {}/{} to {}/{}",
+                    logger.info("Architecture/backbone changed from {}/{} to {}/{} " +
+                            "-- continue training model invalidated",
                             pretrainedModelArchitecture, pretrainedModelBackbone,
                             currentArch, currentBackbone);
                 }
             }
+            updateValidation();
         }
 
         private TitledPane createBasicInfoSection() {
@@ -1456,7 +1459,8 @@ public class TrainingDialog {
                     "1x (Full resolution)",
                     "2x (Half resolution)",
                     "4x (Quarter resolution)",
-                    "8x (1/8 resolution)"
+                    "8x (1/8 resolution)",
+                    "16x (1/16 resolution)"
             ));
             downsampleCombo.setValue(mapDownsampleToDisplay(DLClassifierPreferences.getDefaultDownsample()));
             TooltipHelper.install(downsampleCombo,
@@ -1465,7 +1469,8 @@ public class TrainingDialog {
                     "1x: Full resolution -- best for cell-level features.\n" +
                     "2x: Half resolution -- good for tissue structures.\n" +
                     "4x: Quarter resolution -- each 512px tile covers 2048px of tissue.\n" +
-                    "8x: Low resolution -- for large-scale region classification.\n\n" +
+                    "8x: Low resolution -- for large-scale region classification.\n" +
+                    "16x: Very low resolution -- for whole-slide macro features.\n\n" +
                     "Tip: If your data is higher resolution than the model was\n" +
                     "trained on, consider downsampling to match. For example,\n" +
                     "use 2x for 40x data when the model was trained on 20x data,\n" +
@@ -1517,7 +1522,8 @@ public class TrainingDialog {
                     "None (single scale)",
                     "2x context",
                     "4x context (Recommended)",
-                    "8x context"
+                    "8x context",
+                    "16x context"
             ));
             contextScaleCombo.setValue(mapContextScaleToDisplay(DLClassifierPreferences.getDefaultContextScale()));
             TooltipHelper.install(contextScaleCombo,
@@ -1527,7 +1533,8 @@ public class TrainingDialog {
                     "None: Single-scale input (current behavior).\n" +
                     "2x: Context covers 2x the area. Moderate additional context.\n" +
                     "4x: Context covers 4x the area. Good for tissue-level patterns.\n" +
-                    "8x: Context covers 8x the area. For large-scale classification.\n\n" +
+                    "8x: Context covers 8x the area. For large-scale classification.\n" +
+                    "16x: Context covers 16x the area. Maximum spatial context.\n\n" +
                     "Adds C extra input channels (e.g., 3ch RGB -> 6ch with context).\n" +
                     "Modest memory increase (~5-10%). Compatible with all architectures.");
 
@@ -2493,6 +2500,20 @@ public class TrainingDialog {
                 validationErrors.remove("classes");
             }
 
+            // Check weight init: CONTINUE_TRAINING requires a loaded model
+            ClassifierHandler.WeightInitStrategy weightStrategy = getSelectedWeightInitStrategy();
+            if (weightStrategy == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING
+                    && (pretrainedModelPtPath == null || pretrainedModelPtPath.isEmpty())) {
+                validationErrors.put("weightInit",
+                        "Continue training requires a model -- click 'Select model...' first");
+            } else if (weightStrategy == ClassifierHandler.WeightInitStrategy.MAE_ENCODER
+                    && (maeEncoderPathField.getText() == null || maeEncoderPathField.getText().isEmpty())) {
+                validationErrors.put("weightInit",
+                        "MAE encoder requires a .pt file -- click 'Browse...' to select one");
+            } else {
+                validationErrors.remove("weightInit");
+            }
+
             updateErrorSummary();
         }
 
@@ -2751,6 +2772,7 @@ public class TrainingDialog {
          */
         private static double parseDownsample(String displayValue) {
             if (displayValue == null) return 1.0;
+            if (displayValue.startsWith("16x")) return 16.0;
             if (displayValue.startsWith("8x")) return 8.0;
             if (displayValue.startsWith("4x")) return 4.0;
             if (displayValue.startsWith("2x")) return 2.0;
@@ -2762,6 +2784,7 @@ public class TrainingDialog {
          */
         private static int parseContextScale(String displayValue) {
             if (displayValue == null) return 1;
+            if (displayValue.startsWith("16x")) return 16;
             if (displayValue.startsWith("8x")) return 8;
             if (displayValue.startsWith("4x")) return 4;
             if (displayValue.startsWith("2x")) return 2;
@@ -2815,6 +2838,7 @@ public class TrainingDialog {
         }
 
         private static String mapDownsampleToDisplay(double value) {
+            if (value >= 16.0) return "16x (1/16 resolution)";
             if (value >= 8.0) return "8x (1/8 resolution)";
             if (value >= 4.0) return "4x (Quarter resolution)";
             if (value >= 2.0) return "2x (Half resolution)";
@@ -2823,6 +2847,7 @@ public class TrainingDialog {
 
         private static String mapContextScaleToDisplay(int value) {
             return switch (value) {
+                case 16 -> "16x context";
                 case 8 -> "8x context";
                 case 4 -> "4x context (Recommended)";
                 case 2 -> "2x context";
