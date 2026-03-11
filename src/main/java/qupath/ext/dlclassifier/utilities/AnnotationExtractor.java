@@ -83,6 +83,7 @@ public class AnnotationExtractor {
     private final int lineStrokeWidth;
     private final double downsample;
     private final int contextScale;
+    private final int contextPadding;  // pixels of real-data border around each tile (0 = disabled)
 
     /**
      * Creates a new annotation extractor.
@@ -145,6 +146,29 @@ public class AnnotationExtractor {
                                int lineStrokeWidth,
                                double downsample,
                                int contextScale) {
+        this(imageData, patchSize, channelConfig, lineStrokeWidth, downsample, contextScale, 0);
+    }
+
+    /**
+     * Creates a new annotation extractor with multi-scale context and context padding.
+     *
+     * @param imageData       the image data
+     * @param patchSize       the patch size to extract (output size in pixels)
+     * @param channelConfig   channel configuration
+     * @param lineStrokeWidth stroke width for rendering line annotations (pixels)
+     * @param downsample      downsample factor (1.0 = full resolution)
+     * @param contextScale    context scale factor (1 = disabled, 2/4/8 = context tile extracted)
+     * @param contextPadding  pixels of real-data border around each tile (0 = disabled).
+     *                        When enabled, tiles are extracted at (patchSize + 2*contextPadding)
+     *                        with the padding region masked as 255 (unlabeled).
+     */
+    public AnnotationExtractor(ImageData<BufferedImage> imageData,
+                               int patchSize,
+                               ChannelConfiguration channelConfig,
+                               int lineStrokeWidth,
+                               double downsample,
+                               int contextScale,
+                               int contextPadding) {
         this.imageData = imageData;
         this.server = imageData.getServer();
         this.patchSize = patchSize;
@@ -152,6 +176,7 @@ public class AnnotationExtractor {
         this.lineStrokeWidth = lineStrokeWidth;
         this.downsample = downsample;
         this.contextScale = contextScale;
+        this.contextPadding = contextPadding;
     }
 
     /**
@@ -310,18 +335,15 @@ public class AnnotationExtractor {
             PendingPatch pp = pendingPatches.get(p);
             boolean isValidation = isValidationArr[p];
 
-            RegionRequest request = RegionRequest.createInstance(
-                    server.getPath(), downsample,
-                    pp.location().x(), pp.location().y(), regionSize, regionSize,
-                    0, 0);
-            BufferedImage image = server.readRegion(request);
+            BufferedImage image = readPaddedTile(pp.location().x(), pp.location().y(), regionSize);
+            BufferedImage mask = padMaskWithIgnoreBorder(pp.maskResult().mask());
 
             Path imgDir = isValidation ? valImages : trainImages;
             Path maskDir = isValidation ? valMasks : trainMasks;
             String filename = String.format("patch_%04d.tiff", patchIndex);
 
             savePatch(image, imgDir.resolve(filename));
-            saveMask(pp.maskResult().mask(), maskDir.resolve(String.format("patch_%04d.png", patchIndex)));
+            saveMask(mask, maskDir.resolve(String.format("patch_%04d.png", patchIndex)));
 
             if (contextScale > 1) {
                 Path ctxDir = isValidation ? valContext : trainContext;
@@ -527,17 +549,15 @@ public class AnnotationExtractor {
             PendingPatch pp = pendingPatches.get(p);
             boolean isValidation = isValidationArr[p];
 
-            RegionRequest request = RegionRequest.createInstance(
-                    server.getPath(), downsample,
-                    pp.location().x(), pp.location().y(), regionSize, regionSize, 0, 0);
-            BufferedImage image = server.readRegion(request);
+            BufferedImage image = readPaddedTile(pp.location().x(), pp.location().y(), regionSize);
+            BufferedImage mask = padMaskWithIgnoreBorder(pp.maskResult().mask());
 
             Path imgDir = isValidation ? valImages : trainImages;
             Path maskDir = isValidation ? valMasks : trainMasks;
             String filename = String.format("patch_%04d.tiff", patchIndex);
 
             savePatch(image, imgDir.resolve(filename));
-            saveMask(pp.maskResult().mask(), maskDir.resolve(String.format("patch_%04d.png", patchIndex)));
+            saveMask(mask, maskDir.resolve(String.format("patch_%04d.png", patchIndex)));
 
             if (contextScale > 1) {
                 Path ctxDir = isValidation ? valContext : trainContext;
@@ -709,6 +729,40 @@ public class AnnotationExtractor {
             Map<String, Double> classWeightMultipliers,
             double downsample,
             int contextScale) throws IOException {
+        return exportFromProject(entries, patchSize, channelConfig, classNames,
+                outputDir, validationSplit, lineStrokeWidth, classWeightMultipliers, downsample,
+                contextScale, 0);
+    }
+
+    /**
+     * Exports training data from multiple project images with multi-scale context and padding.
+     *
+     * @param entries                project image entries to export from
+     * @param patchSize              the patch size to extract
+     * @param channelConfig          channel configuration
+     * @param classNames             list of class names to export
+     * @param outputDir              output directory for combined training data
+     * @param validationSplit        fraction of data for validation (0.0-1.0)
+     * @param lineStrokeWidth        stroke width for rendering line annotations (pixels)
+     * @param classWeightMultipliers user multipliers on auto-computed weights (empty = no modification)
+     * @param downsample             downsample factor (1.0 = full resolution)
+     * @param contextScale           context scale factor (1 = disabled, 2/4/8 = context)
+     * @param contextPadding         pixels of real-data border around each tile (0 = disabled)
+     * @return combined export statistics
+     * @throws IOException if export fails
+     */
+    public static ExportResult exportFromProject(
+            List<ProjectImageEntry<BufferedImage>> entries,
+            int patchSize,
+            ChannelConfiguration channelConfig,
+            List<String> classNames,
+            Path outputDir,
+            double validationSplit,
+            int lineStrokeWidth,
+            Map<String, Double> classWeightMultipliers,
+            double downsample,
+            int contextScale,
+            int contextPadding) throws IOException {
 
         logger.info("Exporting training data from {} project images to: {}", entries.size(), outputDir);
 
@@ -746,7 +800,7 @@ public class AnnotationExtractor {
             logger.info("Processing image: {}", entry.getImageName());
             try {
                 ImageData<BufferedImage> imageData = entry.readImageData();
-                AnnotationExtractor extractor = new AnnotationExtractor(imageData, patchSize, channelConfig, lineStrokeWidth, downsample, contextScale);
+                AnnotationExtractor extractor = new AnnotationExtractor(imageData, patchSize, channelConfig, lineStrokeWidth, downsample, contextScale, contextPadding);
 
                 String imageName = entry.getImageName();
                 String imageId = entry.getID();
@@ -865,7 +919,8 @@ public class AnnotationExtractor {
         // Save combined config.json
         saveProjectConfig(outputDir, classNames, totalClassPixelCounts, totalLabeledPixels,
                 channelConfig, patchSize, totalTrainCount, totalValCount,
-                totalAnnotationCount, sourceImages, classWeightMultipliers, downsample, contextScale);
+                totalAnnotationCount, sourceImages, classWeightMultipliers, downsample, contextScale,
+                contextPadding);
 
         // Write tile manifest for post-training evaluation
         writeTileManifest(outputDir, allManifestEntries, patchSize, downsample);
@@ -886,7 +941,8 @@ public class AnnotationExtractor {
                                            int trainCount, int valCount,
                                            int annotationCount, List<String> sourceImages,
                                            Map<String, Double> classWeightMultipliers,
-                                           double downsample, int contextScale)
+                                           double downsample, int contextScale,
+                                           int contextPadding)
             throws IOException {
         Path configPath = outputDir.resolve("config.json");
         List<String> channelNames = channelConfig.getChannelNames();
@@ -895,6 +951,7 @@ public class AnnotationExtractor {
         StringBuilder json = new StringBuilder();
         json.append("{\n");
         json.append("  \"patch_size\": ").append(patchSize).append(",\n");
+        json.append("  \"context_padding\": ").append(contextPadding).append(",\n");
         json.append("  \"downsample\": ").append(downsample).append(",\n");
         json.append("  \"unlabeled_index\": ").append(UNLABELED_INDEX).append(",\n");
         json.append("  \"total_labeled_pixels\": ").append(totalLabeledPixels).append(",\n");
@@ -961,18 +1018,168 @@ public class AnnotationExtractor {
     }
 
     /**
-     * Reads a context tile centered on the same location as a detail tile.
+     * Reads a training tile with optional context padding of real image data.
      * <p>
-     * The context region covers {@code contextScale} times the area of the detail
-     * region, read at {@code downsample * contextScale} so the output has the same
-     * pixel dimensions (patchSize x patchSize) as the detail tile.
+     * When {@code contextPadding > 0}, the region is expanded outward by
+     * {@code contextPadding * downsample} pixels on each side. If the expanded
+     * region extends beyond image bounds, it is clamped and reflection-padded
+     * for the missing portion.
+     * <p>
+     * When {@code contextPadding == 0}, reads the exact region (no padding).
      *
-     * @param detailX    top-left X of the detail tile region (full-res coords)
-     * @param detailY    top-left Y of the detail tile region (full-res coords)
-     * @param detailSize size of the detail region in full-res coords (patchSize * downsample)
-     * @return context tile image (patchSize x patchSize pixels)
+     * @param tileX      top-left X in full-res coordinates
+     * @param tileY      top-left Y in full-res coordinates
+     * @param regionSize size of the core region in full-res coordinates
+     * @return tile image, either patchSize or (patchSize + 2*contextPadding) pixels wide
      * @throws IOException if reading fails
      */
+    private BufferedImage readPaddedTile(int tileX, int tileY, int regionSize) throws IOException {
+        if (contextPadding <= 0) {
+            // No padding -- read exact region
+            RegionRequest request = RegionRequest.createInstance(
+                    server.getPath(), downsample,
+                    tileX, tileY, regionSize, regionSize, 0, 0);
+            return server.readRegion(request);
+        }
+
+        int padFullRes = (int) (contextPadding * downsample);
+        int paddedRegionSize = regionSize + 2 * padFullRes;
+
+        int imgW = server.getWidth();
+        int imgH = server.getHeight();
+
+        // Expand outward, then clamp to image bounds
+        int padX = tileX - padFullRes;
+        int padY = tileY - padFullRes;
+        int readX = Math.max(0, padX);
+        int readY = Math.max(0, padY);
+        int readW = Math.min(paddedRegionSize, imgW - readX);
+        int readH = Math.min(paddedRegionSize, imgH - readY);
+
+        // Adjust if the padded origin was negative (clamped to 0)
+        if (padX < 0) readW = Math.min(readW, paddedRegionSize + padX);
+        if (padY < 0) readH = Math.min(readH, paddedRegionSize + padY);
+        readW = Math.max(1, readW);
+        readH = Math.max(1, readH);
+
+        RegionRequest request = RegionRequest.createInstance(
+                server.getPath(), downsample,
+                readX, readY, readW, readH, 0, 0);
+        BufferedImage readImage = server.readRegion(request);
+
+        int targetSize = patchSize + 2 * contextPadding;
+
+        // If we read the full padded area, return directly
+        if (readImage.getWidth() == targetSize && readImage.getHeight() == targetSize) {
+            return readImage;
+        }
+
+        // Edge tile: place the read portion at the correct offset and reflection-pad the rest
+        int offsetInPaddedX = (int) ((readX - padX) / downsample);
+        int offsetInPaddedY = (int) ((readY - padY) / downsample);
+
+        return reflectionPadImage(readImage, targetSize, targetSize,
+                offsetInPaddedX, offsetInPaddedY);
+    }
+
+    /**
+     * Wraps the core-region mask with an ignore-index (255) border for context padding.
+     * <p>
+     * When {@code contextPadding > 0}, the original patchSize x patchSize mask is
+     * centered in a larger (patchSize + 2*contextPadding) mask filled with 255.
+     * When {@code contextPadding == 0}, returns the mask unchanged.
+     *
+     * @param coreMask the patchSize x patchSize mask with class labels
+     * @return padded mask, or the original if no padding
+     */
+    private BufferedImage padMaskWithIgnoreBorder(BufferedImage coreMask) {
+        if (contextPadding <= 0) {
+            return coreMask;
+        }
+        int paddedSize = patchSize + 2 * contextPadding;
+        BufferedImage paddedMask = new BufferedImage(paddedSize, paddedSize,
+                BufferedImage.TYPE_BYTE_GRAY);
+        Graphics2D g2d = paddedMask.createGraphics();
+        // Fill entire mask with unlabeled (255)
+        g2d.setColor(new Color(UNLABELED_INDEX, UNLABELED_INDEX, UNLABELED_INDEX));
+        g2d.fillRect(0, 0, paddedSize, paddedSize);
+        // Draw original mask in the center
+        g2d.drawImage(coreMask, contextPadding, contextPadding, null);
+        g2d.dispose();
+        return paddedMask;
+    }
+
+    /**
+     * Reflection-pads a source image to target dimensions.
+     * The source is placed at (offsetX, offsetY) within the target; remaining
+     * pixels are filled by reflecting the source content.
+     *
+     * @param source  the source image
+     * @param targetW target width
+     * @param targetH target height
+     * @param offsetX X offset where source is placed in the target
+     * @param offsetY Y offset where source is placed in the target
+     * @return reflection-padded image of targetW x targetH
+     */
+    private static BufferedImage reflectionPadImage(BufferedImage source,
+                                                     int targetW, int targetH,
+                                                     int offsetX, int offsetY) {
+        int srcW = source.getWidth();
+        int srcH = source.getHeight();
+        BufferedImage padded = new BufferedImage(targetW, targetH, source.getType());
+        Graphics2D g = padded.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+
+        // Draw the source at its offset position
+        g.drawImage(source, offsetX, offsetY, null);
+
+        // Reflect left border
+        if (offsetX > 0) {
+            int w = Math.min(offsetX, srcW);
+            // Flip horizontally: draw the left strip of source mirrored
+            g.drawImage(source,
+                    offsetX - 1, offsetY, offsetX - w - 1, offsetY + srcH,  // dest: reversed x
+                    0, 0, w, srcH,  // src
+                    null);
+        }
+
+        // Reflect right border
+        int rightGap = targetW - (offsetX + srcW);
+        if (rightGap > 0) {
+            int w = Math.min(rightGap, srcW);
+            g.drawImage(source,
+                    offsetX + srcW, offsetY, offsetX + srcW + w, offsetY + srcH,
+                    srcW - 1, 0, srcW - 1 - w, srcH,
+                    null);
+        }
+
+        // Reflect top border (over the full width of what we have so far)
+        if (offsetY > 0) {
+            int h = Math.min(offsetY, srcH);
+            // Copy the top strip of the padded image and flip vertically
+            BufferedImage topStrip = padded.getSubimage(0, offsetY, targetW, h);
+            g.drawImage(topStrip,
+                    0, offsetY - 1, targetW, offsetY - h - 1,
+                    0, 0, targetW, h,
+                    null);
+        }
+
+        // Reflect bottom border
+        int bottomGap = targetH - (offsetY + srcH);
+        if (bottomGap > 0) {
+            int h = Math.min(bottomGap, srcH);
+            BufferedImage bottomStrip = padded.getSubimage(0, offsetY + srcH - h, targetW, h);
+            g.drawImage(bottomStrip,
+                    0, offsetY + srcH, targetW, offsetY + srcH + h,
+                    0, h - 1, targetW, -1,
+                    null);
+        }
+
+        g.dispose();
+        return padded;
+    }
+
     /**
      * Reads a context tile centered on the same location as a detail tile.
      * <p>
@@ -1243,6 +1450,7 @@ public class AnnotationExtractor {
         StringBuilder json = new StringBuilder();
         json.append("{\n");
         json.append("  \"patch_size\": ").append(patchSize).append(",\n");
+        json.append("  \"context_padding\": ").append(contextPadding).append(",\n");
         json.append("  \"downsample\": ").append(downsample).append(",\n");
         json.append("  \"unlabeled_index\": ").append(UNLABELED_INDEX).append(",\n");
         json.append("  \"line_stroke_width\": ").append(lineStrokeWidth).append(",\n");

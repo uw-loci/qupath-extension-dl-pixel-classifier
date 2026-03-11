@@ -268,7 +268,9 @@ public class DLPixelClassifier implements PixelClassifier {
         try {
             // Use binary pixel inference (single-tile batch)
             // Pass channelConfigWithStats which includes precomputed normalization stats
-            int reflectionPadding = DLClassifierPreferences.getOverlayReflectionPadding();
+            // QuPath's inputPadding already provides real surrounding image data.
+            // Reflection padding would add artificial data on top of real context.
+            int reflectionPadding = 0;
             PixelInferenceResult result = backend.runPixelInferenceBinary(
                     modelDirPath, rawBytes, List.of(tileId),
                     tileImage.getHeight(), tileImage.getWidth(), numChannels,

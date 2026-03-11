@@ -685,6 +685,15 @@ class TrainingService:
             logger.info(f"Context scale {context_scale}: model input channels "
                         f"{base_channels} -> {effective_channels} (detail + context)")
 
+        # Log context padding if present (real-data border around training tiles)
+        context_padding = input_config.get("context_padding", 0)
+        if context_padding > 0:
+            patch_size = architecture.get("input_size", [512, 512])[0]
+            logger.info("Context padding: %dpx per side (effective tile: %dx%d)",
+                        context_padding,
+                        patch_size + 2 * context_padding,
+                        patch_size + 2 * context_padding)
+
         # Create model with optional frozen layers
         _report_setup("creating_model")
         if frozen_layers:
@@ -1667,7 +1676,7 @@ class TrainingService:
             "epochs_trained": len(training_history),
             "early_stopped": early_stopping.should_stop if early_stopping else False,
             "checkpoint_path": completion_checkpoint_path,
-            "epoch": epochs,
+            "epoch": len(training_history),
             "total_epochs": epochs,
         }
 

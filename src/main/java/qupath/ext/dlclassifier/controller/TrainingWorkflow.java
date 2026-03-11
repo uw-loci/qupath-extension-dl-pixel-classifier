@@ -802,6 +802,20 @@ public class TrainingWorkflow {
                         trainingConfig.getGradientAccumulationSteps()));
             }
 
+            // Compute context padding: real image data around each tile to match inference geometry.
+            // Disabled for whole-image mode (no surrounding data available).
+            int contextPadding = trainingConfig.isWholeImage() ? 0
+                    : computeTrainingContextPadding(effectiveTileSize, trainingConfig);
+            if (contextPadding > 0) {
+                int paddedSize = effectiveTileSize + 2 * contextPadding;
+                logger.info("Context padding: {}px per side (tiles will be {}x{})",
+                        contextPadding, paddedSize, paddedSize);
+                if (progress != null) {
+                    progress.log("Context padding: " + contextPadding + "px per side (tiles will be "
+                            + paddedSize + "x" + paddedSize + ")");
+                }
+            }
+
             int patchCount;
             if (selectedImages != null && !selectedImages.isEmpty()) {
                 // Multi-image project export
@@ -819,7 +833,8 @@ public class TrainingWorkflow {
                         trainingConfig.getLineStrokeWidth(),
                         weightMultipliers,
                         trainingConfig.getDownsample(),
-                        trainingConfig.getContextScale()
+                        trainingConfig.getContextScale(),
+                        contextPadding
                 );
                 patchCount = exportResult.totalPatches();
             } else {
@@ -830,7 +845,8 @@ public class TrainingWorkflow {
                         channelConfig,
                         trainingConfig.getLineStrokeWidth(),
                         trainingConfig.getDownsample(),
-                        trainingConfig.getContextScale()
+                        trainingConfig.getContextScale(),
+                        contextPadding
                 );
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit(), weightMultipliers);
@@ -1101,10 +1117,22 @@ public class TrainingWorkflow {
                 return;
             }
 
-            // 2. Show resume param dialog (on FX thread)
+            // 2. Look up how many epochs have already been trained
+            int epochsCompleted = 0;
+            ClassifierBackend resumeBackend = BackendFactory.getBackend();
+            if (resumeBackend instanceof ApposeClassifierBackend apposeBackend) {
+                var checkpointInfo = apposeBackend.getCheckpointInfo(jobId);
+                if (checkpointInfo != null) {
+                    epochsCompleted = checkpointInfo.lastEpoch();
+                }
+            }
+
+            // 3. Show resume param dialog (on FX thread)
+            final int completedEpochs = epochsCompleted;
             CompletableFuture<Optional<ResumeParams>> paramsFuture = new CompletableFuture<>();
             Platform.runLater(() -> {
                 Optional<ResumeParams> params = showResumeParamDialog(
+                        completedEpochs,
                         trainingConfig.getEpochs(),
                         trainingConfig.getLearningRate(),
                         trainingConfig.getBatchSize());
@@ -1117,7 +1145,7 @@ public class TrainingWorkflow {
             }
             ResumeParams params = paramsOpt.get();
 
-            // 3. Re-export training data
+            // 4. Re-export training data
             progress.showResumedState();
             progress.setStatus("Re-exporting training data...");
             progress.log("Re-exporting annotations (includes any new/modified annotations)...");
@@ -1171,6 +1199,8 @@ public class TrainingWorkflow {
             trainingConfig.adjustBatchForTileSize(effectiveTileSize);
 
             Map<String, Double> resumeMultipliers = trainingConfig.getClassWeightMultipliers();
+            int contextPadding = trainingConfig.isWholeImage() ? 0
+                    : computeTrainingContextPadding(effectiveTileSize, trainingConfig);
             int patchCount;
             if (selectedImages != null && !selectedImages.isEmpty()) {
                 AnnotationExtractor.ExportResult exportResult = AnnotationExtractor.exportFromProject(
@@ -1183,7 +1213,8 @@ public class TrainingWorkflow {
                         trainingConfig.getLineStrokeWidth(),
                         resumeMultipliers,
                         trainingConfig.getDownsample(),
-                        trainingConfig.getContextScale()
+                        trainingConfig.getContextScale(),
+                        contextPadding
                 );
                 patchCount = exportResult.totalPatches();
             } else {
@@ -1191,7 +1222,7 @@ public class TrainingWorkflow {
                 AnnotationExtractor extractor = new AnnotationExtractor(
                         imageData, effectiveTileSize, channelConfig,
                         trainingConfig.getLineStrokeWidth(), trainingConfig.getDownsample(),
-                        trainingConfig.getContextScale());
+                        trainingConfig.getContextScale(), contextPadding);
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit(), resumeMultipliers);
                 patchCount = exportResult.totalPatches();
@@ -1208,7 +1239,7 @@ public class TrainingWorkflow {
                 progress.log("Transfer learning: pretrained weights loaded, all layers trainable");
             }
 
-            // 4. Suspend overlay during resumed training to free GPU memory
+            // 5. Suspend overlay during resumed training to free GPU memory
             OverlayService.getInstance().suspendForTraining();
 
             // Resume training via backend
@@ -1272,7 +1303,7 @@ public class TrainingWorkflow {
                     progress::isCancelled
             );
 
-            // 5. Handle result -- may be paused again, completed, or cancelled
+            // 6. Handle result -- may be paused again, completed, or cancelled
             if (serverResult.isPaused()) {
                 progress.log("Training paused again at epoch " + serverResult.lastEpoch());
                 progress.showPausedState(serverResult.lastEpoch(), serverResult.totalEpochs());
@@ -1458,7 +1489,8 @@ public class TrainingWorkflow {
      * @param currentBatch  current batch size
      * @return optional resume params, or empty if user cancelled
      */
-    private Optional<ResumeParams> showResumeParamDialog(int currentEpochs,
+    private Optional<ResumeParams> showResumeParamDialog(int epochsCompleted,
+                                                          int originalEpochs,
                                                           double currentLR,
                                                           int currentBatch) {
         Dialog<ResumeParams> dialog = new Dialog<>();
@@ -1471,8 +1503,20 @@ public class TrainingWorkflow {
         grid.setVgap(10);
         grid.setPadding(new Insets(20));
 
+        int row = 0;
+
+        // Show how many epochs have been completed
+        if (epochsCompleted > 0) {
+            Label completedLabel = new Label(epochsCompleted + " epochs completed so far");
+            completedLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
+            grid.add(completedLabel, 0, row, 2, 1);
+            row++;
+        }
+
+        // Default additional epochs to the original configured count
+        int defaultAdditional = Math.max(originalEpochs, 10);
         Spinner<Integer> epochSpinner = new Spinner<>(
-                new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 1000, currentEpochs));
+                new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 1000, defaultAdditional));
         epochSpinner.setEditable(true);
 
         TextField lrField = new TextField(String.valueOf(currentLR));
@@ -1482,20 +1526,24 @@ public class TrainingWorkflow {
                 new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 128, currentBatch));
         batchSpinner.setEditable(true);
 
-        grid.add(new Label("Total Epochs:"), 0, 0);
-        grid.add(epochSpinner, 1, 0);
-        grid.add(new Label("Learning Rate:"), 0, 1);
-        grid.add(lrField, 1, 1);
-        grid.add(new Label("Batch Size:"), 0, 2);
-        grid.add(batchSpinner, 1, 2);
+        grid.add(new Label("Additional Epochs:"), 0, row);
+        grid.add(epochSpinner, 1, row);
+        row++;
+        grid.add(new Label("Learning Rate:"), 0, row);
+        grid.add(lrField, 1, row);
+        row++;
+        grid.add(new Label("Batch Size:"), 0, row);
+        grid.add(batchSpinner, 1, row);
 
         dialog.getDialogPane().setContent(grid);
 
+        final int completed = epochsCompleted;
         dialog.setResultConverter(buttonType -> {
             if (buttonType == ButtonType.OK) {
                 try {
                     double lr = Double.parseDouble(lrField.getText().trim());
-                    return new ResumeParams(epochSpinner.getValue(), lr, batchSpinner.getValue());
+                    int totalEpochs = completed + epochSpinner.getValue();
+                    return new ResumeParams(totalEpochs, lr, batchSpinner.getValue());
                 } catch (NumberFormatException e) {
                     logger.warn("Invalid learning rate value: {}", lrField.getText());
                     return null;
@@ -1636,6 +1684,22 @@ public class TrainingWorkflow {
                 "#FF00FF", "#00FFFF", "#FF8800", "#8800FF"
         };
         return palette[classIndex % palette.length];
+    }
+
+    /**
+     * Computes context padding for training tiles to match inference geometry.
+     * Mirrors {@code DLPixelClassifier.computeOverlayPadding()} so that training
+     * tiles include the same amount of surrounding real data as inference tiles.
+     *
+     * @param tileSize tile size in pixels
+     * @param config   training configuration (provides overlap setting)
+     * @return padding in pixels (at least 64, at most tileSize/2)
+     */
+    private static int computeTrainingContextPadding(int tileSize, TrainingConfig config) {
+        int configOverlap = config.getOverlap();
+        int minPadding = tileSize / 4;
+        int padding = Math.max(configOverlap, minPadding);
+        return Math.max(64, Math.min(padding, tileSize / 2));
     }
 
     /**

@@ -176,13 +176,8 @@ public final class DLClassifierPreferences {
                         .getPropertySheet()
                         .getItems();
 
-        items.add(new PropertyItemBuilder<>(overlayReflectionPadding, Integer.class)
-                .name("Overlay Reflection Padding")
-                .category(CATEGORY)
-                .description("Pixels of reflection padding added around each tile before " +
-                        "neural network inference. Reduces tile edge artifacts caused by " +
-                        "zero padding in convolutional layers. Set to 0 to disable. Default: 32.")
-                .build());
+        // Overlay reflection padding preference removed -- QuPath's inputPadding
+        // now provides real surrounding data, making reflection padding unnecessary.
 
         items.add(new PropertyItemBuilder<>(overlayOverlapUm, Double.class)
                 .name("Overlay Overlap (um)")
