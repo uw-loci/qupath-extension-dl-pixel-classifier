@@ -1046,9 +1046,16 @@ class TrainingService:
             try:
                 suggested_lr, finder_lrs, finder_losses = self.find_learning_rate(
                     model, train_loader, criterion)
-                if suggested_lr is not None:
+                # Floor: reject absurdly small suggestions (likely noise)
+                min_reasonable_lr = 1e-5
+                if suggested_lr is not None and suggested_lr >= min_reasonable_lr:
                     logger.info(f"LR Finder suggested lr={suggested_lr:.6f}")
                     scheduler_config["max_lr"] = suggested_lr
+                elif suggested_lr is not None:
+                    logger.warning(
+                        f"LR Finder suggested lr={suggested_lr:.2e} is below"
+                        f" floor ({min_reasonable_lr:.0e}), using base lr"
+                        f" {learning_rate:.6f} instead")
                 else:
                     logger.info("LR Finder could not suggest LR, using default max_lr")
             except Exception as e:
@@ -1208,9 +1215,10 @@ class TrainingService:
             if param_groups and len(param_groups) > 1:
                 optimizer_desc = (f"AdamW (wd={weight_decay}, betas=0.9/0.99)"
                                   " [discriminative LRs]")
+                # Read live LRs from optimizer (scheduler may have changed them)
                 disc_lr_parts = ", ".join(
                     f"{g.get('group_name', '?')}={g['lr']:.6f}"
-                    for g in param_groups
+                    for g in optimizer.param_groups
                 )
             else:
                 optimizer_desc = (f"AdamW (lr={learning_rate}, wd={weight_decay},"
@@ -1731,15 +1739,27 @@ class TrainingService:
         elif scheduler_type == "onecycle":
             # One-cycle policy (good for finding optimal LR)
             # Support discriminative LRs: pass list of max_lr per param group
+            config_max_lr = scheduler_config.get("max_lr", None)
             if len(optimizer.param_groups) > 1:
-                max_lr = [
-                    scheduler_config.get("max_lr", g["lr"] * 10)
-                    if isinstance(scheduler_config.get("max_lr"), (int, float))
-                    else g["lr"] * 10
-                    for g in optimizer.param_groups
-                ]
+                if isinstance(config_max_lr, (int, float)):
+                    # LR finder returned a single scalar -- scale per group
+                    # by preserving the ratio each group has to the base LR.
+                    # The base LR is the max among the initial group LRs
+                    # (decoder/head), so encoder keeps its 1/10 ratio.
+                    base_lr = max(g["lr"] for g in optimizer.param_groups)
+                    if base_lr > 0:
+                        max_lr = [
+                            config_max_lr * (g["lr"] / base_lr)
+                            for g in optimizer.param_groups
+                        ]
+                    else:
+                        max_lr = [config_max_lr] * len(optimizer.param_groups)
+                else:
+                    # No finder result -- default to 10x each group's initial LR
+                    max_lr = [g["lr"] * 10 for g in optimizer.param_groups]
             else:
-                max_lr = scheduler_config.get("max_lr", optimizer.param_groups[0]["lr"] * 10)
+                max_lr = config_max_lr if isinstance(config_max_lr, (int, float)) \
+                    else optimizer.param_groups[0]["lr"] * 10
 
             accumulation_steps = scheduler_config.get("accumulation_steps", 1)
             total_steps = epochs * (steps_per_epoch // accumulation_steps)
@@ -1864,6 +1884,9 @@ class TrainingService:
         lrs, losses = [], []
         best_loss = float('inf')
         smoothed_loss = 0
+        # Lighter smoothing for short sweeps -- 0.98 needs hundreds of steps
+        # to settle; 0.9 responds in ~10 steps, better for 100-iter sweeps
+        beta = 0.9
 
         model.train()
         data_iter = iter(train_loader)
@@ -1883,8 +1906,8 @@ class TrainingService:
             loss = criterion(outputs, masks)
 
             # Exponential smoothing with bias correction
-            smoothed_loss = 0.98 * smoothed_loss + 0.02 * loss.item()
-            corrected = smoothed_loss / (1 - 0.98 ** (i + 1))
+            smoothed_loss = beta * smoothed_loss + (1 - beta) * loss.item()
+            corrected = smoothed_loss / (1 - beta ** (i + 1))
 
             if corrected < best_loss:
                 best_loss = corrected
@@ -1913,6 +1936,9 @@ class TrainingService:
     def _find_valley(lrs, losses):
         """Find the LR at the steepest descent in the loss curve (valley method).
 
+        Returns None if the loss curve is too flat (no meaningful descent found),
+        which lets the caller fall back to the user's configured learning rate.
+
         Args:
             lrs: List of learning rates
             losses: List of smoothed losses
@@ -1920,7 +1946,7 @@ class TrainingService:
         Returns:
             Suggested learning rate at steepest descent, or None if not found
         """
-        if len(lrs) < 4:
+        if len(lrs) < 10:
             return None
         # Compute gradient (finite differences on log-lr scale)
         log_lrs = [np.log10(lr) for lr in lrs]
@@ -1930,8 +1956,26 @@ class TrainingService:
             gradients.append(grad)
         if not gradients:
             return None
+
         # Steepest descent = most negative gradient
+        min_grad = float(np.min(gradients))
         min_idx = int(np.argmin(gradients))
+
+        # Reject if curve is essentially flat -- the steepest gradient must be
+        # meaningfully negative relative to the loss scale. If the total loss
+        # drop is < 5% of the starting loss, there's no real signal.
+        loss_range = max(losses) - min(losses)
+        if loss_range < 0.05 * losses[0]:
+            logger.info(
+                f"LR finder: loss curve is flat (range {loss_range:.4f},"
+                f" start {losses[0]:.4f}) -- no reliable suggestion")
+            return None
+
+        # Also reject if the steepest descent is positive (loss only goes up)
+        if min_grad >= 0:
+            logger.info("LR finder: no descent found in loss curve")
+            return None
+
         # The LR is at idx+1 (offset from gradient computation)
         suggested = lrs[min_idx + 1]
         return suggested
