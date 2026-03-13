@@ -5,6 +5,7 @@ import javafx.scene.control.Alert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.DLClassifierChecks;
+import qupath.ext.dlclassifier.service.ApposeClassifierBackend;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
@@ -307,13 +308,22 @@ public class InferenceWorkflow {
                     if (healthy) {
                         showInferenceDialog();
                     } else {
-                        showError("Server Unavailable",
-                                "Cannot connect to classification backend.\n\n" +
-                                "If this is the first launch, the Python environment\n" +
-                                "may still be downloading (~2-4 GB). Check the QuPath\n" +
-                                "log for progress and try again in a few minutes.\n\n" +
-                                "Alternatively, start the Python server manually and\n" +
-                                "disable 'Use Appose' in Edit > Preferences.");
+                        String versionWarning = ApposeClassifierBackend.getVersionWarning();
+                        if (versionWarning != null && !versionWarning.isEmpty()) {
+                            showError("Python Environment Update Required",
+                                    "The Python environment is out of date and must be rebuilt.\n\n" +
+                                    "Go to Extensions > DL Pixel Classifier > Rebuild Python Environment\n" +
+                                    "to update. Inference is disabled until the environment matches\n" +
+                                    "the installed extension version.");
+                        } else {
+                            showError("Server Unavailable",
+                                    "Cannot connect to classification backend.\n\n" +
+                                    "If this is the first launch, the Python environment\n" +
+                                    "may still be downloading (~2-4 GB). Check the QuPath\n" +
+                                    "log for progress and try again in a few minutes.\n\n" +
+                                    "Alternatively, start the Python server manually and\n" +
+                                    "disable 'Use Appose' in Edit > Preferences.");
+                        }
                     }
                 }, Platform::runLater);
     }

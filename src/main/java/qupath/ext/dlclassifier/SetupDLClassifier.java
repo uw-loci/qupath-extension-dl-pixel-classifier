@@ -535,11 +535,18 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                     if (healthy) {
                         showMAEPretrainingDialog();
                     } else {
-                        Dialogs.showErrorNotification(EXTENSION_NAME,
-                                "Cannot connect to classification backend.\n\n" +
-                                "If this is the first launch, the Python environment\n" +
-                                "may still be downloading (~2-4 GB). Check the QuPath\n" +
-                                "log for progress and try again in a few minutes.");
+                        String versionWarning = ApposeClassifierBackend.getVersionWarning();
+                        if (versionWarning != null && !versionWarning.isEmpty()) {
+                            Dialogs.showErrorNotification(EXTENSION_NAME,
+                                    "Python environment is out of date.\n" +
+                                    "Go to Rebuild Python Environment to update.");
+                        } else {
+                            Dialogs.showErrorNotification(EXTENSION_NAME,
+                                    "Cannot connect to classification backend.\n\n" +
+                                    "If this is the first launch, the Python environment\n" +
+                                    "may still be downloading (~2-4 GB). Check the QuPath\n" +
+                                    "log for progress and try again in a few minutes.");
+                        }
                     }
                 }, Platform::runLater);
     }
