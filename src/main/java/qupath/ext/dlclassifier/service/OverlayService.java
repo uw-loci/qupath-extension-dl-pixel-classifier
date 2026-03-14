@@ -132,10 +132,12 @@ public class OverlayService {
                                         PixelClassifier classifier,
                                         ClassifierMetadata metadata,
                                         ChannelConfiguration channelConfig) {
+        // Call 2-arg first (which calls removeOverlay, clearing old params),
+        // then store the new params. Previous order stored THEN cleared them.
+        applyClassifierOverlay(imageData, classifier);
         this.currentMetadata = metadata;
         this.currentChannelConfig = channelConfig;
         this.currentImageData = imageData;
-        applyClassifierOverlay(imageData, classifier);
     }
 
     /**
