@@ -85,8 +85,9 @@ These are saved when you click "Apply" and restored next time you open the dialo
 | Preference | Key | Default | Description |
 |-----------|-----|---------|-------------|
 | Output Type | `dlclassifier.lastOutputType` | `RENDERED_OVERLAY` | Last used output type |
-| Blend Mode | `dlclassifier.lastBlendMode` | `LINEAR` | Last used blend mode |
+| Blend Mode | `dlclassifier.lastBlendMode` | `CENTER_CROP` | Last used blend mode (CENTER_CROP recommended; forced for OVERLAY output) |
 | Smoothing | `dlclassifier.smoothing` | `1.0` | Boundary smoothing amount |
+| Overlay Smoothing | `dlclassifier.overlaySmoothing` | `2.0` | Gaussian sigma for probability map smoothing in overlay mode (0 = off, 1-2 = light, 3-5 = moderate) |
 | Application Scope | `dlclassifier.applicationScope` | `ALL_ANNOTATIONS` | Last used scope |
 | Create Backup | `dlclassifier.createBackup` | `false` | Back up measurements before overwriting |
 

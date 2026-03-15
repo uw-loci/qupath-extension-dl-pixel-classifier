@@ -148,6 +148,10 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty createBackup = PathPrefs.createPersistentPreference(
             "dlclassifier.createBackup", false);
 
+    // One-time overlay notice dismissed
+    private static final BooleanProperty overlayNoticeDismissed = PathPrefs.createPersistentPreference(
+            "dlclassifier.overlayNoticeDismissed", false);
+
     private DLClassifierPreferences() {
         // Utility class - no instantiation
     }
@@ -665,5 +669,19 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty createBackupProperty() {
         return createBackup;
+    }
+
+    // ==================== Overlay Notice ====================
+
+    public static boolean isOverlayNoticeDismissed() {
+        return overlayNoticeDismissed.get();
+    }
+
+    public static void setOverlayNoticeDismissed(boolean dismissed) {
+        overlayNoticeDismissed.set(dismissed);
+    }
+
+    public static BooleanProperty overlayNoticeDismissedProperty() {
+        return overlayNoticeDismissed;
     }
 }

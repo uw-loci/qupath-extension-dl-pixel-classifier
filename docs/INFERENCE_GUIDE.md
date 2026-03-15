@@ -41,7 +41,7 @@ For unmatched channels, use the dropdown to manually remap to the correct image 
 | **RENDERED_OVERLAY** | Batch inference with tile blending, producing a seamless overlay. **Default and recommended.** Best for validating classifier quality -- accurately represents what OBJECTS output would look like. | Quality validation, visual comparison |
 | **MEASUREMENTS** | Adds per-class probability values as annotation measurements | Quantification (% area per class) |
 | **OBJECTS** | Creates detection or annotation objects from the classification map | Spatial analysis, counting structures |
-| **OVERLAY** | Renders a live on-demand color overlay as you pan and zoom | Quick visual inspection |
+| **OVERLAY** | Renders a live on-demand color overlay as you pan and zoom. Uses CENTER_CROP tile handling (artifact-free) with configurable Gaussian smoothing. | Quick visual inspection |
 
 ### Object output options (OBJECTS only)
 
@@ -60,7 +60,7 @@ These options are collapsed by default. Expand **PROCESSING OPTIONS** to adjust.
 |--------|---------|-------------|
 | **Tile Size** | Auto-set from classifier | Should match training tile size. Range: 64-8192. |
 | **Tile Overlap (%)** | 12.5% | Higher = better blending but slower (max 50%). See below. |
-| **Blend Mode** | LINEAR | How overlapping tiles merge. See blend mode details below. |
+| **Blend Mode** | CENTER_CROP | How overlapping tiles merge. See blend mode details below. CENTER_CROP recommended. |
 | **Use GPU** | Yes | 10-50x faster than CPU |
 | **Test-Time Augmentation (TTA)** | No | Apply D4 transforms (flips + 90-degree rotations) and average predictions. ~8x slower but typically 1-3% better quality. Best for final production runs. |
 
@@ -76,8 +76,6 @@ Overlap determines how much adjacent tiles share:
 | 15-25% | Best | Slower | ~2x processing time vs 0% |
 | 25-50% | Diminishing returns | Much slower | Only needed for very large receptive fields |
 
-For **overlay mode**, the overlap is automatically computed from a physical distance (default 25 um) using the image's pixel calibration. This ensures consistent overlap regardless of objective magnification. The preference **Overlay Overlap (um)** in **Edit > Preferences > DL Pixel Classifier** controls this distance.
-
 ### Real-data context padding
 
 During inference, QuPath provides real surrounding image data around each tile via `inputPadding`. The padding amount is computed automatically (at least 64px, up to tileSize/2) and provides the CNN with real context at every tile boundary. This eliminates the need for artificial reflection padding -- the model always sees real image data, matching how training tiles are extracted with real surrounding context.
@@ -86,10 +84,12 @@ The **blend mode** controls how overlapping predictions merge:
 
 | Blend Mode | Description | Recommended for |
 |------------|-------------|-----------------|
-| **LINEAR** | Weighted average favoring tile centers. Good balance of quality and speed. | CNN models (UNet) |
-| **GAUSSIAN** | Cosine-bell blending for smoother transitions. Handles smooth prediction gradients from global attention better than linear. Set automatically for MuViT overlays. | ViT/MuViT models |
-| **CENTER_CROP** | Keep only center predictions, discard overlap margins. Zero boundary artifacts but ~4x slower (more tiles needed). | When artifact-free results are critical |
+| **CENTER_CROP** | Keep only center predictions, discard overlap margins. **Default and recommended.** Zero boundary artifacts. Each pixel comes from a single tile's center where predictions are most reliable. | All models. Required for overlay mode. |
+| **LINEAR** | Weighted average favoring tile centers. Good balance of quality and speed. | Batch inference (RENDERED_OVERLAY, OBJECTS) with CNN models |
+| **GAUSSIAN** | Cosine-bell blending for smoother transitions. | Batch inference with ViT/MuViT models |
 | **NONE** | No blending; last tile wins. Fastest but may show visible tile seams. | Debugging, or with 0% overlap |
+
+> **Note:** For the live **OVERLAY** output type, CENTER_CROP is always used (the blend mode selector is disabled). This follows the recommendation from Buglakova et al. (ICCV 2025): "Completely remove halo region during stitching (don't blend it)." For batch inference (RENDERED_OVERLAY, OBJECTS), blend modes remain selectable since Python-side blending operates on the full tile batch.
 
 ### Image-level normalization
 
@@ -130,12 +130,20 @@ Click **Apply** to start inference. Progress is shown in the QuPath log.
 
 For quick visual inspection without the full inference dialog:
 
-1. **Extensions > DL Pixel Classifier > Toggle Prediction Overlay** (check/uncheck)
-2. Select a classifier from the popup
-3. The overlay renders as you pan and zoom
-4. Uncheck to remove the overlay (the overlay is destroyed, not just hidden -- you will need to re-select a classifier to restore it)
+1. **Extensions > DL Pixel Classifier > Select Overlay Model...** -- choose a trained classifier
+2. **Extensions > DL Pixel Classifier > Toggle Prediction Overlay** -- check to enable, uncheck to remove
+3. The overlay renders as you pan and zoom using CENTER_CROP tile handling (artifact-free boundaries)
+4. Toggle off and on again without re-selecting the model -- the selection persists
 
-Use **Extensions > DL Pixel Classifier > Remove Classification Overlay** to explicitly remove the overlay and free resources.
+If you toggle the overlay on without selecting a model first, you will be prompted to choose one.
+
+### Overlay Settings
+
+**Extensions > DL Pixel Classifier > Utilities > Overlay Settings...** lets you configure:
+
+- **Prediction Smoothing** (sigma 0-10, default 2.0): Gaussian smoothing of probability maps before classification. Higher values reduce noisy per-pixel predictions, especially for ResNet/CNN models. MuViT/ViT models produce smoother predictions and may need less smoothing.
+
+Changes are applied immediately to the active overlay. The overlay always uses CENTER_CROP tile handling.
 
 ## Copy as Script
 

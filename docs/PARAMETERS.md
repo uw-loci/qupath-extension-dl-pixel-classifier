@@ -193,7 +193,7 @@ The inference dialog is accessed via **Extensions > DL Pixel Classifier > Apply 
 |-----------|---------|-------------|
 | **Tile Size** | Auto | Auto-set from classifier. Must be divisible by 32. Range: 64-8192. |
 | **Tile Overlap (%)** | 12.5% | 0-50%. Higher = better blending, slower processing. |
-| **Blend Mode** | LINEAR | **LINEAR**: Weighted average favoring tile centers. Recommended for CNN models. **GAUSSIAN**: Cosine-bell blending for smoother transitions. Recommended for ViT/MuViT models (set automatically for overlays). **CENTER_CROP**: Keep only center predictions, discard overlap margins. Zero boundary artifacts but ~4x slower (more tiles needed). **NONE**: No blending; last tile wins. Fastest but may show visible tile seams. |
+| **Blend Mode** | CENTER_CROP | **CENTER_CROP** (default, recommended): Keep only center predictions, discard overlap margins. Zero boundary artifacts. Forced for OVERLAY output type. **LINEAR**: Weighted average favoring tile centers. Available for batch inference (RENDERED_OVERLAY, OBJECTS). **GAUSSIAN**: Cosine-bell blending for smoother transitions. **NONE**: No blending; last tile wins. Fastest but may show visible tile seams. |
 | **Use GPU** | On | 10-50x faster than CPU. Falls back automatically. |
 | **Test-Time Augmentation (TTA)** | Off | Applies D4 transforms (flips + 90-degree rotations) during inference and averages the predictions. Typically improves segmentation quality by 1-3% at the cost of ~8x slower inference. Best for final production runs where quality matters most. |
 

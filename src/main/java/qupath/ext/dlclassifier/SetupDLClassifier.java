@@ -5,10 +5,15 @@ import javafx.beans.binding.Bindings;
 import javafx.beans.binding.BooleanBinding;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.geometry.Insets;
+import javafx.scene.control.Alert;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.CheckMenuItem;
+import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.layout.VBox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.controller.DLClassifierController;
@@ -254,7 +259,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 if (overlayService.hasOverlay()) {
                     overlayService.setLivePrediction(true);
                 } else if (overlayService.hasSelectedModel()) {
-                    // Model already selected - create overlay directly
+                    // Model already selected - show notice then create overlay
+                    showOverlayNoticeIfNeeded();
                     ImageData<BufferedImage> imageData = qupath.getImageData();
                     if (imageData != null) {
                         overlayService.createOverlayFromSelection(imageData);
@@ -262,7 +268,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         livePredictionOption.setSelected(false);
                     }
                 } else {
-                    // No model selected - prompt user
+                    // No model selected - prompt user (notice shown after selection)
                     selectOverlayModel(qupath, overlayService);
                     if (!overlayService.hasOverlay()) {
                         livePredictionOption.setSelected(false);
@@ -713,6 +719,41 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
     }
 
     /**
+     * Shows a one-time informational notice about overlay generation time.
+     * <p>
+     * Returns true if the user acknowledged (or already dismissed it before),
+     * false if cancelled.
+     */
+    private boolean showOverlayNoticeIfNeeded() {
+        if (DLClassifierPreferences.isOverlayNoticeDismissed()) {
+            return true;
+        }
+
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle(EXTENSION_NAME);
+        alert.setHeaderText("Overlay Generation");
+
+        Label message = new Label(
+                "Depending on your hardware and model size, the prediction overlay " +
+                "may take a moment to appear as tiles are classified on demand.\n\n" +
+                "The overlay will fill in progressively as you pan and zoom.");
+        message.setWrapText(true);
+        message.setMaxWidth(400);
+
+        CheckBox dontShowAgain = new CheckBox("Do not show this message again");
+
+        VBox content = new VBox(10, message, dontShowAgain);
+        content.setPadding(new Insets(10, 0, 0, 0));
+        alert.getDialogPane().setContent(content);
+
+        alert.showAndWait();
+        if (dontShowAgain.isSelected()) {
+            DLClassifierPreferences.setOverlayNoticeDismissed(true);
+        }
+        return true;
+    }
+
+    /**
      * Prompts the user to select a classifier for overlay use.
      * Stores the selection in OverlayService and immediately creates the overlay
      * if an image is open.
@@ -780,6 +821,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         // Store selection and create overlay
         overlayService.selectModel(metadata, channelConfig);
+        showOverlayNoticeIfNeeded();
         overlayService.createOverlayFromSelection(imageData);
         Dialogs.showInfoNotification(EXTENSION_NAME,
                 "Overlay model: " + metadata.getName());

@@ -610,6 +610,16 @@ public class TrainingDialog {
                     maeEncoderInfoLabel.setManaged(false);
                 }
             }
+
+            // Lock resolution and context scale when continuing from a saved model.
+            // Changing downsample alters what physical scale tiles represent, making
+            // pretrained weights ineffective. Changing context scale alters the input
+            // channel count, breaking weight compatibility entirely.
+            boolean continuing = selected == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING;
+            if (!wholeImageCheck.isSelected()) {
+                downsampleCombo.setDisable(continuing);
+                contextScaleCombo.setDisable(continuing);
+            }
         }
 
         /**
@@ -1455,7 +1465,11 @@ public class TrainingDialog {
             wholeImageCheck.selectedProperty().addListener((obs, old, checked) -> {
                 tileSizeSpinner.setDisable(checked);
                 overlapSpinner.setDisable(checked);
-                contextScaleCombo.setDisable(checked);
+                // Keep downsample and context scale locked if continuing from saved model
+                boolean continuing = getSelectedWeightInitStrategy() ==
+                        ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING;
+                downsampleCombo.setDisable(checked || continuing);
+                contextScaleCombo.setDisable(checked || continuing);
                 if (checked) {
                     contextScaleCombo.setValue("None (single scale)");
                 }
