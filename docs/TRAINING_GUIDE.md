@@ -67,6 +67,19 @@ This populates:
 
 All fields can be adjusted before training. Older models (trained before this feature) will only populate the architecture-level settings; hyperparameters will keep their preference defaults.
 
+### UI Locking When Continuing Training
+
+When **Continue training from saved model** is selected and a model is loaded, the following controls are **locked** because the saved weights require an exact architecture match:
+
+- Architecture (UNet, MuViT, Custom ONNX)
+- Backbone/Encoder (resnet34, resnet50, etc.)
+- MuViT handler parameters (model size, patch size, level scales, position encoding)
+- Tile Size
+- Resolution (Downsample)
+- Context Scale
+
+You **can** still adjust: learning rate, epochs, batch size, augmentation, training strategy, channel configuration, and class selection/weights.
+
 ## Step 3: Configure Basic Settings
 
 ### Training Data Source
@@ -164,8 +177,8 @@ When **Use pretrained backbone weights** is selected, a layer freeze panel appea
 | **Learning Rate** | 0.001 | Safe default for AdamW. Reduce to 1e-4 if loss oscillates. When using OneCycleLR, an LR finder auto-runs to suggest the optimal max learning rate. |
 | **Validation Split** | 20% | 15-25% typical. Uses stratified sampling for balanced splits. |
 | **Tile Size** | 512 | Must be divisible by 32. 256 for cell-level, 512 for tissue-level. |
-| **Whole image** | Off | Checkbox. Uses entire image as one tile (small images only). For MuViT, tile size is capped at 512px. |
-| **Resolution** | 1x | 1x, 2x, 4x, 8x, 16x. Higher = more context, less detail. "Preview" button shows the image at selected resolution. |
+| **Whole image** | Off | Checkbox. Uses entire image as one tile (small images only). Disables tile size, overlap, and context scale -- but downsample stays unlocked so you can adjust resolution to fit within the max tile size. A dynamic warning shows orange (images fit) or red (images will be tiled) based on your actual image dimensions at the current downsample. |
+| **Resolution** | 1x | 1x, 2x, 4x, 8x, 16x. Higher = more context, less detail. Locked when continuing from a saved model. "Preview" button shows the image at selected resolution. |
 | **Context Scale** | 4x (Recommended) | None, 2x, 4x, 8x, 16x. Adds surrounding context at lower resolution alongside the main tile. Hidden for MuViT (handles multi-scale internally). |
 | **Tile Overlap** | 0% | 10-25% generates more patches from limited annotations. |
 | **Line Stroke Width** | QuPath's stroke | Width for polyline annotation masks (minimum 1px). Increase for sparse lines. |

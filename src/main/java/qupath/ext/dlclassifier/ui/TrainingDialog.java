@@ -523,6 +523,8 @@ public class TrainingDialog {
             TooltipHelper.install(continueTrainingRadio,
                     "Load all weights from a previously trained model as the starting point.\n" +
                     "The optimizer and learning rate schedule start fresh.\n" +
+                    "Architecture, backbone, tile size, downsample, and context scale\n" +
+                    "are locked to match the saved model.\n" +
                     "Useful for fine-tuning on additional data or adjusted classes.");
             // Radio is always selectable so the user can see the "Select model..." button.
             // The Train button validates that a model has actually been loaded.
@@ -1492,8 +1494,10 @@ public class TrainingDialog {
             wholeImageCheck.setStyle("-fx-text-fill: #CC7A00; -fx-font-weight: bold;");
             TooltipHelper.install(wholeImageCheck,
                     "Use the entire image as a single training tile.\n" +
-                    "Disables tiling and context scale -- each image\n" +
-                    "becomes one training sample.\n\n" +
+                    "Disables tile size, overlap, and context scale controls --\n" +
+                    "each image becomes one training sample.\n" +
+                    "Downsample remains unlocked so you can adjust resolution\n" +
+                    "to fit within the architecture's max tile size.\n\n" +
                     "Use only for small images where tiling is unnecessary.\n" +
                     "The effective tile size is computed from image dimensions\n" +
                     "at export time and rounded to a multiple of 32.\n\n" +
@@ -1549,6 +1553,7 @@ public class TrainingDialog {
                     "4x: Quarter resolution -- each 512px tile covers 2048px of tissue.\n" +
                     "8x: Low resolution -- for large-scale region classification.\n" +
                     "16x: Very low resolution -- for whole-slide macro features.\n\n" +
+                    "Locked when continuing training from a saved model.\n\n" +
                     "Tip: If your data is higher resolution than the model was\n" +
                     "trained on, consider downsampling to match. For example,\n" +
                     "use 2x for 40x data when the model was trained on 20x data,\n" +

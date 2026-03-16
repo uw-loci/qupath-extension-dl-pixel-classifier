@@ -31,7 +31,7 @@ logger = logging.getLogger("dlclassifier.appose")
 # Both sides MUST be in sync. When EITHER side is updated, bump the version
 # below to match the new pyproject.toml version and the health check will
 # block until the user rebuilds the pixi environment.
-_REQUIRED_PYTHON_VERSION = "0.3.4"
+_REQUIRED_PYTHON_VERSION = "0.3.5"
 
 
 def _parse_version(v):

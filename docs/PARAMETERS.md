@@ -43,10 +43,10 @@ When **MuViT (Transformer)** is selected, the Encoder combo is hidden and a hand
 
 | Parameter | Options | Description |
 |-----------|---------|-------------|
-| **Model size** | muvit-small, muvit-base, muvit-large | Transformer model capacity. Larger models learn richer features but need more data, training time, and VRAM. |
-| **Patch size** | 8, 16 | Vision transformer patch size. Smaller patches capture finer detail but increase compute quadratically. 16 is recommended for most cases. |
-| **Level scales** | Text (e.g., "1,4") | Comma-separated multi-resolution scale factors for multi-scale feature fusion. |
-| **Position encoding** | per_layer, shared, fixed, none | Rotary position encoding mode. per_layer is recommended. |
+| **Model size** | muvit-small, muvit-base, muvit-large | Transformer model capacity. Larger models learn richer features but need more data, training time, and VRAM. Locked when continuing training from a saved MuViT model. |
+| **Patch size** | 8, 16 | Vision transformer patch size. Smaller patches capture finer detail but increase compute quadratically. 16 is recommended for most cases. Locked when continuing training. |
+| **Level scales** | Text (e.g., "1,4") | Comma-separated multi-resolution scale factors for multi-scale feature fusion. Locked when continuing training. |
+| **Position encoding** | per_layer, shared, fixed, none | Rotary position encoding mode. per_layer is recommended. Locked when continuing training. |
 
 ### Weight Initialization
 
@@ -57,7 +57,7 @@ Controls how model weights are initialized before training. This section has fou
 | **Train from scratch** | Random initialization. Only recommended for very large datasets. |
 | **Use pretrained backbone weights** | Initialize the encoder with pretrained weights (ImageNet or histology). Almost always recommended. Shows a layer freeze panel for fine-grained control over which layers to train vs. freeze. |
 | **Use MAE pretrained encoder** | Load encoder weights from a self-supervised MAE pretrained model (.pt file). Click "Browse..." to select the file. Architecture settings auto-lock to match the encoder metadata. MuViT only. |
-| **Continue training from saved model** | Resume training from a previously trained classifier. Click "Select model..." to pick the model. All dialog fields populate from the saved model's metadata and training settings. |
+| **Continue training from saved model** | Resume training from a previously trained classifier. Click "Select model..." to pick the model. All dialog fields populate from the saved model's metadata and training settings. Architecture, backbone, tile size, downsample, context scale, and handler-specific parameters (MuViT model size, patch size, level scales) are locked to match the saved model weights. |
 
 When **Use pretrained backbone weights** is selected, a **Layer Freeze Panel** appears with:
 - Per-layer checkboxes to freeze/unfreeze individual encoder layers
@@ -73,8 +73,8 @@ When **Use pretrained backbone weights** is selected, a **Layer Freeze Panel** a
 | **Learning Rate** | 0.001 | 0.00001-1.0 | Step size for gradient descent. 1e-3 for AdamW default, 1e-4 if oscillating, 1e-5 for full fine-tuning. When using OneCycleLR, an automatic LR finder runs before training to suggest an optimal max learning rate. |
 | **Validation Split** | 20% | 5-50% | Percentage held out for validation. Uses stratified sampling to ensure all classes appear in both train and validation sets. 15-25% typical. |
 | **Tile Size** | 512 | 64-1024 | Patch size in pixels. Must be divisible by 32 (encoder downsampling requirement). 256 for cell-level, 512 for tissue-level. |
-| **Whole image** | Off | Checkbox | Use the entire image as a single training tile (for small images only). Disables tile size, overlap, and context scale controls. For ViT models (MuViT), tile size is capped at the architecture's max supported size (512px) since self-attention is O(n^2) in patch count. If the image exceeds this limit at the selected downsample, it will be tiled automatically. |
-| **Resolution** | 1x | 1x, 2x, 4x, 8x, 16x | Image downsample level. Higher = more context per tile, less detail. A "Preview" button opens a mini-viewer showing the image at the selected resolution. |
+| **Whole image** | Off | Checkbox | Use the entire image as a single training tile (for small images only). Disables tile size, overlap, and context scale controls. Downsample remains unlocked so you can adjust resolution to fit within the architecture's max tile size. A dynamic warning appears: orange when images fit, red bold when images will be tiled at the current downsample (checks actual selected image dimensions). For ViT models (MuViT), tile size is capped at 512px since self-attention is O(n^2) in patch count. |
+| **Resolution** | 1x | 1x, 2x, 4x, 8x, 16x | Image downsample level. Higher = more context per tile, less detail. Locked when continuing training from a saved model. A "Preview" button opens a mini-viewer showing the image at the selected resolution. |
 | **Context Scale** | 4x (Recommended) | None, 2x, 4x, 8x, 16x | Provides additional surrounding context at a lower resolution alongside the main tile. Helps the model understand broader tissue architecture. Hidden for MuViT (which handles multi-scale internally via level_scales). |
 | **Tile Overlap** | 0% | 0-50% | Overlap between training tiles. 10-25% generates more patches from limited annotations. |
 | **Line Stroke Width** | QuPath's stroke | 1-50 | Pixel width for polyline annotation masks. Default is QuPath's annotation stroke thickness (typically 5). Increase for sparse lines. |

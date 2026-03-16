@@ -469,11 +469,14 @@ public class InferenceDialog {
                     "Strategy for handling tile boundaries:\n\n" +
                     "CENTER_CROP (Recommended): Use only center predictions from each tile.\n" +
                     "  Eliminates all tile boundary artifacts. Slightly slower (~1.5x)\n" +
-                    "  because tiles need extra context padding.\n\n" +
+                    "  because tiles need extra context padding.\n" +
+                    "  Forced for OVERLAY output type.\n\n" +
                     "LINEAR: Weighted average blending at tile boundaries.\n" +
-                    "  Faster but may show faint grid lines, especially with BatchNorm models.\n\n" +
+                    "  Faster but may show faint grid lines, especially with BatchNorm models.\n" +
+                    "  Available for batch inference only (RENDERED_OVERLAY, OBJECTS).\n\n" +
                     "GAUSSIAN: Cosine-bell blending for smoother transitions.\n" +
-                    "  Slightly better than LINEAR for ViT models.\n\n" +
+                    "  Slightly better than LINEAR for ViT models.\n" +
+                    "  Available for batch inference only (RENDERED_OVERLAY, OBJECTS).\n\n" +
                     "NONE: No blending; raw tile predictions.\n" +
                     "  Fastest but will show visible tile seams.");
 

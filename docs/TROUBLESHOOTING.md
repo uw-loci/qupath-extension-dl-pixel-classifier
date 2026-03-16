@@ -62,6 +62,15 @@ If the setup wizard reports CPU-only but you have an NVIDIA GPU:
 2. Close and reopen QuPath
 3. Check the QuPath log (**View > Show log**) for errors
 
+### Version mismatch error dialog
+
+If you see an error dialog saying the Python package version does not match the extension version:
+
+1. This means the Java JAR is a different version than the installed Python environment
+2. Training and inference are blocked until the versions match -- this prevents silent incompatibilities
+3. **Fix:** Go to **Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment...** to delete and reinstall with the correct Python package version
+4. This typically happens when you update the extension JAR without rebuilding the Python environment
+
 ### Environment not updating after installing a new JAR
 
 When you install a new version of the extension, the Python environment should update automatically on the next **Setup DL Environment...** run. The extension compares the bundled `pixi.toml` against the on-disk copy and forces a full rebuild if they differ.
@@ -137,6 +146,17 @@ Use **Extensions > DL Pixel Classifier > Utilities > Free GPU Memory** to force-
 | Very large tile size | Reduce tile size (256 instead of 512) |
 | Very large batch size | Reduce batch size |
 | Too much augmentation | Disable elastic deformation (slowest augmentation) |
+
+### Training appears to stall or hang
+
+If training starts but stops making progress (no new epoch updates):
+
+1. **Check the Python Console** for errors -- a GPU out-of-memory error may have occurred silently
+2. **Check GPU utilization** -- run `nvidia-smi` in a terminal to see if GPU memory is fully consumed
+3. **Kill QuPath and restart** if the process is deadlocked
+4. Try reducing batch size or tile size to lower GPU memory usage
+
+> **Note:** In versions before 0.3.5, a transient "thread death" error could cause the extension to retry training, creating two concurrent training processes on the same GPU that deadlock. This has been fixed -- training no longer retries on thread death errors.
 
 ### Training produces poor results
 
