@@ -1277,6 +1277,10 @@ class TrainingService:
             if early_stopping is not None:
                 es_desc = (f"{early_stopping_metric}"
                            f" (patience={early_stopping.patience})")
+                if focus_class:
+                    es_desc += f", focus={focus_class}"
+                    if focus_class_min_iou > 0:
+                        es_desc += f" (min IoU={focus_class_min_iou:.2f})"
             else:
                 es_desc = "Off"
 
