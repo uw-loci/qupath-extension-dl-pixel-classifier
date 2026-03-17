@@ -237,6 +237,13 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         trainingParams.put("augmentation_config", augConfig);
         trainingParams.put("scheduler", trainingConfig.getSchedulerType());
         trainingParams.put("loss_function", trainingConfig.getLossFunction());
+        String lf = trainingConfig.getLossFunction();
+        if ("focal_dice".equals(lf) || "focal".equals(lf)) {
+            trainingParams.put("focal_gamma", trainingConfig.getFocalGamma());
+        }
+        if (trainingConfig.getOhemHardRatio() < 1.0) {
+            trainingParams.put("ohem_hard_ratio", trainingConfig.getOhemHardRatio());
+        }
         trainingParams.put("early_stopping", true);
         trainingParams.put("early_stopping_patience", trainingConfig.getEarlyStoppingPatience());
         trainingParams.put("early_stopping_metric", trainingConfig.getEarlyStoppingMetric());

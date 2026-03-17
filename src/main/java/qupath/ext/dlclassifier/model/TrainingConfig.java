@@ -51,6 +51,8 @@ public class TrainingConfig {
     // Training strategy
     private final String schedulerType;
     private final String lossFunction;
+    private final double focalGamma;
+    private final double ohemHardRatio;
     private final String earlyStoppingMetric;
     private final int earlyStoppingPatience;
     private final boolean mixedPrecision;
@@ -111,6 +113,8 @@ public class TrainingConfig {
         this.contextScale = builder.contextScale;
         this.schedulerType = builder.schedulerType;
         this.lossFunction = builder.lossFunction;
+        this.focalGamma = builder.focalGamma;
+        this.ohemHardRatio = builder.ohemHardRatio;
         this.earlyStoppingMetric = builder.earlyStoppingMetric;
         this.earlyStoppingPatience = builder.earlyStoppingPatience;
         this.mixedPrecision = builder.mixedPrecision;
@@ -259,10 +263,35 @@ public class TrainingConfig {
     /**
      * Gets the loss function type.
      *
-     * @return loss function ("ce_dice" or "cross_entropy")
+     * @return loss function ("ce_dice", "cross_entropy", "focal_dice", or "focal")
      */
     public String getLossFunction() {
         return lossFunction;
+    }
+
+    /**
+     * Gets the focal loss gamma parameter.
+     * <p>
+     * Controls focusing strength: higher gamma further down-weights
+     * easy pixels. Standard value is 2.0. Only used when loss function
+     * is "focal_dice" or "focal".
+     *
+     * @return gamma value (0.5-5.0, default 2.0)
+     */
+    public double getFocalGamma() {
+        return focalGamma;
+    }
+
+    /**
+     * Gets the OHEM hard pixel ratio.
+     * <p>
+     * Fraction of pixels kept per batch (hardest pixels only).
+     * 1.0 means all pixels are kept (OHEM disabled).
+     *
+     * @return hard ratio (0.05-1.0, default 1.0 = disabled)
+     */
+    public double getOhemHardRatio() {
+        return ohemHardRatio;
     }
 
     /**
@@ -485,8 +514,26 @@ public class TrainingConfig {
         this.runtimeTileSize = effectiveTileSize;
     }
 
+    /**
+     * Adjusts batch size for large tiles to prevent GPU OOM.
+     * <p>
+     * The threshold is model-dependent: ViT models (MuViT) use global
+     * self-attention which is O(n^2) in patch count, so they need batch
+     * reduction at much smaller tile sizes than CNN models (UNet).
+     * <p>
+     * When triggered, batch size is reduced to 1 and gradient accumulation
+     * is increased to maintain the same effective batch size.
+     *
+     * @param effectiveTileSize the computed tile size in pixels
+     */
     public void adjustBatchForTileSize(int effectiveTileSize) {
-        if (effectiveTileSize <= 1024 || batchSize <= 1) return;
+        if (batchSize <= 1) return;
+
+        // ViT models need batch=1 at much smaller tile sizes than CNNs
+        // because self-attention memory scales quadratically with patch count.
+        int threshold = "muvit".equals(modelType) ? 256 : 1024;
+
+        if (effectiveTileSize <= threshold) return;
         runtimeBatchSize = 1;
         runtimeGradAccumSteps = batchSize * gradientAccumulationSteps;
     }
@@ -525,6 +572,8 @@ public class TrainingConfig {
                 Objects.equals(classWeightMultipliers, that.classWeightMultipliers) &&
                 Objects.equals(schedulerType, that.schedulerType) &&
                 Objects.equals(lossFunction, that.lossFunction) &&
+                Double.compare(that.focalGamma, focalGamma) == 0 &&
+                Double.compare(that.ohemHardRatio, ohemHardRatio) == 0 &&
                 Objects.equals(earlyStoppingMetric, that.earlyStoppingMetric) &&
                 Objects.equals(focusClass, that.focusClass) &&
                 Objects.equals(intensityAugMode, that.intensityAugMode) &&
@@ -540,6 +589,7 @@ public class TrainingConfig {
                 weightDecay, tileSize, overlap, downsample, validationSplit, augmentationConfig,
                 usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth,
                 classWeightMultipliers, contextScale, schedulerType, lossFunction,
+                focalGamma, ohemHardRatio,
                 earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
                 focusClass, focusClassMinIoU, intensityAugMode,
                 gradientAccumulationSteps, progressiveResize, wholeImage, pretrainedModelPath);
@@ -547,9 +597,9 @@ public class TrainingConfig {
 
     @Override
     public String toString() {
-        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, wd=%.4f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, esMetric=%s, esPat=%d, amp=%b, focusClass=%s, focusMinIoU=%.2f, intensityAug=%s, gradAccum=%d, progResize=%b, wholeImage=%b, pretrainedModel=%s}",
+        return String.format("TrainingConfig{model=%s, backbone=%s, epochs=%d, lr=%.6f, wd=%.4f, tile=%d, downsample=%.1f, contextScale=%d, lineStroke=%d, scheduler=%s, loss=%s, focalGamma=%.1f, ohemRatio=%.2f, esMetric=%s, esPat=%d, amp=%b, focusClass=%s, focusMinIoU=%.2f, intensityAug=%s, gradAccum=%d, progResize=%b, wholeImage=%b, pretrainedModel=%s}",
                 modelType, backbone, epochs, learningRate, weightDecay, tileSize, downsample, contextScale, lineStrokeWidth,
-                schedulerType, lossFunction, earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
+                schedulerType, lossFunction, focalGamma, ohemHardRatio, earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
                 focusClass, focusClassMinIoU, intensityAugMode,
                 gradientAccumulationSteps, progressiveResize, wholeImage, pretrainedModelPath);
     }
@@ -581,6 +631,8 @@ public class TrainingConfig {
         private int contextScale = 1;
         private String schedulerType = "onecycle";
         private String lossFunction = "ce_dice";
+        private double focalGamma = 2.0;
+        private double ohemHardRatio = 1.0;
         private String earlyStoppingMetric = "mean_iou";
         private int earlyStoppingPatience = 15;
         private boolean mixedPrecision = true;
@@ -629,6 +681,8 @@ public class TrainingConfig {
             this.contextScale = config.contextScale;
             this.schedulerType = config.schedulerType;
             this.lossFunction = config.lossFunction;
+            this.focalGamma = config.focalGamma;
+            this.ohemHardRatio = config.ohemHardRatio;
             this.earlyStoppingMetric = config.earlyStoppingMetric;
             this.earlyStoppingPatience = config.earlyStoppingPatience;
             this.mixedPrecision = config.mixedPrecision;
@@ -812,10 +866,33 @@ public class TrainingConfig {
         /**
          * Sets the loss function type.
          *
-         * @param lossFunction "ce_dice" or "cross_entropy"
+         * @param lossFunction "ce_dice", "cross_entropy", "focal_dice", or "focal"
          */
         public Builder lossFunction(String lossFunction) {
             this.lossFunction = lossFunction;
+            return this;
+        }
+
+        /**
+         * Sets the focal loss gamma parameter.
+         *
+         * @param focalGamma focusing strength (0.5-5.0, default 2.0)
+         */
+        public Builder focalGamma(double focalGamma) {
+            this.focalGamma = focalGamma;
+            return this;
+        }
+
+        /**
+         * Sets the OHEM hard pixel ratio.
+         * <p>
+         * Only the hardest fraction of pixels contribute to the loss.
+         * 1.0 means all pixels are kept (OHEM disabled).
+         *
+         * @param ohemHardRatio fraction of pixels to keep (0.05-1.0)
+         */
+        public Builder ohemHardRatio(double ohemHardRatio) {
+            this.ohemHardRatio = ohemHardRatio;
             return this;
         }
 
@@ -971,6 +1048,12 @@ public class TrainingConfig {
             }
             if (focusClassMinIoU < 0.0 || focusClassMinIoU > 1.0) {
                 throw new IllegalStateException("Focus class min IoU must be between 0.0 and 1.0");
+            }
+            if (focalGamma < 0.0 || focalGamma > 10.0) {
+                throw new IllegalStateException("Focal gamma must be between 0.0 and 10.0");
+            }
+            if (ohemHardRatio < 0.05 || ohemHardRatio > 1.0) {
+                throw new IllegalStateException("OHEM hard ratio must be between 0.05 and 1.0");
             }
             if (gradientAccumulationSteps < 1 || gradientAccumulationSteps > 16) {
                 throw new IllegalStateException("Gradient accumulation steps must be between 1 and 16");

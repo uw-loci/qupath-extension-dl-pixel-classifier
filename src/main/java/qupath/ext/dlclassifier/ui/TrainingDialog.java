@@ -189,6 +189,9 @@ public class TrainingDialog {
         // Training strategy
         private ComboBox<String> schedulerCombo;
         private ComboBox<String> lossFunctionCombo;
+        private Spinner<Double> focalGammaSpinner;
+        private Label focalGammaLabel;
+        private Spinner<Integer> ohemSpinner;
         private ComboBox<String> earlyStoppingMetricCombo;
         private Spinner<Integer> earlyStoppingPatienceSpinner;
         private CheckBox mixedPrecisionCheck;
@@ -881,6 +884,14 @@ public class TrainingDialog {
                 if (ts.containsKey("loss_function")) {
                     lossFunctionCombo.setValue(mapLossFunctionToDisplay((String) ts.get("loss_function")));
                 }
+                if (ts.containsKey("focal_gamma")) {
+                    focalGammaSpinner.getValueFactory().setValue(
+                            ((Number) ts.get("focal_gamma")).doubleValue());
+                }
+                if (ts.containsKey("ohem_hard_ratio")) {
+                    ohemSpinner.getValueFactory().setValue(
+                            (int) Math.round(((Number) ts.get("ohem_hard_ratio")).doubleValue() * 100));
+                }
 
                 // Early stopping
                 if (ts.containsKey("early_stopping_metric")) {
@@ -1319,6 +1330,8 @@ public class TrainingDialog {
                     .classWeightMultipliers(getClassWeightMultipliers())
                     .schedulerType(mapSchedulerFromDisplay(schedulerCombo.getValue()))
                     .lossFunction(mapLossFunctionFromDisplay(lossFunctionCombo.getValue()))
+                    .focalGamma(focalGammaSpinner.getValue())
+                    .ohemHardRatio(ohemSpinner.getValue() / 100.0)
                     .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
                     .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
@@ -1739,20 +1752,66 @@ public class TrainingDialog {
 
             // Loss function
             lossFunctionCombo = new ComboBox<>(FXCollections.observableArrayList(
-                    "Cross Entropy + Dice", "Cross Entropy"));
+                    "Cross Entropy + Dice", "Cross Entropy",
+                    "Focal + Dice", "Focal"));
             lossFunctionCombo.setValue(mapLossFunctionToDisplay(DLClassifierPreferences.getDefaultLossFunction()));
             TooltipHelper.installWithLink(lossFunctionCombo,
                     "Loss function for training:\n\n" +
                     "CE + Dice (recommended): Combines per-pixel Cross Entropy with\n" +
-                    "  region overlap Dice loss. Modern standard for segmentation.\n" +
-                    "  Dice directly optimizes IoU and handles class imbalance better.\n\n" +
-                    "Cross Entropy: Per-pixel classification loss only.\n" +
-                    "  May over-weight easy/majority pixels. Suitable when class\n" +
-                    "  balance is good and boundaries are the priority.",
+                    "  region overlap Dice loss. Modern standard for segmentation.\n\n" +
+                    "Cross Entropy: Per-pixel classification loss only.\n\n" +
+                    "Focal + Dice: Focal loss down-weights easy pixels via\n" +
+                    "  (1-p)^gamma, combined with Dice. Best when some regions\n" +
+                    "  are much harder than others (e.g., small structures).\n\n" +
+                    "Focal: Focal loss only (no Dice component).",
                     "https://smp.readthedocs.io/en/latest/losses.html");
 
             grid.add(new Label("Loss Function:"), 0, row);
             grid.add(lossFunctionCombo, 1, row);
+            row++;
+
+            // Focal gamma (visible only when focal variant selected)
+            focalGammaLabel = new Label("Focal Gamma:");
+            focalGammaSpinner = new Spinner<>(
+                    new SpinnerValueFactory.DoubleSpinnerValueFactory(0.5, 5.0, 2.0, 0.5));
+            focalGammaSpinner.setEditable(true);
+            TooltipHelper.install(focalGammaSpinner,
+                    "Focal loss focusing parameter (gamma).\n\n" +
+                    "Higher gamma = stronger focus on hard pixels.\n" +
+                    "  gamma=0: equivalent to standard Cross Entropy\n" +
+                    "  gamma=1: mild focusing\n" +
+                    "  gamma=2: standard (recommended)\n" +
+                    "  gamma=3-5: aggressive focusing for very hard regions");
+            boolean focalSelected = isFocalLossSelected(lossFunctionCombo.getValue());
+            focalGammaLabel.setVisible(focalSelected);
+            focalGammaLabel.setManaged(focalSelected);
+            focalGammaSpinner.setVisible(focalSelected);
+            focalGammaSpinner.setManaged(focalSelected);
+            lossFunctionCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
+                boolean show = isFocalLossSelected(newVal);
+                focalGammaLabel.setVisible(show);
+                focalGammaLabel.setManaged(show);
+                focalGammaSpinner.setVisible(show);
+                focalGammaSpinner.setManaged(show);
+            });
+            grid.add(focalGammaLabel, 0, row);
+            grid.add(focalGammaSpinner, 1, row);
+            row++;
+
+            // OHEM hard pixel %
+            ohemSpinner = new Spinner<>(
+                    new SpinnerValueFactory.IntegerSpinnerValueFactory(10, 100, 100, 5));
+            ohemSpinner.setEditable(true);
+            TooltipHelper.install(ohemSpinner,
+                    "Online Hard Example Mining (OHEM): keep only the\n" +
+                    "hardest N% of pixels per batch.\n\n" +
+                    "100% = all pixels (standard, no OHEM).\n" +
+                    "25% = keep only the hardest quarter -- aggressive.\n\n" +
+                    "More aggressive than focal loss: completely ignores\n" +
+                    "easy pixels instead of down-weighting them.\n" +
+                    "Tip: try focal loss first as a softer alternative.");
+            grid.add(new Label("Hard Pixel %:"), 0, row);
+            grid.add(ohemSpinner, 1, row);
             row++;
 
             // Early stopping metric
@@ -2991,13 +3050,25 @@ public class TrainingDialog {
         }
 
         private static String mapLossFunctionToDisplay(String value) {
-            if ("cross_entropy".equals(value)) return "Cross Entropy";
-            return "Cross Entropy + Dice";
+            return switch (value) {
+                case "cross_entropy" -> "Cross Entropy";
+                case "focal_dice" -> "Focal + Dice";
+                case "focal" -> "Focal";
+                default -> "Cross Entropy + Dice";
+            };
         }
 
         private static String mapLossFunctionFromDisplay(String display) {
-            if ("Cross Entropy".equals(display)) return "cross_entropy";
-            return "ce_dice";
+            return switch (display) {
+                case "Cross Entropy" -> "cross_entropy";
+                case "Focal + Dice" -> "focal_dice";
+                case "Focal" -> "focal";
+                default -> "ce_dice";
+            };
+        }
+
+        private static boolean isFocalLossSelected(String display) {
+            return "Focal + Dice".equals(display) || "Focal".equals(display);
         }
 
         private static String mapEarlyStoppingMetricToDisplay(String value) {

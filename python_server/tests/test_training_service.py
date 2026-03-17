@@ -567,3 +567,265 @@ class TestONNXExport:
         # Note: ONNX export can fail silently, so we just check the attempt was made
         # by checking the model.pt exists
         assert (model_path / "model.pt").exists()
+
+
+class TestFocalLoss:
+    """Test FocalLoss implementation."""
+
+    def test_gamma_zero_equals_ce(self):
+        """Focal loss with gamma=0 should equal cross-entropy."""
+        import torch
+        from dlclassifier_server.services.training_service import FocalLoss
+
+        torch.manual_seed(42)
+        logits = torch.randn(2, 3, 8, 8)  # (N, C, H, W)
+        targets = torch.randint(0, 3, (2, 8, 8))
+
+        focal = FocalLoss(gamma=0.0, ignore_index=255)
+        ce = torch.nn.CrossEntropyLoss(ignore_index=255)
+
+        focal_val = focal(logits, targets)
+        ce_val = ce(logits, targets)
+
+        assert torch.allclose(focal_val, ce_val, atol=1e-5), (
+            f"Focal(gamma=0) = {focal_val.item():.6f}, CE = {ce_val.item():.6f}"
+        )
+
+    def test_ignore_index(self):
+        """Focal loss should ignore pixels with ignore_index."""
+        import torch
+        from dlclassifier_server.services.training_service import FocalLoss
+
+        logits = torch.randn(1, 2, 4, 4)
+        targets = torch.zeros(1, 4, 4, dtype=torch.long)
+        targets[0, 0, :] = 255  # first row ignored
+
+        focal = FocalLoss(gamma=2.0, ignore_index=255)
+        loss = focal(logits, targets)
+
+        assert loss.isfinite(), "Loss should be finite with ignore_index"
+        assert loss.item() > 0, "Loss should be positive"
+
+    def test_all_ignored_returns_zero(self):
+        """All pixels ignored should return zero loss."""
+        import torch
+        from dlclassifier_server.services.training_service import FocalLoss
+
+        logits = torch.randn(1, 2, 4, 4)
+        targets = torch.full((1, 4, 4), 255, dtype=torch.long)
+
+        focal = FocalLoss(gamma=2.0, ignore_index=255)
+        loss = focal(logits, targets)
+
+        assert loss.item() == 0.0
+
+    def test_gradient_flows(self):
+        """Focal loss should produce gradients."""
+        import torch
+        from dlclassifier_server.services.training_service import FocalLoss
+
+        logits = torch.randn(1, 3, 8, 8, requires_grad=True)
+        targets = torch.randint(0, 3, (1, 8, 8))
+
+        focal = FocalLoss(gamma=2.0)
+        loss = focal(logits, targets)
+        loss.backward()
+
+        assert logits.grad is not None
+        assert logits.grad.abs().sum() > 0
+
+    def test_class_weights(self):
+        """Focal loss with class weights should differ from unweighted."""
+        import torch
+        from dlclassifier_server.services.training_service import FocalLoss
+
+        torch.manual_seed(42)
+        logits = torch.randn(2, 3, 8, 8)
+        targets = torch.randint(0, 3, (2, 8, 8))
+
+        focal_unweighted = FocalLoss(gamma=2.0)
+        focal_weighted = FocalLoss(
+            gamma=2.0,
+            class_weights=torch.tensor([1.0, 2.0, 0.5])
+        )
+
+        loss_uw = focal_unweighted(logits, targets)
+        loss_w = focal_weighted(logits, targets)
+
+        assert not torch.allclose(loss_uw, loss_w), (
+            "Weighted and unweighted focal loss should differ"
+        )
+
+    def test_higher_gamma_lower_easy_loss(self):
+        """Higher gamma should reduce contribution from easy (confident) pixels."""
+        import torch
+        from dlclassifier_server.services.training_service import FocalLoss
+
+        torch.manual_seed(42)
+        # Create logits where model is very confident (easy pixels)
+        logits = torch.zeros(1, 2, 8, 8)
+        logits[:, 0, :, :] = 5.0  # strongly predict class 0
+        targets = torch.zeros(1, 8, 8, dtype=torch.long)  # all class 0
+
+        focal_low = FocalLoss(gamma=0.0)
+        focal_high = FocalLoss(gamma=5.0)
+
+        loss_low = focal_low(logits, targets)
+        loss_high = focal_high(logits, targets)
+
+        assert loss_high < loss_low, (
+            f"Higher gamma should reduce easy-pixel loss: "
+            f"gamma=0 -> {loss_low.item():.6f}, gamma=5 -> {loss_high.item():.6f}"
+        )
+
+
+class TestOHEMCrossEntropyLoss:
+    """Test OHEM loss implementation."""
+
+    def test_ratio_one_equals_ce(self):
+        """OHEM with ratio=1.0 should equal standard CE."""
+        import torch
+        from dlclassifier_server.services.training_service import OHEMCrossEntropyLoss
+
+        torch.manual_seed(42)
+        logits = torch.randn(2, 3, 8, 8)
+        targets = torch.randint(0, 3, (2, 8, 8))
+
+        ohem = OHEMCrossEntropyLoss(hard_ratio=1.0, ignore_index=255)
+        ce = torch.nn.CrossEntropyLoss(ignore_index=255)
+
+        ohem_val = ohem(logits, targets)
+        ce_val = ce(logits, targets)
+
+        assert torch.allclose(ohem_val, ce_val, atol=1e-5), (
+            f"OHEM(ratio=1.0) = {ohem_val.item():.6f}, CE = {ce_val.item():.6f}"
+        )
+
+    def test_keeps_subset(self):
+        """OHEM with ratio<1.0 should yield loss >= CE (keeps harder pixels)."""
+        import torch
+        from dlclassifier_server.services.training_service import OHEMCrossEntropyLoss
+
+        torch.manual_seed(42)
+        logits = torch.randn(2, 3, 16, 16)
+        targets = torch.randint(0, 3, (2, 16, 16))
+
+        ohem = OHEMCrossEntropyLoss(hard_ratio=0.25, ignore_index=255)
+        ce = torch.nn.CrossEntropyLoss(ignore_index=255)
+
+        ohem_val = ohem(logits, targets)
+        ce_val = ce(logits, targets)
+
+        assert ohem_val >= ce_val, (
+            f"OHEM should have loss >= CE: "
+            f"OHEM={ohem_val.item():.6f}, CE={ce_val.item():.6f}"
+        )
+
+    def test_gradient_flows(self):
+        """OHEM loss should produce gradients."""
+        import torch
+        from dlclassifier_server.services.training_service import OHEMCrossEntropyLoss
+
+        logits = torch.randn(1, 3, 8, 8, requires_grad=True)
+        targets = torch.randint(0, 3, (1, 8, 8))
+
+        ohem = OHEMCrossEntropyLoss(hard_ratio=0.5)
+        loss = ohem(logits, targets)
+        loss.backward()
+
+        assert logits.grad is not None
+        assert logits.grad.abs().sum() > 0
+
+    def test_ignore_index(self):
+        """OHEM should ignore pixels with ignore_index."""
+        import torch
+        from dlclassifier_server.services.training_service import OHEMCrossEntropyLoss
+
+        logits = torch.randn(1, 2, 4, 4)
+        targets = torch.zeros(1, 4, 4, dtype=torch.long)
+        targets[0, 0, :] = 255
+
+        ohem = OHEMCrossEntropyLoss(hard_ratio=0.5, ignore_index=255)
+        loss = ohem(logits, targets)
+
+        assert loss.isfinite()
+        assert loss.item() > 0
+
+
+class TestCombinedPixelDiceLoss:
+    """Test _CombinedPixelDiceLoss combiner."""
+
+    def test_combines_focal_and_dice(self):
+        """Combined loss should be average of pixel and dice components."""
+        import torch
+        from dlclassifier_server.services.training_service import (
+            FocalLoss, DiceLoss, _CombinedPixelDiceLoss
+        )
+
+        torch.manual_seed(42)
+        logits = torch.randn(2, 3, 16, 16)
+        targets = torch.randint(0, 3, (2, 16, 16))
+
+        focal = FocalLoss(gamma=2.0, ignore_index=255)
+        dice = DiceLoss(ignore_index=255)
+        combined = _CombinedPixelDiceLoss(focal, dice)
+
+        focal_val = focal(logits, targets)
+        dice_val = dice(logits, targets)
+        combined_val = combined(logits, targets)
+
+        expected = 0.5 * focal_val + 0.5 * dice_val
+        assert torch.allclose(combined_val, expected, atol=1e-5), (
+            f"Combined={combined_val.item():.6f}, "
+            f"expected 0.5*focal + 0.5*dice = {expected.item():.6f}"
+        )
+
+    def test_gradient_flows(self):
+        """Combined loss should produce gradients."""
+        import torch
+        from dlclassifier_server.services.training_service import (
+            FocalLoss, DiceLoss, _CombinedPixelDiceLoss
+        )
+
+        logits = torch.randn(1, 3, 8, 8, requires_grad=True)
+        targets = torch.randint(0, 3, (1, 8, 8))
+
+        combined = _CombinedPixelDiceLoss(
+            FocalLoss(gamma=2.0), DiceLoss()
+        )
+        loss = combined(logits, targets)
+        loss.backward()
+
+        assert logits.grad is not None
+        assert logits.grad.abs().sum() > 0
+
+
+class TestFormatLossDesc:
+    """Test loss description formatting for config summary."""
+
+    def test_plain_ce_dice(self):
+        """Plain ce_dice should just show the name."""
+        from dlclassifier_server.services.training_service import TrainingService
+        desc = TrainingService._format_loss_desc("ce_dice", 2.0, 1.0)
+        assert desc == "ce_dice"
+
+    def test_focal_dice_shows_gamma(self):
+        """Focal dice should include gamma."""
+        from dlclassifier_server.services.training_service import TrainingService
+        desc = TrainingService._format_loss_desc("focal_dice", 2.0, 1.0)
+        assert "gamma=2.0" in desc
+
+    def test_ohem_appended(self):
+        """OHEM should be appended when ratio < 1.0."""
+        from dlclassifier_server.services.training_service import TrainingService
+        desc = TrainingService._format_loss_desc("ce_dice", 2.0, 0.25)
+        assert "OHEM" in desc
+        assert "25%" in desc
+
+    def test_focal_with_ohem(self):
+        """Focal + OHEM should show both."""
+        from dlclassifier_server.services.training_service import TrainingService
+        desc = TrainingService._format_loss_desc("focal_dice", 3.0, 0.5)
+        assert "gamma=3.0" in desc
+        assert "OHEM" in desc
+        assert "50%" in desc

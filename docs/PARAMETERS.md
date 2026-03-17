@@ -84,7 +84,9 @@ When **Use pretrained backbone weights** is selected, a **Layer Freeze Panel** a
 | Parameter | Default | Options | Description |
 |-----------|---------|---------|-------------|
 | **LR Scheduler** | One Cycle | One Cycle, Cosine Annealing, Reduce on Plateau, Step Decay, None | Learning rate schedule. One Cycle is recommended for most cases. Reduce on Plateau automatically lowers the LR when the monitored metric stops improving (factor=0.5, patience=10). See [PyTorch schedulers](https://pytorch.org/docs/stable/optim.html). |
-| **Loss Function** | Cross Entropy + Dice | Cross Entropy + Dice, Cross Entropy | Cross Entropy + Dice is recommended. Dice directly optimizes IoU. See [smp losses](https://smp.readthedocs.io/en/latest/losses.html). |
+| **Loss Function** | Cross Entropy + Dice | Cross Entropy + Dice, Cross Entropy, Focal + Dice, Focal | Cross Entropy + Dice is recommended for most cases. **Focal + Dice** down-weights easy pixels via (1-p)^gamma, helping the model focus on hard regions (e.g., small structures in large images). **Focal** is focal loss without Dice. See [smp losses](https://smp.readthedocs.io/en/latest/losses.html). |
+| **Focal Gamma** | 2.0 | 0.5-5.0 | Focal loss focusing parameter. Higher = stronger focus on hard pixels. Only visible when a Focal loss variant is selected. gamma=2 is standard. |
+| **Hard Pixel %** | 100 | 10-100 | Online Hard Example Mining (OHEM): keep only the hardest N% of pixels per batch. 100% = all pixels (standard). 25% = aggressive hard mining. More aggressive than focal loss -- completely ignores easy pixels instead of down-weighting. |
 | **Early Stop Metric** | Mean IoU | Mean IoU, Validation Loss | Mean IoU is more reliable than loss for stopping. |
 | **Early Stop Patience** | 15 | 3-50 | Epochs without improvement before stopping. 10-15 default, 20-30 for noisy curves. |
 | **Focus Class** | (none) | (none), or any class | Select a class whose per-class IoU overrides the early stop metric for best-model selection. Useful when one class is more important than overall mean IoU. |

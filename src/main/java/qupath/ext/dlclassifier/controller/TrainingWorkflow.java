@@ -1642,6 +1642,13 @@ public class TrainingWorkflow {
         settings.put("frozen_layers", config.getFrozenLayers());
         settings.put("scheduler_type", config.getSchedulerType());
         settings.put("loss_function", config.getLossFunction());
+        String lf = config.getLossFunction();
+        if ("focal_dice".equals(lf) || "focal".equals(lf)) {
+            settings.put("focal_gamma", config.getFocalGamma());
+        }
+        if (config.getOhemHardRatio() < 1.0) {
+            settings.put("ohem_hard_ratio", config.getOhemHardRatio());
+        }
         settings.put("early_stopping_metric", config.getEarlyStoppingMetric());
         settings.put("early_stopping_patience", config.getEarlyStoppingPatience());
         settings.put("mixed_precision", config.isMixedPrecision());

@@ -143,6 +143,37 @@ Progressive Resizing: Off  (try enabling for large tile sizes)
 - Add more annotations for that class, especially at boundaries
 - Check if the class has consistent visual features
 - Consider merging visually similar classes
+- **Try Focal + Dice loss** if a region is consistently hard (see below)
+
+### Focal loss and OHEM for hard regions
+
+When most of the image is easy but a small region is hard (e.g., vein classification at the wing hinge vs. easy intervein areas), standard CE gives every pixel equal weight. This drowns the hard-region gradient in easy-pixel signal.
+
+**Focal loss** (`Focal + Dice`) modulates CE by `(1 - p_t)^gamma`, where `p_t` is the model's predicted probability for the true class. Well-classified pixels (high `p_t`) get down-weighted; misclassified pixels (low `p_t`) contribute full gradient.
+
+| Gamma | Effect |
+|-------|--------|
+| 0 | Standard CE (no focusing) |
+| 1 | Mild focusing |
+| 2 | Standard focal (recommended starting point) |
+| 3-5 | Aggressive -- use when the hard region is very small |
+
+**When to use focal loss:**
+- One class or region consistently underperforms despite good annotations
+- Large images where the hard region is a small fraction of total area
+- You have already tried class weight multipliers and want more focusing
+
+**OHEM (Online Hard Example Mining)** is more aggressive: it keeps only the hardest K% of pixels per batch and completely ignores the rest. Set "Hard Pixel %" to 25% to keep only the hardest quarter.
+
+| Approach | Softness | Best for |
+|----------|----------|----------|
+| Class weights | Softest | Class imbalance (one class has less area) |
+| Focal loss (gamma=2) | Medium | Hard regions within a class |
+| OHEM (25%) | Aggressive | Very hard regions, model plateauing on easy data |
+
+**Tip:** You can combine OHEM with any loss function. When combined with Dice variants, OHEM applies to the pixel-loss component only (Dice is unchanged since it operates on region overlap).
+
+**No-code alternative:** Instead of focal loss, you can add small annotations around just the hard regions and use tiled mode. The tile exporter generates tiles from each annotation, so focused annotations produce extra tiles from the difficult area.
 
 ### Advanced tuning
 

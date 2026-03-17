@@ -337,6 +337,159 @@ class CombinedCEDiceLoss(nn.Module):
         return self.ce_weight * ce + self.dice_weight * dice
 
 
+class FocalLoss(nn.Module):
+    """Focal loss for segmentation -- down-weights easy pixels.
+
+    Modulates per-pixel CE by (1 - p_t)^gamma so that well-classified
+    pixels contribute less gradient and hard pixels contribute more.
+    When gamma=0 this reduces to standard cross-entropy.
+
+    Args:
+        gamma: Focusing parameter (0 = CE, 2.0 = standard focal)
+        class_weights: Optional per-class weights (alpha)
+        ignore_index: Label index to ignore (default 255)
+    """
+
+    def __init__(
+        self,
+        gamma: float = 2.0,
+        class_weights: Optional[torch.Tensor] = None,
+        ignore_index: int = 255,
+    ):
+        super().__init__()
+        self.gamma = gamma
+        self.ignore_index = ignore_index
+        if class_weights is not None:
+            self.register_buffer("class_weights", class_weights)
+        else:
+            self.class_weights = None
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Compute focal loss.
+
+        Args:
+            inputs: Model logits of shape (N, C, H, W)
+            targets: Ground truth labels of shape (N, H, W)
+
+        Returns:
+            Scalar focal loss averaged over valid pixels
+        """
+        # Per-pixel CE (unreduced)
+        ce = F.cross_entropy(
+            inputs, targets, reduction="none", ignore_index=self.ignore_index
+        )
+
+        # Compute p_t (probability of the true class)
+        probs = F.softmax(inputs, dim=1)  # (N, C, H, W)
+        # Clamp targets so gather doesn't fail on ignore_index
+        targets_safe = targets.clone()
+        valid_mask = targets != self.ignore_index
+        targets_safe[~valid_mask] = 0
+        p_t = probs.gather(1, targets_safe.unsqueeze(1)).squeeze(1)  # (N, H, W)
+
+        # Focal modulation
+        focal_weight = (1.0 - p_t) ** self.gamma
+
+        # Per-class alpha weighting
+        if self.class_weights is not None:
+            alpha = self.class_weights[targets_safe]
+            focal_weight = focal_weight * alpha
+
+        loss = focal_weight * ce
+
+        # Average over valid pixels only
+        valid_count = valid_mask.sum()
+        if valid_count == 0:
+            return loss.sum() * 0.0  # no valid pixels
+        return loss[valid_mask].mean()
+
+
+class OHEMCrossEntropyLoss(nn.Module):
+    """Online Hard Example Mining -- keeps only the hardest K% of pixels.
+
+    More aggressive than focal loss: completely ignores easy pixels
+    instead of down-weighting them. When hard_ratio=1.0 this is
+    equivalent to standard cross-entropy.
+
+    Args:
+        hard_ratio: Fraction of pixels to keep (0.05-1.0)
+        class_weights: Optional per-class weights
+        ignore_index: Label index to ignore (default 255)
+    """
+
+    def __init__(
+        self,
+        hard_ratio: float = 0.25,
+        class_weights: Optional[torch.Tensor] = None,
+        ignore_index: int = 255,
+    ):
+        super().__init__()
+        self.hard_ratio = hard_ratio
+        self.ignore_index = ignore_index
+        self.ce = nn.CrossEntropyLoss(
+            weight=class_weights, ignore_index=ignore_index, reduction="none"
+        )
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Compute OHEM loss.
+
+        Args:
+            inputs: Model logits of shape (N, C, H, W)
+            targets: Ground truth labels of shape (N, H, W)
+
+        Returns:
+            Scalar loss averaged over the hardest K% of valid pixels
+        """
+        per_pixel = self.ce(inputs, targets)  # (N, H, W)
+
+        # Flatten and filter to valid pixels
+        valid_mask = targets != self.ignore_index
+        valid_losses = per_pixel[valid_mask]
+
+        if valid_losses.numel() == 0:
+            return per_pixel.sum() * 0.0
+
+        # When ratio is 1.0, keep everything (standard CE)
+        if self.hard_ratio >= 1.0:
+            return valid_losses.mean()
+
+        k = max(1, int(valid_losses.numel() * self.hard_ratio))
+        topk_losses, _ = torch.topk(valid_losses, k)
+        return topk_losses.mean()
+
+
+class _CombinedPixelDiceLoss(nn.Module):
+    """Generic combiner for any pixel-level loss + Dice loss.
+
+    OHEM/focal apply to the pixel-loss component only; Dice stays as-is
+    since it operates on region overlap and is not pixel-selectable.
+
+    Args:
+        pixel_loss: Any pixel-level loss module (CE, Focal, OHEM)
+        dice_loss: DiceLoss instance
+        pixel_weight: Weight for pixel-loss component (default 0.5)
+        dice_weight: Weight for Dice component (default 0.5)
+    """
+
+    def __init__(
+        self,
+        pixel_loss: nn.Module,
+        dice_loss: DiceLoss,
+        pixel_weight: float = 0.5,
+        dice_weight: float = 0.5,
+    ):
+        super().__init__()
+        self.pixel_loss = pixel_loss
+        self.dice_loss = dice_loss
+        self.pixel_weight = pixel_weight
+        self.dice_weight = dice_weight
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        px = self.pixel_loss(inputs, targets)
+        dice = self.dice_loss(inputs, targets)
+        return self.pixel_weight * px + self.dice_weight * dice
+
+
 class SegmentationDataset(Dataset):
     """Dataset for segmentation training with augmentation support."""
 
@@ -643,12 +796,36 @@ class TrainingService:
                 setup_callback=setup_callback,
                 pretrained_model_path=pretrained_model_path
             )
+        except BaseException as exc:
+            # On CUDA OOM, the exception's traceback keeps _run_training()'s
+            # frame alive -- and that frame holds model, optimizer, data
+            # loaders, etc. on the GPU (45+ GB).  Strip the traceback to
+            # release those references so gc.collect() can free them.
+            # For non-OOM errors, just do normal cleanup and re-raise.
+            if "OutOfMemory" in type(exc).__name__:
+                import traceback as _tb
+                error_text = _tb.format_exc()
+                exc.__traceback__ = None
+                self._cleanup_training_memory()
+                raise RuntimeError(error_text) from None
+            raise
         finally:
-            # Always free GPU memory, even on crash/error/cancellation
-            import gc
-            gc.collect()
-            self.gpu_manager.clear_cache()
-            self.gpu_manager.log_memory_status(prefix="Training cleanup: ")
+            self._cleanup_training_memory()
+
+    def _cleanup_training_memory(self) -> None:
+        """Free GPU memory after training completes or fails.
+
+        On the normal path, _run_training()'s locals are already released.
+        On the error path, the traceback keeps the frame alive, but we still
+        call gc.collect() + empty_cache() here to free any unreferenced
+        cache. The heavy lifting (deleting model, optimizer, etc.) is done
+        inside _run_training()'s own finally block because only that frame
+        can delete its own local variables.
+        """
+        import gc
+        gc.collect()
+        self.gpu_manager.clear_cache()
+        self.gpu_manager.log_memory_status(prefix="Training cleanup: ")
 
     def _run_training(
         self,
@@ -1021,7 +1198,28 @@ class TrainingService:
                 logger.info(f"Using class weights: {weights_list}")
 
         loss_function = training_params.get("loss_function", "ce_dice")
-        if loss_function == "ce_dice":
+        focal_gamma = training_params.get("focal_gamma", 2.0)
+        ohem_hard_ratio = training_params.get("ohem_hard_ratio", 1.0)
+
+        # Build the base pixel-level loss
+        dice = DiceLoss(ignore_index=unlabeled_index)
+
+        if loss_function == "focal_dice":
+            pixel_loss = FocalLoss(
+                gamma=focal_gamma,
+                class_weights=class_weights,
+                ignore_index=unlabeled_index,
+            )
+            criterion = _CombinedPixelDiceLoss(pixel_loss, dice)
+            logger.info(f"Using Focal (gamma={focal_gamma}) + Dice loss")
+        elif loss_function == "focal":
+            criterion = FocalLoss(
+                gamma=focal_gamma,
+                class_weights=class_weights,
+                ignore_index=unlabeled_index,
+            )
+            logger.info(f"Using Focal loss (gamma={focal_gamma})")
+        elif loss_function == "ce_dice":
             criterion = CombinedCEDiceLoss(
                 class_weights=class_weights,
                 ignore_index=unlabeled_index
@@ -1033,6 +1231,36 @@ class TrainingService:
                 ignore_index=unlabeled_index
             )
             logger.info("Using CrossEntropy loss")
+
+        # Wrap with OHEM if active (applies to pixel-loss component only)
+        if ohem_hard_ratio < 1.0:
+            if isinstance(criterion, (_CombinedPixelDiceLoss, CombinedCEDiceLoss)):
+                # Replace the pixel-loss component with OHEM-wrapped version
+                if isinstance(criterion, _CombinedPixelDiceLoss):
+                    inner_pixel = criterion.pixel_loss
+                else:
+                    inner_pixel = criterion.ce_loss
+                ohem_pixel = OHEMCrossEntropyLoss(
+                    hard_ratio=ohem_hard_ratio,
+                    class_weights=class_weights,
+                    ignore_index=unlabeled_index,
+                )
+                criterion = _CombinedPixelDiceLoss(ohem_pixel, dice)
+                logger.info(
+                    f"OHEM active: keeping hardest {ohem_hard_ratio * 100:.0f}%%"
+                    f" of pixels (pixel-loss component only, Dice unchanged)"
+                )
+            else:
+                # Pure pixel loss (CE or Focal) -- wrap entirely
+                criterion = OHEMCrossEntropyLoss(
+                    hard_ratio=ohem_hard_ratio,
+                    class_weights=class_weights,
+                    ignore_index=unlabeled_index,
+                )
+                logger.info(
+                    f"OHEM active: keeping hardest {ohem_hard_ratio * 100:.0f}%%"
+                    f" of pixels"
+                )
 
         # Setup learning rate scheduler (deferred until after criterion for LR finder)
         accumulation_steps = training_params.get("gradient_accumulation_steps", 1)
@@ -1288,7 +1516,8 @@ class TrainingService:
                 "Architecture": f"{model_type} ({backbone})",
                 "Optimizer": optimizer_desc,
                 "Scheduler": sched_desc,
-                "Loss": loss_function,
+                "Loss": self._format_loss_desc(
+                    loss_function, focal_gamma, ohem_hard_ratio),
                 "Batch Size": (f"{batch_size} (accumulation={accumulation_steps},"
                                f" effective={batch_size * accumulation_steps})"),
                 "Tile Size": tile_size_str,
@@ -1315,6 +1544,34 @@ class TrainingService:
             _report_setup("training_config", config_summary)
         except Exception:
             pass  # Never let config summary break training
+
+        # Pre-flight VRAM estimate: warn if batch * tile likely exceeds GPU memory.
+        # Model weights + optimizer state (AdamW ~3x model) + forward activations +
+        # backward gradients. ViT models need much more activation memory than CNNs.
+        try:
+            if self.device == "cuda":
+                mem_info = self.gpu_manager.get_memory_info()
+                total_mb = mem_info.get("total_mb", 0)
+                allocated_mb = mem_info.get("allocated_mb", 0)
+                free_mb = total_mb - allocated_mb
+                model_mb = self.gpu_manager.estimate_model_memory(model)
+                # Rough estimate: model weights + optimizer (3x) + activations
+                # ViTs need ~8-12x model size for activations; CNNs need ~3-5x
+                act_multiplier = 10.0 if model_type == "muvit" else 4.0
+                tiles_per_batch = batch_size
+                tile_pixels = architecture.get("input_size", [512, 512])
+                tile_area = tile_pixels[0] * tile_pixels[1] if isinstance(tile_pixels, (list, tuple)) else 512 * 512
+                # Scale activation estimate by tile area relative to 256x256 baseline
+                area_scale = tile_area / (256 * 256)
+                estimated_mb = model_mb * (1 + 3 + act_multiplier * area_scale * tiles_per_batch)
+                if estimated_mb > free_mb * 0.9:
+                    logger.warning(
+                        "VRAM estimate: %.0f MB needed vs %.0f MB free -- "
+                        "OOM likely. Reduce batch size, tile size, or model size.",
+                        estimated_mb, free_mb
+                    )
+        except Exception:
+            pass  # Never let estimation break training
 
         # Training loop
         _report_setup("starting_training")
@@ -1856,6 +2113,18 @@ class TrainingService:
             return groups
         # Fall back to flat list if only one group
         return encoder_params + decoder_params + head_params
+
+    @staticmethod
+    def _format_loss_desc(
+        loss_function: str, focal_gamma: float, ohem_hard_ratio: float
+    ) -> str:
+        """Format a human-readable loss description for the config summary."""
+        desc = loss_function
+        if loss_function in ("focal_dice", "focal"):
+            desc += f" (gamma={focal_gamma})"
+        if ohem_hard_ratio < 1.0:
+            desc += f" + OHEM (keep {ohem_hard_ratio * 100:.0f}%)"
+        return desc
 
     def find_learning_rate(self, model, train_loader, criterion,
                            start_lr=1e-7, end_lr=10, num_iter=100):
