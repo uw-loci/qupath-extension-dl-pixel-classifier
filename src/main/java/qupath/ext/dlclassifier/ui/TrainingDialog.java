@@ -26,6 +26,7 @@ import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.TrainingConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.scripting.ScriptGenerator;
+import qupath.ext.dlclassifier.service.ApposeService;
 import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ModelManager;
@@ -630,11 +631,12 @@ public class TrainingDialog {
             }
 
             // Lock architecture, resolution, and context scale when continuing from
-            // a saved model. The saved weights are tied to the exact architecture,
-            // downsample (physical scale), and context scale (input channel count).
+            // a saved model or using an MAE encoder. The saved/pretrained weights
+            // are tied to the exact architecture type.
             // Guard: these controls may not exist yet during initial construction.
-            if (architectureCombo != null) architectureCombo.setDisable(continuing);
-            if (backboneCombo != null) backboneCombo.setDisable(continuing);
+            boolean maeSelected = selected == ClassifierHandler.WeightInitStrategy.MAE_ENCODER;
+            if (architectureCombo != null) architectureCombo.setDisable(continuing || maeSelected);
+            if (backboneCombo != null) backboneCombo.setDisable(continuing || maeSelected);
             boolean wholeImage = wholeImageCheck != null && wholeImageCheck.isSelected();
             if (tileSizeSpinner != null) tileSizeSpinner.setDisable(continuing || wholeImage);
             // Downsample stays enabled in whole-image mode so the user can adjust
@@ -760,6 +762,12 @@ public class TrainingDialog {
                 if (currentHandlerUI != null) {
                     currentHandlerUI.applyParameters(archParams);
                     currentHandlerUI.setLocked(true);
+                }
+
+                // Set tile size to match MAE pretraining (editable -- user can
+                // change it, but the pretrained resolution is a good default)
+                if (maeEncoderTileSize > 0 && tileSizeSpinner != null) {
+                    tileSizeSpinner.getValueFactory().setValue(maeEncoderTileSize);
                 }
 
                 // Sync the hidden backboneCombo so TrainingConfig.backbone matches
@@ -2965,6 +2973,84 @@ public class TrainingDialog {
                                     maeEncoderInputChannels, selectedChannels));
                     return null;
                 }
+            }
+
+            // Pre-flight VRAM estimation: warn INSIDE the dialog so the user can
+            // adjust settings (tile size, batch, downsample) without losing their work.
+            try {
+                ApposeService appose = ApposeService.getInstance();
+                if (appose.isAvailable() && "cuda".equals(appose.getGpuType())) {
+                    var gpuTask = appose.runTask("health_check", java.util.Map.of());
+                    int totalMb = ((Number) gpuTask.outputs.get("gpu_memory_mb")).intValue();
+                    if (totalMb > 0) {
+                        String modelType = trainingConfig.getModelType();
+                        int tileSize = trainingConfig.getTileSize();
+                        int batchSize = trainingConfig.getBatchSize();
+                        int gradAccum = trainingConfig.getGradientAccumulationSteps();
+                        double modelMb = "muvit".equals(modelType) ? 140.0 : 30.0;
+                        double actMultiplier = "muvit".equals(modelType) ? 10.0 : 4.0;
+                        double areaScale = (double)(tileSize * tileSize) / (256.0 * 256.0);
+                        double estimatedMb = modelMb * (1 + 3 + actMultiplier * areaScale * batchSize);
+                        double budgetMb = totalMb * 0.85;
+
+                        if (estimatedMb > budgetMb) {
+                            // Compute specific settings that would fit
+                            StringBuilder suggestions = new StringBuilder();
+                            suggestions.append(String.format(
+                                    "Estimated VRAM: %.0f MB (GPU has %d MB usable).\n"
+                                    + "Current settings: %s, %dx%d tiles, batch %d (x%d accum).\n\n"
+                                    + "Settings that would fit in VRAM:\n",
+                                    estimatedMb, totalMb, modelType, tileSize, tileSize,
+                                    batchSize, gradAccum));
+
+                            // Suggest batch=1 at current tile size
+                            double estBatch1 = modelMb * (1 + 3 + actMultiplier * areaScale * 1);
+                            if (estBatch1 <= budgetMb && batchSize > 1) {
+                                suggestions.append(String.format(
+                                        "  - Batch size 1 at %dpx (~%.0f MB)\n", tileSize, estBatch1));
+                            }
+
+                            // Suggest smaller tile sizes with current batch
+                            for (int candidate : new int[]{512, 256, 128}) {
+                                if (candidate >= tileSize) continue;
+                                double candArea = (double)(candidate * candidate) / (256.0 * 256.0);
+                                double candEst = modelMb * (1 + 3 + actMultiplier * candArea * batchSize);
+                                if (candEst <= budgetMb) {
+                                    int maxBatch = 1;
+                                    for (int b = batchSize; b >= 1; b--) {
+                                        double bEst = modelMb * (1 + 3 + actMultiplier * candArea * b);
+                                        if (bEst <= budgetMb) { maxBatch = b; break; }
+                                    }
+                                    suggestions.append(String.format(
+                                            "  - %dpx tiles, batch %d (~%.0f MB)\n",
+                                            candidate, maxBatch,
+                                            modelMb * (1 + 3 + actMultiplier * candArea * maxBatch)));
+                                    break;  // Show best fitting option
+                                }
+                            }
+
+                            // Note about MAE pretraining tile size if applicable
+                            if (maeEncoderTileSize > 0 && tileSize != maeEncoderTileSize) {
+                                suggestions.append(String.format(
+                                        "\nNote: MAE encoder was pretrained at %dpx -- "
+                                        + "using the same tile size\ngives best weight transfer.\n",
+                                        maeEncoderTileSize));
+                            }
+
+                            suggestions.append("\nIncrease downsample to compensate for smaller tiles.\n"
+                                    + "Gradient accumulation can simulate larger batches without extra VRAM.\n\n"
+                                    + "Go back and adjust settings?");
+
+                            boolean goBack = Dialogs.showConfirmDialog("VRAM Warning",
+                                    suggestions.toString());
+                            if (goBack) {
+                                return null;  // Stay in dialog so user can adjust
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                logger.debug("Could not estimate VRAM usage: {}", e.getMessage());
             }
 
             // Get selected classes

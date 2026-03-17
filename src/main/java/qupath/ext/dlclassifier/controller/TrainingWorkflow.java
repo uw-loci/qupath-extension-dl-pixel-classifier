@@ -402,55 +402,6 @@ public class TrainingWorkflow {
             logger.debug("Could not check GPU status: {}", e.getMessage());
         }
 
-        // Pre-flight VRAM estimation: warn if tile size + batch likely exceeds GPU.
-        // Mirrors the Python-side estimate in training_service.py but runs BEFORE
-        // training starts so the user can adjust settings.
-        try {
-            ApposeService appose = ApposeService.getInstance();
-            if (appose.isAvailable() && "cuda".equals(appose.getGpuType())) {
-                var gpuTask = appose.runTask("health_check", java.util.Map.of());
-                int totalMb = ((Number) gpuTask.outputs.get("gpu_memory_mb")).intValue();
-                if (totalMb > 0) {
-                    String modelType = trainingConfig.getModelType();
-                    int tileSize = trainingConfig.getTileSize();
-                    int batchSize = trainingConfig.getBatchSize();
-                    int gradAccum = trainingConfig.getGradientAccumulationSteps();
-                    // Rough model parameter memory (MB): known sizes for common configs
-                    double modelMb;
-                    if ("muvit".equals(modelType)) {
-                        modelMb = 140;  // muvit-large ~35M params * 4 bytes
-                    } else {
-                        modelMb = 30;   // typical UNet encoder ~6-8M params * 4 bytes
-                    }
-                    // ViTs need ~10x model size for activations; CNNs ~4x
-                    double actMultiplier = "muvit".equals(modelType) ? 10.0 : 4.0;
-                    double areaScale = (double)(tileSize * tileSize) / (256.0 * 256.0);
-                    double estimatedMb = modelMb * (1 + 3 + actMultiplier * areaScale * batchSize);
-                    // Use 90% of total as threshold (some already allocated by driver/display)
-                    if (estimatedMb > totalMb * 0.85) {
-                        String warning = String.format(
-                                "Estimated VRAM usage: %.0f MB (GPU has %d MB total).\n\n"
-                                + "With %s at %dx%d tiles and batch size %d (x%d accumulation),\n"
-                                + "this may cause an out-of-memory crash.\n\n"
-                                + "Suggestions:\n"
-                                + "  - Reduce tile size (256 or 512 is typical for ViT models)\n"
-                                + "  - Reduce batch size\n"
-                                + "  - Increase downsample to shrink effective tile size\n\n"
-                                + "Continue anyway?",
-                                estimatedMb, totalMb, modelType, tileSize, tileSize,
-                                batchSize, gradAccum);
-                        boolean proceed = Dialogs.showConfirmDialog("VRAM Warning", warning);
-                        if (!proceed) {
-                            return;
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            // Don't block training if VRAM estimation fails
-            logger.debug("Could not estimate VRAM usage: {}", e.getMessage());
-        }
-
         // Generate classifierId early so model files can be saved directly
         // to the project directory during training (not just at the end).
         String classifierId = classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
