@@ -67,8 +67,10 @@ public class DLPixelClassifier implements PixelClassifier {
     /** Circuit breaker: stops retrying server requests after persistent failures. */
     private static final int MAX_CONSECUTIVE_ERRORS = 3;
     private final AtomicInteger consecutiveErrors = new AtomicInteger(0);
+    private final AtomicInteger tilesCompleted = new AtomicInteger(0);
     private final AtomicBoolean errorNotified = new AtomicBoolean(false);
     private final AtomicBoolean contextResizeWarned = new AtomicBoolean(false);
+    private final AtomicBoolean firstTileLogged = new AtomicBoolean(false);
     private volatile String lastErrorMessage;
 
     /** Set to true when the overlay is being removed, to suppress error counting on interrupted threads. */
@@ -132,6 +134,22 @@ public class DLPixelClassifier implements PixelClassifier {
         } catch (IOException e) {
             throw new RuntimeException("Failed to create temp directory for overlay", e);
         }
+
+        // Log overlay configuration at creation time
+        int imgW = imageData.getServer().getWidth();
+        int imgH = imageData.getServer().getHeight();
+        int tileSize = inferenceConfig.getTileSize();
+        int stride = tileSize - inputPadding;
+        long estTiles = (long) Math.ceil((imgW / downsample) / (double) stride)
+                * (long) Math.ceil((imgH / downsample) / (double) stride);
+        logger.info("DL overlay created: model={}, image={}x{}, downsample={}, "
+                + "tileSize={}, padding={}, blendMode={}, est. tiles={}",
+                metadata.getName(), imgW, imgH, downsample,
+                tileSize, inputPadding, inferenceConfig.getBlendMode(), estTiles);
+        if (estTiles > 500) {
+            logger.warn("Large tile count ({}) -- overlay will take a long time to fill. "
+                    + "Zoom into a smaller region for faster results.", estTiles);
+        }
     }
 
     @Override
@@ -144,6 +162,25 @@ public class DLPixelClassifier implements PixelClassifier {
     @Override
     public BufferedImage applyClassification(ImageData<BufferedImage> imageData,
                                               RegionRequest request) throws IOException {
+        // Log first tile request at INFO level for diagnostic visibility
+        if (firstTileLogged.compareAndSet(false, true)) {
+            ImageServer<BufferedImage> diagServer = imageData.getServer();
+            int imgW = diagServer.getWidth();
+            int imgH = diagServer.getHeight();
+            int tileSize = inferenceConfig.getTileSize();
+            int stride = tileSize - inputPadding;  // approximate visible stride
+            int estTilesX = (int) Math.ceil((imgW / downsample) / (double) stride);
+            int estTilesY = (int) Math.ceil((imgH / downsample) / (double) stride);
+            logger.info("Overlay tile request started: image={}x{}, downsample={}, "
+                    + "tileSize={}, padding={}, stride~={}, est. total tiles~={}",
+                    imgW, imgH, downsample, tileSize, inputPadding, stride,
+                    estTilesX * estTilesY);
+            logger.info("First tile request: region=({},{}) {}x{} @ downsample={}",
+                    request.getX(), request.getY(),
+                    request.getWidth(), request.getHeight(),
+                    request.getDownsample());
+        }
+
         // If shutting down (overlay being removed), return blank image instead of throwing.
         // Throwing IOException here causes QuPath's PixelClassificationOverlay to log ERROR,
         // which is noisy and misleading during normal overlay removal.
@@ -336,8 +373,13 @@ public class DLPixelClassifier implements PixelClassifier {
                 blendCache.scheduleRefresh();
             }
 
-            // Success -- reset error counter
+            // Success -- reset error counter and log progress
             consecutiveErrors.set(0);
+            int completed = tilesCompleted.incrementAndGet();
+            if (completed <= 10 || completed % 50 == 0) {
+                logger.info("Overlay tile {} completed at ({}, {})",
+                        completed, request.getX(), request.getY());
+            }
             return createClassIndexImage(blended, tileWidth, tileHeight);
 
         } catch (IOException e) {
