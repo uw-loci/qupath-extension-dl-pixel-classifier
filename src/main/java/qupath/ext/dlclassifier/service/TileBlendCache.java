@@ -178,8 +178,8 @@ public class TileBlendCache {
      * @param probMap   this tile's raw probability map [height][width][numClasses]
      * @param requestX  tile request X coordinate (full-resolution image coords)
      * @param requestY  tile request Y coordinate (full-resolution image coords)
-     * @param width     prob map width (tileSize + 2*inputPadding)
-     * @param height    prob map height (tileSize + 2*inputPadding)
+     * @param width     prob map width (= tileSize, the inputShape given to QuPath)
+     * @param height    prob map height (= tileSize, the inputShape given to QuPath)
      * @return blended probability map (new array, original not modified)
      */
     public float[][][] blendWithNeighbors(float[][][] probMap, int requestX, int requestY,

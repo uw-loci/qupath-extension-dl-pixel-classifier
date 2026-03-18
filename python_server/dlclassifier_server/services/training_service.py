@@ -1953,6 +1953,70 @@ class TrainingService:
                     "mean_iou": mean_iou,
                 }
 
+        # Handle cancellation: save both best-epoch and last-epoch models
+        # so Java can let the user choose which to keep (or discard both).
+        # The pause check above already returned for paused training.
+        was_cancelled = (cancel_flag and cancel_flag.is_set()
+                         and not (pause_flag and pause_flag.is_set()))
+        if was_cancelled:
+            logger.info("Saving progress after cancellation...")
+            cancel_checkpoint = self._save_checkpoint(
+                model=model, optimizer=optimizer, scheduler=scheduler,
+                early_stopping=early_stopping,
+                training_history=training_history,
+                best_score=best_score, best_score_mode=best_score_mode,
+                best_model_state=best_model_state, model_type=model_type,
+                training_config={
+                    "model_type": model_type, "architecture": architecture,
+                    "input_config": input_config,
+                    "training_params": training_params, "classes": classes,
+                }
+            )
+            # Save last-epoch model (current model state)
+            cancel_last_model_path = self._save_model(
+                model=model, model_type=model_type,
+                architecture=architecture, input_config=input_config,
+                classes=classes, data_path=str(data_path),
+                training_history=training_history,
+                normalization_stats=dataset_norm_stats
+            )
+            logger.info("Saved last-epoch model after cancel: %s",
+                        cancel_last_model_path)
+            # Save best-epoch model if we have a separate best state
+            cancel_best_model_path = ""
+            if best_model_state is not None and best_epoch != len(training_history):
+                model.load_state_dict(best_model_state)
+                model = model.to(self.device)
+                cancel_best_model_path = self._save_model(
+                    model=model, model_type=model_type,
+                    architecture=architecture, input_config=input_config,
+                    classes=classes, data_path=str(data_path),
+                    training_history=training_history,
+                    normalization_stats=dataset_norm_stats
+                )
+                logger.info("Saved best model (epoch %d) after cancel: %s",
+                            best_epoch, cancel_best_model_path)
+            else:
+                # Best epoch IS the last epoch -- same model
+                cancel_best_model_path = cancel_last_model_path
+            # Free GPU memory
+            model = model.cpu()
+            self.gpu_manager.clear_cache()
+            self.gpu_manager.log_memory_status(prefix="Cancelled (GPU freed): ")
+            return {
+                "status": "cancelled",
+                "model_path": cancel_best_model_path,
+                "last_model_path": cancel_last_model_path,
+                "checkpoint_path": cancel_checkpoint,
+                "best_epoch": best_epoch,
+                "best_mean_iou": best_mean_iou,
+                "final_loss": best_loss,
+                "final_accuracy": best_accuracy,
+                "epoch": len(training_history),
+                "total_epochs": epochs,
+                "epochs_trained": len(training_history),
+            }
+
         # Log final memory status
         self.gpu_manager.log_memory_status(prefix="Training complete: ")
 

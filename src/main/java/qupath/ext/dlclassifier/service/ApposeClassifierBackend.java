@@ -584,15 +584,46 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         } catch (Exception e) {
             if (task.status == org.apposed.appose.Service.TaskStatus.CANCELED) {
                 logger.info("Training cancelled via Appose");
-                // Try to recover model_path in case cancel arrived after model was saved
-                String cancelledModelPath = null;
-                if (task.outputs != null && task.outputs.containsKey("model_path")) {
-                    String mp = String.valueOf(task.outputs.get("model_path"));
-                    if (!mp.isEmpty() && !"null".equals(mp)) {
-                        cancelledModelPath = mp;
-                    }
+                // Python saves both best-epoch and last-epoch models on cancel.
+                // Read all available outputs for the cancel result.
+                String cancelBestPath = null;
+                String cancelLastPath = null;
+                int cancelBestEpoch = 0;
+                double cancelBestMIoU = 0.0;
+                double cancelLoss = 0.0;
+                double cancelAcc = 0.0;
+                int cancelLastEpoch = 0;
+                int cancelTotalEpochs = 0;
+                String cancelCheckpoint = null;
+                if (task.outputs != null) {
+                    String mp = String.valueOf(task.outputs.getOrDefault("model_path", ""));
+                    if (!mp.isEmpty() && !"null".equals(mp)) cancelBestPath = mp;
+                    String lp = String.valueOf(task.outputs.getOrDefault("last_model_path", ""));
+                    if (!lp.isEmpty() && !"null".equals(lp)) cancelLastPath = lp;
+                    cancelBestEpoch = task.outputs.containsKey("best_epoch")
+                            ? ((Number) task.outputs.get("best_epoch")).intValue() : 0;
+                    cancelBestMIoU = task.outputs.containsKey("best_mean_iou")
+                            ? ((Number) task.outputs.get("best_mean_iou")).doubleValue() : 0.0;
+                    cancelLoss = task.outputs.containsKey("final_loss")
+                            ? ((Number) task.outputs.get("final_loss")).doubleValue() : 0.0;
+                    cancelAcc = task.outputs.containsKey("final_accuracy")
+                            ? ((Number) task.outputs.get("final_accuracy")).doubleValue() : 0.0;
+                    cancelLastEpoch = task.outputs.containsKey("last_epoch")
+                            ? ((Number) task.outputs.get("last_epoch")).intValue() : 0;
+                    cancelTotalEpochs = task.outputs.containsKey("total_epochs")
+                            ? ((Number) task.outputs.get("total_epochs")).intValue() : 0;
+                    String cp = String.valueOf(task.outputs.getOrDefault("checkpoint_path", ""));
+                    if (!cp.isEmpty() && !"null".equals(cp)) cancelCheckpoint = cp;
                 }
-                return new ClassifierClient.TrainingResult(jobId, cancelledModelPath, 0, 0);
+                if (cancelBestPath != null) {
+                    logger.info("Cancel with save: best model={}, last model={}, epoch {}/{}",
+                            cancelBestPath, cancelLastPath, cancelLastEpoch, cancelTotalEpochs);
+                }
+                return new ClassifierClient.TrainingResult(
+                        jobId, cancelBestPath, cancelLoss, cancelAcc,
+                        cancelBestEpoch, cancelBestMIoU, false,
+                        cancelLastEpoch, cancelTotalEpochs, cancelCheckpoint,
+                        true, cancelLastPath);
             }
             // Do NOT retry training on "thread death". Training is a long-running
             // stateful operation -- the Python-side task may still be executing even
@@ -613,7 +644,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             storeCheckpointInfo(jobId, checkpointPath, lastEpoch, inputs);
 
             return new ClassifierClient.TrainingResult(
-                    jobId, null, 0, 0, 0, 0, true, lastEpoch, totalEpochs, checkpointPath);
+                    jobId, null, 0, 0, 0, 0, true, lastEpoch, totalEpochs, checkpointPath,
+                    false, null);
         }
 
         // Normal completion
@@ -634,7 +666,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         }
 
         return new ClassifierClient.TrainingResult(jobId, modelPath, finalLoss, finalAccuracy,
-                bestEpoch, bestMeanIoU, false, lastEpoch, totalEpochs, completionCheckpoint);
+                bestEpoch, bestMeanIoU, false, lastEpoch, totalEpochs, completionCheckpoint,
+                false, null);
     }
 
     // ==================== Evaluation ====================

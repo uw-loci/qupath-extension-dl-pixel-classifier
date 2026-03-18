@@ -447,6 +447,7 @@ finally:
 status = result.get("status", "completed")
 task.outputs["status"] = status
 task.outputs["model_path"] = result.get("model_path", "")
+task.outputs["last_model_path"] = result.get("last_model_path", "")
 task.outputs["final_loss"] = result.get("final_loss", 0.0)
 task.outputs["final_accuracy"] = result.get("final_accuracy", 0.0)
 task.outputs["best_epoch"] = result.get("best_epoch", 0)

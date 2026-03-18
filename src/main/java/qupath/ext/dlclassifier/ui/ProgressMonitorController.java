@@ -72,6 +72,11 @@ public class ProgressMonitorController {
     private final AtomicLong startTime = new AtomicLong(0);
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
 
+    /** The user's choice for what to save when cancelling training. */
+    public enum CancelSaveMode { BEST_EPOCH, LAST_EPOCH, DO_NOT_SAVE }
+
+    private volatile CancelSaveMode cancelSaveMode = CancelSaveMode.DO_NOT_SAVE;
+
     private Consumer<Void> onCancelCallback;
     private Consumer<Void> onPauseCallback;
     private Consumer<Void> onResumeCallback;
@@ -299,9 +304,10 @@ public class ProgressMonitorController {
         Scene scene = new Scene(root, showLossChart ? 500 : 450, showLossChart ? 600 : 300);
         stage.setScene(scene);
 
-        // Handle window close
+        // Handle window close: block close only while running AND not yet cancelled.
+        // Once cancelled, let the user close immediately (cleanup continues in background).
         stage.setOnCloseRequest(e -> {
-            if (isRunning.get()) {
+            if (isRunning.get() && !cancelled.get()) {
                 e.consume();
                 handleCancel();
             }
@@ -558,6 +564,15 @@ public class ProgressMonitorController {
     }
 
     /**
+     * Returns the save mode chosen by the user when cancelling.
+     *
+     * @return the cancel save mode
+     */
+    public CancelSaveMode getCancelSaveMode() {
+        return cancelSaveMode;
+    }
+
+    /**
      * Gets the cancelled property for binding.
      *
      * @return cancelled property
@@ -736,23 +751,48 @@ public class ProgressMonitorController {
             return;
         }
 
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("Cancel Operation");
-        confirm.setHeaderText("Are you sure you want to cancel?");
-        confirm.setContentText("The current operation will be stopped.");
+        Alert dialog = new Alert(Alert.AlertType.CONFIRMATION);
+        dialog.setTitle("Cancel Training");
+        dialog.setHeaderText("Save progress?");
+        dialog.setContentText(
+                "Training will be stopped. Choose what to save:\n\n"
+                + "Best Epoch -- save the model with the best validation score\n"
+                + "Last Epoch -- save the model from the most recent epoch\n"
+                + "Do Not Save -- discard all training progress");
 
-        confirm.showAndWait().ifPresent(response -> {
-            if (response == ButtonType.OK) {
-                cancelled.set(true);
-                status.set("Cancelling...");
-                cancelButton.setDisable(true);
-                pauseButton.setDisable(true);
+        ButtonType bestBtn = new ButtonType("Best Epoch");
+        ButtonType lastBtn = new ButtonType("Last Epoch");
+        ButtonType discardBtn = new ButtonType("Do Not Save");
+        ButtonType cancelBtn = new ButtonType("Go Back", ButtonBar.ButtonData.CANCEL_CLOSE);
+        dialog.getButtonTypes().setAll(bestBtn, lastBtn, discardBtn, cancelBtn);
 
-                if (onCancelCallback != null) {
-                    onCancelCallback.accept(null);
-                }
+        dialog.showAndWait().ifPresent(response -> {
+            if (response == cancelBtn) return;
 
-                log("Cancellation requested by user");
+            if (response == bestBtn) {
+                cancelSaveMode = CancelSaveMode.BEST_EPOCH;
+                log("Cancellation requested -- saving best epoch model");
+            } else if (response == lastBtn) {
+                cancelSaveMode = CancelSaveMode.LAST_EPOCH;
+                log("Cancellation requested -- saving last epoch model");
+            } else {
+                cancelSaveMode = CancelSaveMode.DO_NOT_SAVE;
+                log("Cancellation requested -- discarding progress");
+            }
+
+            cancelled.set(true);
+            status.set("Cancelling...");
+            pauseButton.setDisable(true);
+            completeTrainingButton.setVisible(false);
+            completeTrainingButton.setManaged(false);
+
+            // Make dialog closeable immediately -- training cleanup
+            // continues in the background after the user closes.
+            cancelButton.setText("Close");
+            cancelButton.setOnAction(e -> close());
+
+            if (onCancelCallback != null) {
+                onCancelCallback.accept(null);
             }
         });
     }

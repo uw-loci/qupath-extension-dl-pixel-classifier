@@ -1016,6 +1016,18 @@ public class TrainingDialog {
                     wholeImageCheck.setSelected(Boolean.TRUE.equals(ts.get("whole_image")));
                 }
 
+                // Gradient accumulation
+                if (ts.containsKey("gradient_accumulation_steps")) {
+                    gradientAccumulationSpinner.getValueFactory().setValue(
+                            ((Number) ts.get("gradient_accumulation_steps")).intValue());
+                }
+
+                // Progressive resize
+                if (ts.containsKey("progressive_resize")) {
+                    progressiveResizeCheck.setSelected(
+                            Boolean.TRUE.equals(ts.get("progressive_resize")));
+                }
+
                 // Handler-specific parameters (e.g., MuViT model_config, patch_size,
                 // level_scales, rope_mode). Apply to the handler UI after architecture
                 // is set so the correct handler UI exists.
@@ -1668,6 +1680,7 @@ public class TrainingDialog {
 
                 previewStage = new Stage();
                 previewStage.initOwner(QuPathGUI.getInstance().getStage());
+                previewStage.setAlwaysOnTop(true);
                 previewStage.setTitle(String.format("Resolution Preview (%.0fx downsample)", ds));
                 Scene scene = new Scene(previewManager.getPane(), 400, 400);
                 previewStage.setScene(scene);
@@ -1739,6 +1752,7 @@ public class TrainingDialog {
 
                 contextPreviewStage = new Stage();
                 contextPreviewStage.initOwner(QuPathGUI.getInstance().getStage());
+                contextPreviewStage.setAlwaysOnTop(true);
                 contextPreviewStage.setTitle(String.format(
                         "Context Preview (%dx context at %.0fx downsample)", ctxScale, ds));
                 Scene scene = new Scene(contextPreviewManager.getPane(), 400, 400);

@@ -78,7 +78,7 @@ Overlap determines how much adjacent tiles share:
 
 ### Real-data context padding
 
-During inference, QuPath provides real surrounding image data around each tile via `inputPadding`. The padding amount is computed automatically (at least 64px, up to tileSize/2) and provides the CNN with real context at every tile boundary. This eliminates the need for artificial reflection padding -- the model always sees real image data, matching how training tiles are extracted with real surrounding context.
+During inference, QuPath provides real surrounding image data around each tile via `inputPadding`. QuPath's `inputPadding` is **per-side** -- the visible stride equals `tileSize - 2 * inputPadding`. The padding amount is computed automatically: for CENTER_CROP mode, padding is `tileSize/4` per side (center 50% visible); for other blend modes, padding is `max(64, min(max(overlap, tileSize/4), tileSize * 3/8))` per side. This provides the CNN with real context at every tile boundary, eliminating the need for artificial reflection padding -- the model always sees real image data, matching how training tiles are extracted with real surrounding context.
 
 The **blend mode** controls how overlapping predictions merge:
 

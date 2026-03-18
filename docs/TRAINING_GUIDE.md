@@ -201,7 +201,7 @@ When **Use pretrained backbone weights** is selected, a layer freeze panel appea
 
 The following optimizations are applied automatically -- no configuration needed:
 
-- **Context padding**: Training tiles are automatically extracted with a border of real surrounding image data, matching the geometry used during inference (where QuPath provides real context via `inputPadding`). The padding amount is computed as `max(64, min(max(overlap, tileSize/4), tileSize/2))` pixels per side. The mask border is filled with 255 (ignore_index) so the loss only computes on the annotated center region. This eliminates train/inference geometry mismatch and tile edge artifacts. Disabled for whole-image mode.
+- **Context padding**: Training tiles are automatically extracted with a border of real surrounding image data, matching the geometry used during inference (where QuPath provides real context via `inputPadding`). The padding amount is computed as `max(64, min(max(overlap, tileSize/4), tileSize * 3/8))` pixels per side. The mask border is filled with 255 (ignore_index) so the loss only computes on the annotated center region. This eliminates train/inference geometry mismatch and tile edge artifacts. Disabled for whole-image mode.
 - **AdamW optimizer** with fast.ai-tuned hyperparameters (betas=0.9/0.99, eps=1e-5, weight_decay=0.01). AdamW decouples weight decay from the gradient update, producing better generalization than Adam.
 - **Discriminative learning rates**: When using pretrained weights, the encoder automatically receives 1/10th of the base learning rate while the decoder and segmentation head train at the full rate. This prevents catastrophic forgetting of pretrained features.
 - **LR Finder**: When using the One Cycle scheduler on a new training run (not resuming from checkpoint), an automatic learning rate range test runs before training to find the optimal max learning rate. The suggested LR is logged and used as the OneCycleLR max_lr.
@@ -242,6 +242,20 @@ Click **Start Training**. A progress window shows:
 - Live loss chart with separate colors for train (blue) and validation (red) loss
 - Per-class IoU metrics
 - Early stopping status
+
+> **Settings are remembered:** When you train a model and later load it to continue training, all training dialog settings (architecture, tile size, learning rate, loss function, gradient accumulation, progressive resize, augmentation, etc.) are restored from the model's saved metadata. This means you can iterate quickly without re-entering parameters.
+
+### Cancelling training
+
+Click **Cancel** at any time. A dialog offers three choices:
+
+| Option | What it saves |
+|--------|--------------|
+| **Best Epoch** | The model from the epoch with the highest mean IoU |
+| **Last Epoch** | The model from the most recently completed epoch |
+| **Do Not Save** | Discards all progress |
+
+After choosing, the dialog becomes closeable immediately -- you do not need to wait for background cleanup. The saved model is fully usable for inference or for continuing training later.
 
 ### What to watch for
 

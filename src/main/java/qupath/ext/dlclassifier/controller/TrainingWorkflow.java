@@ -547,11 +547,17 @@ public class TrainingWorkflow {
                         trainingDataPathHolder, modelPathHolder, handlerParameters);
 
                 if (result.success()) {
-                    progress.complete(true, String.format(
-                            "Classifier trained successfully!\nBest model: epoch %d\n" +
-                            "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
-                            result.bestEpoch(), result.finalLoss(),
-                            result.finalAccuracy() * 100, result.bestMeanIoU()));
+                    String completionMsg;
+                    if (result.message() != null && result.message().contains("cancelled")) {
+                        completionMsg = result.message();
+                    } else {
+                        completionMsg = String.format(
+                                "Classifier trained successfully!\nBest model: epoch %d\n"
+                                + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
+                                result.bestEpoch(), result.finalLoss(),
+                                result.finalAccuracy() * 100, result.bestMeanIoU());
+                    }
+                    progress.complete(true, completionMsg);
                 } else if (result.message() != null && result.message().contains("paused")) {
                     // Paused state is handled by showPausedState - don't close
                     logger.info("Training paused, waiting for user action");
@@ -1015,9 +1021,67 @@ public class TrainingWorkflow {
             }
 
             if (serverResult.isCancelled()) {
-                if (progress != null) progress.log("Training cancelled");
-                return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
-                        "Training cancelled by user");
+                ProgressMonitorController.CancelSaveMode saveMode = progress != null
+                        ? progress.getCancelSaveMode()
+                        : ProgressMonitorController.CancelSaveMode.DO_NOT_SAVE;
+
+                if (saveMode == ProgressMonitorController.CancelSaveMode.DO_NOT_SAVE
+                        || !serverResult.isCancelledWithSave()) {
+                    return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false,
+                            "Training cancelled by user");
+                }
+
+                // User chose to save -- pick the appropriate model path
+                String savedModelPath = (saveMode == ProgressMonitorController.CancelSaveMode.LAST_EPOCH
+                        && serverResult.lastModelPath() != null)
+                        ? serverResult.lastModelPath()
+                        : serverResult.modelPath();
+
+                String epochLabel = (saveMode == ProgressMonitorController.CancelSaveMode.LAST_EPOCH)
+                        ? "last epoch" : "best epoch (" + serverResult.bestEpoch() + ")";
+                logger.info("Saving cancelled training ({}) from: {}", epochLabel, savedModelPath);
+                if (progress != null) {
+                    progress.log("Saving " + epochLabel + " model...");
+                    progress.setStatus("Saving classifier...");
+                }
+
+                String effectiveId = classifierId != null ? classifierId
+                        : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
+                          + "_" + System.currentTimeMillis();
+                List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, classColors);
+                ClassifierMetadata cancelMetadata = ClassifierMetadata.builder()
+                        .id(effectiveId)
+                        .name(classifierName)
+                        .description(description)
+                        .modelType(trainingConfig.getModelType())
+                        .backbone(trainingConfig.getBackbone())
+                        .inputChannels(channelConfig.getSelectedChannels().size())
+                        .contextScale(trainingConfig.getContextScale())
+                        .downsample(trainingConfig.getDownsample())
+                        .expectedChannelNames(channelConfig.getChannelNames())
+                        .inputSize(effectiveTileSize, effectiveTileSize)
+                        .classes(classInfoList)
+                        .normalizationStrategy(channelConfig.getNormalizationStrategy())
+                        .bitDepthTrained(channelConfig.getBitDepth())
+                        .trainingEpochs(serverResult.lastEpoch())
+                        .finalLoss(serverResult.finalLoss())
+                        .finalAccuracy(serverResult.finalAccuracy())
+                        .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                        .build();
+                boolean filesInPlace = modelOutputDir != null;
+                ModelManager modelManager = new ModelManager();
+                modelManager.saveClassifier(cancelMetadata, Path.of(savedModelPath),
+                        true, filesInPlace);
+                String msg = "Saved " + epochLabel + " model as " + effectiveId;
+                logger.info(msg);
+                if (progress != null) progress.log(msg);
+                return new TrainingResult(
+                        effectiveId, classifierName,
+                        serverResult.finalLoss(), serverResult.finalAccuracy(),
+                        serverResult.bestEpoch(), serverResult.bestMeanIoU(),
+                        serverResult.lastEpoch(), true,
+                        "Training cancelled -- " + epochLabel + " model saved"
+                );
             }
 
             logger.info("Training completed. Model saved to: {}", serverResult.modelPath());
@@ -1333,7 +1397,44 @@ public class TrainingWorkflow {
                 progress.showPausedState(serverResult.lastEpoch(), serverResult.totalEpochs());
                 currentJobId[0] = serverResult.jobId();
             } else if (serverResult.isCancelled()) {
-                progress.complete(false, "Training cancelled by user");
+                ProgressMonitorController.CancelSaveMode resumeSaveMode =
+                        progress.getCancelSaveMode();
+                if (resumeSaveMode != ProgressMonitorController.CancelSaveMode.DO_NOT_SAVE
+                        && serverResult.isCancelledWithSave()) {
+                    // Save the model from the resumed training
+                    String savedPath = (resumeSaveMode == ProgressMonitorController.CancelSaveMode.LAST_EPOCH
+                            && serverResult.lastModelPath() != null)
+                            ? serverResult.lastModelPath()
+                            : serverResult.modelPath();
+                    progress.log("Saving cancelled model from resumed training...");
+                    progress.setStatus("Saving classifier...");
+                    String rId = classifierId != null ? classifierId
+                            : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_")
+                              + "_" + System.currentTimeMillis();
+                    List<ClassifierMetadata.ClassInfo> rClassInfo = buildClassInfoList(classNames, null);
+                    ClassifierMetadata rMeta = ClassifierMetadata.builder()
+                            .id(rId).name(classifierName).description(description)
+                            .modelType(trainingConfig.getModelType())
+                            .backbone(trainingConfig.getBackbone())
+                            .inputChannels(channelConfig.getSelectedChannels().size())
+                            .contextScale(trainingConfig.getContextScale())
+                            .downsample(trainingConfig.getDownsample())
+                            .expectedChannelNames(channelConfig.getChannelNames())
+                            .inputSize(effectiveTileSize, effectiveTileSize)
+                            .classes(rClassInfo)
+                            .normalizationStrategy(channelConfig.getNormalizationStrategy())
+                            .bitDepthTrained(channelConfig.getBitDepth())
+                            .trainingEpochs(serverResult.lastEpoch())
+                            .finalLoss(serverResult.finalLoss())
+                            .finalAccuracy(serverResult.finalAccuracy())
+                            .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                            .build();
+                    ModelManager rManager = new ModelManager();
+                    rManager.saveClassifier(rMeta, Path.of(savedPath), true, false);
+                    progress.complete(true, "Saved model as " + rId);
+                } else {
+                    progress.complete(false, "Training cancelled by user");
+                }
             } else {
                 // Completed -- save the classifier
                 progress.setStatus("Saving classifier...");
@@ -1679,6 +1780,8 @@ public class TrainingWorkflow {
             settings.put("focus_class_min_iou", config.getFocusClassMinIoU());
         }
         settings.put("whole_image", config.isWholeImage());
+        settings.put("gradient_accumulation_steps", config.getGradientAccumulationSteps());
+        settings.put("progressive_resize", config.isProgressiveResize());
         // Persist handler-specific params (e.g., MuViT model_config, patch_size,
         // level_scales, rope_mode) so they can be restored when loading from model.
         Map<String, Object> handlerParams = config.getHandlerParameters();
@@ -1730,13 +1833,15 @@ public class TrainingWorkflow {
      *
      * @param tileSize tile size in pixels
      * @param config   training configuration (provides overlap setting)
-     * @return padding in pixels (at least 64, at most tileSize/2)
+     * @return padding in pixels (at least 64, at most tileSize*3/8)
      */
     private static int computeTrainingContextPadding(int tileSize, TrainingConfig config) {
         int configOverlap = config.getOverlap();
         int minPadding = tileSize / 4;
         int padding = Math.max(configOverlap, minPadding);
-        return Math.max(64, Math.min(padding, tileSize / 2));
+        // Max 3/8 of tileSize ensures visible stride >= 25% of tileSize
+        int maxPadding = Math.max(64, tileSize * 3 / 8);
+        return Math.max(64, Math.min(padding, maxPadding));
     }
 
     /**

@@ -202,9 +202,13 @@ When most of the image is easy but a small region is hard (e.g., vein classifica
 
 ### When to stop manually
 
-Early stopping handles this automatically, but you can also:
-- Cancel training if validation loss has been increasing for 10+ epochs
-- Cancel if the loss chart shows clear divergence between train and val
+Early stopping handles this automatically, but you can also cancel manually. When you click **Cancel**, a dialog offers three options:
+
+- **Best Epoch** -- save the model from the epoch with the highest mean IoU
+- **Last Epoch** -- save the model from the most recently completed epoch
+- **Do Not Save** -- discard all progress
+
+After choosing, the dialog becomes closeable immediately -- you do not need to wait for the background cleanup to finish. The saved model is fully usable for inference.
 
 ## Normalization Strategy
 
@@ -221,7 +225,7 @@ The extension supports four normalization strategies. The choice affects how pix
 
 **BatchRenorm** -- All newly trained models use BatchRenorm instead of standard BatchNorm for the network's internal normalization layers. This eliminates a second source of tiling artifacts: standard BatchNorm accumulates running statistics during training that can diverge from actual tile statistics at inference time, causing inconsistent predictions at tile boundaries. BatchRenorm uses consistent global statistics in both training and inference, producing seamless tiled predictions. See [Buglakova et al., ICCV 2025](https://arxiv.org/abs/2503.19545).
 
-**Context padding** -- Training tiles are automatically extracted with a border of real surrounding image data. During inference, QuPath's `inputPadding` provides real context around each tile. Context padding ensures training geometry matches inference geometry: the model always sees real data at tile edges, never artificial reflection-padded data. The padding amount (`max(64, min(max(overlap, tileSize/4), tileSize/2))` pixels per side) is computed automatically. The mask border is filled with 255 (ignore_index) so the loss function ignores the padding region. This is disabled for whole-image mode where no surrounding data is available.
+**Context padding** -- Training tiles are automatically extracted with a border of real surrounding image data. During inference, QuPath's `inputPadding` provides real context around each tile. Context padding ensures training geometry matches inference geometry: the model always sees real data at tile edges, never artificial reflection-padded data. The padding amount (`max(64, min(max(overlap, tileSize/4), tileSize * 3/8))` pixels per side) is computed automatically. The mask border is filled with 255 (ignore_index) so the loss function ignores the padding region. This is disabled for whole-image mode where no surrounding data is available.
 
 ## Improving Results
 
