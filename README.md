@@ -5,6 +5,22 @@
 
 A QuPath extension for deep learning-based pixel classification, supporting both brightfield (RGB) and multi-channel fluorescence/spectral images.
 
+---
+
+> **WARNING: Hardware Requirements**
+>
+> Deep learning models are computationally demanding. The models available in this extension -- particularly **MuViT**, histology-pretrained encoders, and larger ResNet variants (ResNet-50, ResNet-101) -- were originally trained on large GPU clusters over extended periods. Running them on a typical workstation pushes hardware limits quickly.
+>
+> **What to expect:**
+> - **Without a dedicated NVIDIA GPU (CUDA)**, training will be extremely slow. Apple Silicon (MPS) can take 1-2+ hours per epoch for larger models. CPU training is impractical for anything beyond toy experiments.
+> - **Larger models + larger tile sizes + larger batch sizes = more memory.** It is easy to exceed your GPU's VRAM, causing QuPath to hang or crash. If training becomes unresponsive, you may need to **force-close QuPath** via Task Manager / Activity Monitor.
+> - **Start small.** Use ResNet-18 or ResNet-34 with 256px tiles and a small batch size (2-4) first. Only scale up if your hardware handles it comfortably.
+> - **Monitor your system resources** (GPU memory, CPU usage) during training, especially the first time with new settings.
+>
+> This extension makes powerful deep learning accessible within QuPath, but it does not change the fundamental hardware requirements of training neural networks. Plan your model architecture and training parameters according to your available hardware.
+
+---
+
 ## Features
 
 - **Train custom classifiers** from annotated regions using sparse annotations
