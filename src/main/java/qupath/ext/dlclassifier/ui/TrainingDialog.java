@@ -246,6 +246,10 @@ public class TrainingDialog {
         private MiniViewers.MiniViewerManager previewManager;
         private Stage previewStage;
 
+        // Context scale preview (shows what the context view sees)
+        private MiniViewers.MiniViewerManager contextPreviewManager;
+        private Stage contextPreviewStage;
+
         // Error display
         private VBox errorSummaryPanel;
         private VBox errorListBox;
@@ -282,6 +286,17 @@ public class TrainingDialog {
             dialog.setOnHidden(e -> {
                 if (!resultDelivered) {
                     onResult.accept(null);
+                }
+                // Close any open preview windows
+                if (previewStage != null) {
+                    previewStage.close();
+                    previewManager = null;
+                    previewStage = null;
+                }
+                if (contextPreviewStage != null) {
+                    contextPreviewStage.close();
+                    contextPreviewManager = null;
+                    contextPreviewStage = null;
                 }
             });
 
@@ -1696,8 +1711,49 @@ public class TrainingDialog {
                     "Adds C extra input channels (e.g., 3ch RGB -> 6ch with context).\n" +
                     "Modest memory increase (~5-10%). Compatible with all architectures.",
                     contextScaleLabel, contextScaleCombo);
+
+            Button contextPreviewBtn = new Button("Preview");
+            contextPreviewBtn.setMinWidth(Region.USE_PREF_SIZE);
+            contextPreviewBtn.setOnAction(e -> {
+                QuPathViewer viewer = QuPathGUI.getInstance().getViewer();
+                if (viewer == null || viewer.getImageData() == null) {
+                    Dialogs.showWarningNotification("Context Preview",
+                            "No image is currently open.");
+                    return;
+                }
+                int ctxScale = parseContextScale(contextScaleCombo.getValue());
+                if (ctxScale <= 1) {
+                    Dialogs.showWarningNotification("Context Preview",
+                            "Context scale is set to None. Select a context scale first.");
+                    return;
+                }
+                double ds = parseDownsample(downsampleCombo.getValue()) * ctxScale;
+                contextPreviewManager = MiniViewers.createManager(viewer);
+                contextPreviewManager.setDownsample(ds);
+
+                contextPreviewStage = new Stage();
+                contextPreviewStage.initOwner(QuPathGUI.getInstance().getStage());
+                contextPreviewStage.setTitle(String.format(
+                        "Context Preview (%dx context at %.0fx downsample)", ctxScale, ds));
+                Scene scene = new Scene(contextPreviewManager.getPane(), 400, 400);
+                contextPreviewStage.setScene(scene);
+                contextPreviewStage.setOnHiding(ev -> {
+                    contextPreviewManager = null;
+                    contextPreviewStage = null;
+                });
+                contextPreviewStage.show();
+            });
+            TooltipHelper.install(contextPreviewBtn,
+                    "Open a preview window showing what the context\n" +
+                    "channel sees -- the same location but covering a\n" +
+                    "wider area, downsampled to the same tile size.\n" +
+                    "Compare with the Resolution Preview to see how\n" +
+                    "the model receives both detail and context.");
+
             grid.add(contextScaleLabel, 0, row);
-            grid.add(contextScaleCombo, 1, row);
+            HBox ctxBox = new HBox(8, contextScaleCombo, contextPreviewBtn);
+            ctxBox.setAlignment(Pos.CENTER_LEFT);
+            grid.add(ctxBox, 1, row);
             row++;
 
             // Context info label
@@ -1719,8 +1775,12 @@ public class TrainingDialog {
                         previewStage.setTitle(String.format("Resolution Preview (%.0fx downsample)", ds));
                     }
                 }
+                updateContextPreview();
             });
-            contextScaleCombo.valueProperty().addListener((obs, old, newVal) -> updateSpatialInfoLabels());
+            contextScaleCombo.valueProperty().addListener((obs, old, newVal) -> {
+                updateSpatialInfoLabels();
+                updateContextPreview();
+            });
             // Initial update (will show pixel-only info until image is loaded)
             updateSpatialInfoLabels();
 
@@ -2560,6 +2620,23 @@ public class TrainingDialog {
                             "downsampled to %dpx x %dpx)",
                             contextCoveragePixels, contextCoveragePixels, contextScale * contextScale,
                             tileSize, tileSize));
+                }
+            }
+        }
+
+        /**
+         * Updates the context preview window downsample when the context scale
+         * or downsample changes. No-op if the context preview window is not open.
+         */
+        private void updateContextPreview() {
+            if (contextPreviewManager != null) {
+                int ctxScale = parseContextScale(contextScaleCombo.getValue());
+                double ds = parseDownsample(downsampleCombo.getValue()) * ctxScale;
+                contextPreviewManager.setDownsample(ds);
+                if (contextPreviewStage != null) {
+                    contextPreviewStage.setTitle(String.format(
+                            "Context Preview (%dx context at %.0fx downsample)",
+                            ctxScale, ds));
                 }
             }
         }
