@@ -1565,17 +1565,37 @@ class TrainingService:
                 # Rough estimate: model weights + optimizer (3x) + activations
                 # ViTs need ~8-12x model size for activations; CNNs need ~3-5x
                 act_multiplier = 10.0 if model_type == "muvit" else 4.0
+                # Mixed precision roughly halves activation/gradient memory
+                if use_mixed_precision:
+                    act_multiplier *= 0.6
+                # Context scale doubles input channels, increasing activations
+                context_scale = architecture.get("context_scale", 1)
+                if context_scale > 1:
+                    act_multiplier *= 1.5
                 tiles_per_batch = batch_size
                 tile_pixels = architecture.get("input_size", [512, 512])
                 tile_area = tile_pixels[0] * tile_pixels[1] if isinstance(tile_pixels, (list, tuple)) else 512 * 512
+                # If progressive resizing is active, estimate for the LARGER
+                # phase 2 tile size (that's where OOM would actually occur)
+                if progressive_resize:
+                    effective_area = tile_area  # full res for phase 2
+                    phase_note = " (phase 2 full-res)"
+                else:
+                    effective_area = tile_area
+                    phase_note = ""
                 # Scale activation estimate by tile area relative to 256x256 baseline
-                area_scale = tile_area / (256 * 256)
+                area_scale = effective_area / (256 * 256)
                 estimated_mb = model_mb * (1 + 3 + act_multiplier * area_scale * tiles_per_batch)
                 if estimated_mb > free_mb * 0.9:
                     logger.warning(
-                        "VRAM estimate: %.0f MB needed vs %.0f MB free -- "
+                        "VRAM estimate: %.0f MB needed vs %.0f MB free%s -- "
                         "OOM likely. Reduce batch size, tile size, or model size.",
-                        estimated_mb, free_mb
+                        estimated_mb, free_mb, phase_note
+                    )
+                else:
+                    logger.info(
+                        "VRAM estimate: %.0f MB needed, %.0f MB free%s -- OK",
+                        estimated_mb, free_mb, phase_note
                     )
         except Exception:
             pass  # Never let estimation break training
@@ -1705,6 +1725,27 @@ class TrainingService:
                     # Step scheduler if using OneCycleLR (per-optimizer-step)
                     if isinstance(scheduler, OneCycleLR):
                         scheduler.step()
+
+                # Log peak GPU memory after first batch of first epoch
+                # (and first batch after progressive resize switch) to show
+                # actual VRAM usage vs the pre-flight estimate.
+                if batch_idx == 0 and self.device == "cuda":
+                    is_first_epoch = (epoch == start_epoch)
+                    is_phase2_start = (progressive_resize
+                                       and epoch == phase1_end_epoch)
+                    if is_first_epoch or is_phase2_start:
+                        phase_label = ("Phase 2 (full-res) " if is_phase2_start
+                                       else "")
+                        self.gpu_manager.log_memory_status(
+                            prefix=f"  {phase_label}After first batch: ",
+                            include_peak=True)
+                        peak_mb = self.gpu_manager.get_peak_allocated_mb()
+                        total_gpu = self.gpu_manager.get_memory_mb()
+                        headroom = total_gpu - peak_mb
+                        if headroom > peak_mb * 0.5:
+                            logger.info(
+                                "  %.0f MB headroom -- a larger batch size "
+                                "may train faster", headroom)
 
                 # Periodic batch progress logging
                 if (batch_idx + 1) % log_interval == 0 or batch_idx == 0:

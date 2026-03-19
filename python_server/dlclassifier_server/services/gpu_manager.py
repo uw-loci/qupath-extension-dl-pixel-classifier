@@ -225,24 +225,57 @@ class GPUManager:
 
         return info
 
-    def log_memory_status(self, prefix: str = "") -> None:
+    def log_memory_status(self, prefix: str = "",
+                          include_peak: bool = False) -> None:
         """Log current memory status (useful during training).
 
         Args:
             prefix: Optional prefix for log message (e.g., epoch number)
+            include_peak: If True, also log peak and reserved memory
         """
         if self._device_type == "cuda":
             mem_info = self.get_memory_info()
-            logger.info(
-                f"{prefix}GPU Memory: "
-                f"{mem_info.get('allocated_mb', 0):.1f}MB allocated / "
-                f"{mem_info.get('total_mb', 0):.0f}MB total "
-                f"({mem_info.get('utilization_percent', 0):.1f}%)"
-            )
+            allocated = mem_info.get('allocated_mb', 0)
+            total = mem_info.get('total_mb', 0)
+            pct = mem_info.get('utilization_percent', 0)
+            if include_peak:
+                peak = mem_info.get('max_allocated_mb', 0)
+                reserved = mem_info.get('reserved_mb', 0)
+                logger.info(
+                    f"{prefix}GPU Memory: "
+                    f"{allocated:.0f}MB allocated, "
+                    f"{peak:.0f}MB peak, "
+                    f"{reserved:.0f}MB reserved / "
+                    f"{total:.0f}MB total "
+                    f"({100 * peak / total:.0f}% peak utilization)"
+                    if total > 0 else
+                    f"{prefix}GPU Memory: {allocated:.0f}MB allocated"
+                )
+            else:
+                logger.info(
+                    f"{prefix}GPU Memory: "
+                    f"{allocated:.1f}MB allocated / "
+                    f"{total:.0f}MB total "
+                    f"({pct:.1f}%)"
+                )
         elif self._device_type == "mps":
             logger.info(f"{prefix}Using Apple MPS (memory introspection limited)")
         else:
             logger.info(f"{prefix}Using CPU")
+
+    def get_peak_allocated_mb(self) -> float:
+        """Get peak GPU memory allocated since last reset (CUDA only).
+
+        Returns:
+            Peak allocated memory in MB, or 0 for non-CUDA devices.
+        """
+        if self._device_type == "cuda":
+            try:
+                import torch
+                return torch.cuda.max_memory_allocated() / (1024**2)
+            except Exception:
+                return 0.0
+        return 0.0
 
 
 # Singleton instance for shared access
