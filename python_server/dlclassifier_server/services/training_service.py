@@ -1930,6 +1930,24 @@ class TrainingService:
                 else:
                     metric_name = "mIoU" if early_stopping_metric == "mean_iou" else "loss"
                 logger.info(f"  New best model at epoch {epoch+1} ({metric_name}={current_metric:.4f})")
+                # Persist best weights to disk immediately for crash recovery.
+                # If training crashes or power is lost, this file can be loaded
+                # with finalize_training.py to recover the best model.
+                self._save_best_in_progress(
+                    best_model_state=best_model_state,
+                    model_type=model_type,
+                    best_epoch=best_epoch,
+                    best_score=best_score,
+                    best_score_mode=best_score_mode,
+                    training_config={
+                        "model_type": model_type,
+                        "architecture": architecture,
+                        "input_config": input_config,
+                        "training_params": training_params,
+                        "classes": classes,
+                    },
+                    training_history=training_history,
+                )
 
             # Log focus class status
             if focus_class:
@@ -2040,6 +2058,8 @@ class TrainingService:
             else:
                 # Best epoch IS the last epoch -- same model
                 cancel_best_model_path = cancel_last_model_path
+            # Clean up in-progress best model (proper models saved above)
+            self._cleanup_best_in_progress(model_type)
             # Free GPU memory
             model = model.cpu()
             self.gpu_manager.clear_cache()
@@ -2098,6 +2118,9 @@ class TrainingService:
             training_history=training_history,
             normalization_stats=dataset_norm_stats
         )
+
+        # Clean up in-progress best model (final model saved above)
+        self._cleanup_best_in_progress(model_type)
 
         return {
             "model_path": model_path,
@@ -2472,6 +2495,58 @@ class TrainingService:
         torch.save(checkpoint, str(checkpoint_path))
         logger.info(f"Checkpoint saved to {checkpoint_path}")
         return str(checkpoint_path)
+
+    def _save_best_in_progress(
+        self,
+        best_model_state: Dict[str, Any],
+        model_type: str,
+        best_epoch: int,
+        best_score: float,
+        best_score_mode: str,
+        training_config: Dict[str, Any],
+        training_history: List[Dict[str, Any]]
+    ) -> str:
+        """Save the current best model weights to disk for crash recovery.
+
+        Called every time a new best epoch is found during training.
+        The file is overwritten each time, keeping only the latest best.
+        If training crashes or power is lost, this file can be loaded
+        with finalize_training.py to recover the best model weights.
+
+        The saved format is compatible with _save_checkpoint / finalize_training.py:
+        both model_state_dict and best_model_state point to the best weights.
+
+        Returns:
+            Path to the saved file.
+        """
+        checkpoint_dir = Path(os.path.expanduser("~/.dlclassifier/checkpoints"))
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        save_path = checkpoint_dir / f"best_in_progress_{model_type}.pt"
+
+        data = {
+            "model_state_dict": best_model_state,
+            "best_model_state": best_model_state,
+            "best_score": best_score,
+            "best_score_mode": best_score_mode,
+            "training_config": training_config,
+            "training_history": training_history,
+        }
+
+        torch.save(data, str(save_path))
+        logger.info(f"  Best model checkpoint saved to disk (epoch {best_epoch}): {save_path}")
+        return str(save_path)
+
+    def _cleanup_best_in_progress(self, model_type: str) -> None:
+        """Remove the in-progress best model file after training completes normally.
+
+        Called after successful completion or cancellation, when the final model
+        has been saved properly via _save_model().
+        """
+        save_path = Path(os.path.expanduser("~/.dlclassifier/checkpoints")) / f"best_in_progress_{model_type}.pt"
+        if save_path.exists():
+            save_path.unlink()
+            logger.debug(f"Cleaned up in-progress best model: {save_path}")
 
     def _create_model(
         self,

@@ -180,6 +180,20 @@ if model_output_dir:
 
     training_service._save_checkpoint = _redirected_save_checkpoint
 
+    _orig_save_best = training_service._save_best_in_progress
+
+    def _redirected_save_best(*args, **kwargs):
+        orig_path = _orig_save_best(*args, **kwargs)
+        dst_dir = _Path(model_output_dir)
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        src = _Path(orig_path)
+        dst = dst_dir / src.name
+        _shutil.copy2(str(src), str(dst))
+        logger.info("Copied best-in-progress to project: %s", dst)
+        return str(dst)
+
+    training_service._save_best_in_progress = _redirected_save_best
+
 # Log device and training configuration for diagnostics
 import torch
 device_name = training_service.device
