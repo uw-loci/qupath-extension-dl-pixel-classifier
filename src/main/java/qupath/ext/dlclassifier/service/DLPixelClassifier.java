@@ -109,13 +109,11 @@ public class DLPixelClassifier implements PixelClassifier {
         this.contextScale = metadata.getContextScale();
         this.inputPadding = computeOverlayPadding(inferenceConfig.getTileSize());
 
-        // Model-type-aware blending: ViTs need wider, smoother blending
-        // due to global self-attention making predictions tile-dependent
-        boolean isViT = "muvit".equals(metadata.getModelType());
-        InferenceConfig.BlendMode overlayBlendMode = isViT
-                ? InferenceConfig.BlendMode.GAUSSIAN
-                : inferenceConfig.getBlendMode();
-        int overlayMaxBlendDist = -1;  // Use full inputPadding for all models
+        // Always use GAUSSIAN blending for overlays -- the cosine-bell S-curve
+        // smoothly averages overlapping predictions from adjacent tiles,
+        // eliminating visible grid artifacts at tile boundaries.
+        InferenceConfig.BlendMode overlayBlendMode = InferenceConfig.BlendMode.GAUSSIAN;
+        int overlayMaxBlendDist = -1;  // Use full inputPadding for blend zone
 
         this.blendCache = new TileBlendCache(100, inputPadding,
                 overlayBlendMode, overlayMaxBlendDist,
@@ -385,11 +383,8 @@ public class DLPixelClassifier implements PixelClassifier {
                     request.getX(), request.getY(), tileWidth, tileHeight);
 
             // Schedule deferred refresh so earlier tiles get re-rendered with
-            // this tile now available as a neighbor (not needed for CENTER_CROP
-            // since each tile's visible region uses only its own center predictions)
-            if (inferenceConfig.getBlendMode() != InferenceConfig.BlendMode.CENTER_CROP) {
-                blendCache.scheduleRefresh();
-            }
+            // this tile now available as a neighbor for blending
+            blendCache.scheduleRefresh();
 
             // Success -- reset error counter and log progress
             consecutiveErrors.set(0);
@@ -735,10 +730,6 @@ public class DLPixelClassifier implements PixelClassifier {
         // inputPadding is PER-SIDE: QuPath's visible stride = tileSize - 2*inputPadding.
         // Padding must be strictly less than tileSize/2 or the stride collapses to zero
         // and QuPath sends the entire viewport as a single (impossibly large) tile request.
-        if (inferenceConfig.getBlendMode() == InferenceConfig.BlendMode.CENTER_CROP) {
-            // 25% padding per side -> center 50% visible, no blending needed.
-            return tileSize / 4;
-        }
         int configOverlap = inferenceConfig.getOverlap();
         int minContextPadding = tileSize / 4;  // 25% minimum padding per side
         int padding = Math.max(configOverlap, minContextPadding);

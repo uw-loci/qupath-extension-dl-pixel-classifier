@@ -226,7 +226,7 @@ public class InferenceConfig {
         private int tileSize = 512;
         private int overlap = 64;
         private double overlapPercent = 12.5; // Default: 64/512 = 12.5%
-        private BlendMode blendMode = BlendMode.CENTER_CROP;
+        private BlendMode blendMode = BlendMode.GAUSSIAN;
         private OutputType outputType = OutputType.MEASUREMENTS;
         private OutputObjectType objectType = OutputObjectType.DETECTION;
         private double minObjectSizeMicrons = 10.0;

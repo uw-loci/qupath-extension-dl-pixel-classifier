@@ -463,19 +463,18 @@ public class InferenceDialog {
             try {
                 blendModeCombo.setValue(InferenceConfig.BlendMode.valueOf(DLClassifierPreferences.getLastBlendMode()));
             } catch (IllegalArgumentException e) {
-                blendModeCombo.setValue(InferenceConfig.BlendMode.CENTER_CROP);
+                blendModeCombo.setValue(InferenceConfig.BlendMode.GAUSSIAN);
             }
             TooltipHelper.install(blendModeCombo,
                     "Strategy for handling tile boundaries:\n\n" +
-                    "CENTER_CROP (Recommended): Use only center predictions from each tile.\n" +
-                    "  Eliminates all tile boundary artifacts. Slightly slower (~1.5x)\n" +
-                    "  because tiles need extra context padding.\n" +
+                    "GAUSSIAN (Recommended): Cosine-bell blending for smooth transitions.\n" +
+                    "  Eliminates tile boundary artifacts with smooth S-curve averaging.\n" +
                     "  Forced for OVERLAY output type.\n\n" +
                     "LINEAR: Weighted average blending at tile boundaries.\n" +
                     "  Faster but may show faint grid lines, especially with BatchNorm models.\n" +
                     "  Available for batch inference only (RENDERED_OVERLAY, OBJECTS).\n\n" +
-                    "GAUSSIAN: Cosine-bell blending for smoother transitions.\n" +
-                    "  Slightly better than LINEAR for ViT models.\n" +
+                    "CENTER_CROP: Use only center predictions from each tile.\n" +
+                    "  No blending -- discards predictions near tile edges.\n" +
                     "  Available for batch inference only (RENDERED_OVERLAY, OBJECTS).\n\n" +
                     "NONE: No blending; raw tile predictions.\n" +
                     "  Fastest but will show visible tile seams.");
@@ -840,12 +839,12 @@ public class InferenceDialog {
             smoothingSpinner.setDisable(!enableObjectOptions);
 
             // Blend mode is relevant for OBJECTS and RENDERED_OVERLAY (Python-side blending).
-            // OVERLAY always uses CENTER_CROP for artifact-free tile boundaries.
+            // OVERLAY always uses GAUSSIAN for artifact-free tile boundaries.
             boolean enableBlend = (outputType == InferenceConfig.OutputType.OBJECTS
                     || outputType == InferenceConfig.OutputType.RENDERED_OVERLAY);
             blendModeCombo.setDisable(!enableBlend);
             if (outputType == InferenceConfig.OutputType.OVERLAY) {
-                blendModeCombo.setValue(InferenceConfig.BlendMode.CENTER_CROP);
+                blendModeCombo.setValue(InferenceConfig.BlendMode.GAUSSIAN);
             }
 
             // Auto-select "Apply to whole image" for on-demand OVERLAY only

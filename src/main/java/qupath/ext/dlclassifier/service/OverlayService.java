@@ -176,7 +176,7 @@ public class OverlayService {
     /**
      * Creates an overlay from the stored model selection on the given image.
      * <p>
-     * Uses CENTER_CROP blend mode and reads overlay smoothing from preferences.
+     * Uses GAUSSIAN blend mode and reads overlay smoothing from preferences.
      *
      * @param imageData the image to overlay
      * @return true if the overlay was created
@@ -191,7 +191,7 @@ public class OverlayService {
         double smoothingSigma = DLClassifierPreferences.getOverlaySmoothing();
         InferenceConfig config = InferenceConfig.builder()
                 .tileSize(tileSize)
-                .blendMode(InferenceConfig.BlendMode.CENTER_CROP)
+                .blendMode(InferenceConfig.BlendMode.GAUSSIAN)
                 .overlaySmoothingSigma(smoothingSigma)
                 .outputType(InferenceConfig.OutputType.OVERLAY)
                 .build();
@@ -207,7 +207,7 @@ public class OverlayService {
      * Recreates the overlay with current preference settings.
      * <p>
      * Requires that the overlay was originally created via the overload that
-     * stores metadata and channel config. Always uses CENTER_CROP blend mode
+     * stores metadata and channel config. Always uses GAUSSIAN blending
      * for artifact-free tile boundaries, and reads overlay smoothing from
      * preferences.
      *
@@ -223,7 +223,7 @@ public class OverlayService {
         double smoothingSigma = DLClassifierPreferences.getOverlaySmoothing();
         InferenceConfig newConfig = InferenceConfig.builder()
                 .tileSize(tileSize)
-                .blendMode(InferenceConfig.BlendMode.CENTER_CROP)
+                .blendMode(InferenceConfig.BlendMode.GAUSSIAN)
                 .overlaySmoothingSigma(smoothingSigma)
                 .outputType(InferenceConfig.OutputType.OVERLAY)
                 .build();

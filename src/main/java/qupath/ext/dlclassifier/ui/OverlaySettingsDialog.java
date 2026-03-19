@@ -17,9 +17,9 @@ import qupath.ext.dlclassifier.service.OverlayService;
 /**
  * Dialog for configuring overlay prediction smoothing.
  * <p>
- * The overlay always uses CENTER_CROP tile handling (artifact-free tile
- * boundaries). This dialog controls Gaussian probability smoothing which
- * reduces noisy per-pixel predictions before argmax classification.
+ * The overlay uses GAUSSIAN blending (cosine-bell S-curve) for artifact-free
+ * tile boundaries. This dialog controls additional Gaussian probability
+ * smoothing which reduces noisy per-pixel predictions before argmax classification.
  * <p>
  * Changes are saved to preferences and, if an overlay is active,
  * the overlay is rebuilt immediately with the new settings.
@@ -84,7 +84,7 @@ public class OverlaySettingsDialog {
 
         // Tile handling note
         Label tileNote = new Label(
-                "Tile boundaries use CENTER_CROP (halo removal)\n" +
+                "Tile boundaries use GAUSSIAN blending (cosine-bell S-curve)\n" +
                 "for artifact-free results at all zoom levels.");
         tileNote.setStyle("-fx-font-size: 11px; -fx-text-fill: #666666;");
         tileNote.setWrapText(true);

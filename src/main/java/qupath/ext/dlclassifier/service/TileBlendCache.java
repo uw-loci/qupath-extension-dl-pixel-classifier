@@ -65,8 +65,11 @@ public class TileBlendCache {
             });
     private volatile ScheduledFuture<?> pendingRefresh;
 
-    /** Guards against repeated overlay refreshes -- only one refresh per session. */
-    private volatile boolean hasRefreshed = false;
+    /** Cooldown period between overlay refreshes (ms). */
+    private static final long REFRESH_COOLDOWN_MS = 5000;
+
+    /** Timestamp of the last completed refresh. 0 = never refreshed. */
+    private volatile long lastRefreshTime = 0;
 
     /** Callback invoked when a deferred overlay refresh fires. */
     private final Runnable refreshCallback;
@@ -317,8 +320,10 @@ public class TileBlendCache {
      * Only fires once per overlay session to avoid infinite refresh loops.
      */
     public void scheduleRefresh() {
-        if (hasRefreshed) {
-            logger.debug("BLEND scheduleRefresh skipped (already refreshed)");
+        long elapsed = System.currentTimeMillis() - lastRefreshTime;
+        if (lastRefreshTime > 0 && elapsed < REFRESH_COOLDOWN_MS) {
+            logger.debug("BLEND scheduleRefresh skipped ({}ms since last refresh, cooldown={}ms)",
+                    elapsed, REFRESH_COOLDOWN_MS);
             return;
         }
 
@@ -326,7 +331,7 @@ public class TileBlendCache {
         if (prev != null) prev.cancel(false);
         logger.debug("BLEND scheduling refresh in 1s (cache size={})", probCache.size());
         pendingRefresh = refreshScheduler.schedule(() -> {
-            hasRefreshed = true;
+            lastRefreshTime = System.currentTimeMillis();
             try {
                 logger.debug("Refreshing overlay for tile blending ({} cached prob maps)",
                         probCache.size());
@@ -347,7 +352,7 @@ public class TileBlendCache {
         seenTileY.clear();
         empiricalStepX = -1;
         empiricalStepY = -1;
-        hasRefreshed = false;
+        lastRefreshTime = 0;
     }
 
     /**
