@@ -892,19 +892,11 @@ public class TrainingDialog {
                     ClassifierClient.TrainingResult result =
                             backend.finalizeTraining(checkpointPath, finalOutputDir);
 
-                    // Load metadata from the recovered model's directory
-                    java.nio.file.Path metadataPath = java.nio.file.Path.of(
-                            result.modelPath(), "metadata.json");
-                    ClassifierMetadata recovered = null;
-                    if (java.nio.file.Files.exists(metadataPath)) {
-                        try (java.io.FileReader reader = new java.io.FileReader(
-                                metadataPath.toFile())) {
-                            recovered = new Gson().fromJson(reader, ClassifierMetadata.class);
-                        } catch (Exception parseEx) {
-                            logger.warn("Could not parse recovered metadata: {}",
-                                    parseEx.getMessage());
-                        }
-                    }
+                    // Load metadata using ModelManager's parser (handles the
+                    // custom JSON structure that Gson can't auto-map)
+                    ModelManager modelManager = new ModelManager();
+                    java.nio.file.Path modelDir = java.nio.file.Path.of(result.modelPath());
+                    ClassifierMetadata recovered = modelManager.loadMetadata(modelDir);
 
                     // Store the .pt path directly (getModelPath can't find it
                     // because the directory name doesn't match the model ID)

@@ -130,7 +130,13 @@ public class ModelManager {
     /**
      * Loads metadata from a classifier directory.
      */
-    private ClassifierMetadata loadMetadata(Path classifierDir) {
+    /**
+     * Loads classifier metadata from a directory containing metadata.json.
+     *
+     * @param classifierDir directory containing metadata.json
+     * @return parsed metadata, or null if not found or invalid
+     */
+    public ClassifierMetadata loadMetadata(Path classifierDir) {
         Path metadataPath = classifierDir.resolve(METADATA_FILE);
         if (!Files.exists(metadataPath)) {
             return null;
