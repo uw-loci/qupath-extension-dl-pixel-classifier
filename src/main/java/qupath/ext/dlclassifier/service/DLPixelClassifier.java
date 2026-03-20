@@ -229,19 +229,17 @@ public class DLPixelClassifier implements PixelClassifier {
         currentServerPath = serverPath;
 
         // Cache-hit fast path: if this tile's prob map is already cached,
-        // skip inference entirely and just blend + argmax.
-        // This is critical for the deferred-refresh path where the overlay is
-        // recreated after the initial render to get proper bidirectional blending.
+        // skip inference entirely and just argmax from cache.
+        // ProbMaps are stride-sized (reflection padding is cropped on Python side),
+        // so there is no overlap between adjacent tiles and no blending is possible.
         float[][][] cachedProbMap = blendCache.getIfCached(request.getX(), request.getY());
         if (cachedProbMap != null) {
             int cachedH = cachedProbMap.length;
             int cachedW = cachedProbMap[0].length;
-            logger.debug("BLEND cache hit at ({}, {}), dims={}x{}, cache size={}",
+            logger.debug("Cache hit at ({}, {}), dims={}x{}, cache size={}",
                     request.getX(), request.getY(), cachedW, cachedH, blendCache.size());
-            float[][][] blended = blendCache.blendWithNeighbors(cachedProbMap,
-                    request.getX(), request.getY(), cachedW, cachedH);
             consecutiveErrors.set(0);
-            return createClassIndexImage(blended, cachedW, cachedH);
+            return createClassIndexImage(cachedProbMap, cachedW, cachedH);
         }
 
         ImageServer<BufferedImage> server = imageData.getServer();
@@ -379,19 +377,11 @@ public class DLPixelClassifier implements PixelClassifier {
             int strideW = tileWidth;
             int strideH = tileHeight;
 
-            // Cache and blend with available neighbors
+            // Cache stride-sized probMap for fast path on repaint.
+            // No blending: probMaps are stride-sized (no overlap between tiles).
+            // Reflection padding provides the model with full tileSize context;
+            // seams are minimized by the model seeing sufficient surrounding data.
             blendCache.cache(request.getX(), request.getY(), probMap);
-            logger.debug("BLEND cached at ({}, {}), dims={}x{}, step=({},{}), cache={}",
-                    request.getX(), request.getY(), strideW, strideH,
-                    blendCache.getEmpiricalStepX(), blendCache.getEmpiricalStepY(),
-                    blendCache.size());
-
-            float[][][] blended = blendCache.blendWithNeighbors(probMap,
-                    request.getX(), request.getY(), strideW, strideH);
-
-            // Schedule deferred refresh so earlier tiles get re-rendered with
-            // this tile now available as a neighbor for blending
-            blendCache.scheduleRefresh();
 
             // Success -- reset error counter and log progress
             consecutiveErrors.set(0);
@@ -401,7 +391,7 @@ public class DLPixelClassifier implements PixelClassifier {
                         completed, request.getX(), request.getY(),
                         strideW, strideH, reflectionPadding);
             }
-            return createClassIndexImage(blended, strideW, strideH);
+            return createClassIndexImage(probMap, strideW, strideH);
 
         } catch (IOException e) {
             // During shutdown, interrupted threads and missing temp files are expected.
