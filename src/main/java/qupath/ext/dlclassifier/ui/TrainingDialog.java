@@ -29,6 +29,7 @@ import qupath.ext.dlclassifier.scripting.ScriptGenerator;
 import qupath.ext.dlclassifier.service.ApposeService;
 import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
+import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.commands.MiniViewers;
@@ -576,10 +577,23 @@ public class TrainingDialog {
                     "Load settings from a previously trained model to retrain or refine it.\n" +
                     "Populates all dialog fields from the selected model's configuration.");
 
+            Button loadCheckpointButton = new Button("Load checkpoint...");
+            loadCheckpointButton.setOnAction(e -> loadCheckpointFile());
+            TooltipHelper.install(loadCheckpointButton,
+                    "Recover from an interrupted training checkpoint (.pt file).\n" +
+                    "Finalizes the checkpoint into a usable model, then loads its\n" +
+                    "settings so you can continue training from where it left off.\n\n" +
+                    "Look for checkpoint files in:\n" +
+                    "  - Your project's classifiers/dl/ directory\n" +
+                    "  - ~/.dlclassifier/checkpoints/\n" +
+                    "  - Files named checkpoint_*.pt or best_in_progress_*.pt");
+
             loadedModelLabel = new Label();
             loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
 
-            continueTrainingContent = new VBox(5, new HBox(10, selectModelButton, loadedModelLabel));
+            continueTrainingContent = new VBox(5,
+                    new HBox(10, selectModelButton, loadCheckpointButton),
+                    loadedModelLabel);
             continueTrainingContent.setPadding(new Insets(0, 0, 0, 20));
 
             // Toggle group listener: show/hide sub-content + re-validate
@@ -828,6 +842,98 @@ public class TrainingDialog {
         }
 
         @SuppressWarnings("unchecked")
+        /**
+         * Opens a file chooser for checkpoint .pt files, finalizes the checkpoint
+         * into a usable model, then loads its settings into the dialog.
+         */
+        private void loadCheckpointFile() {
+            FileChooser fileChooser = new FileChooser();
+            fileChooser.setTitle("Select Checkpoint File");
+            fileChooser.getExtensionFilters().addAll(
+                    new FileChooser.ExtensionFilter("PyTorch Checkpoint", "*.pt"),
+                    new FileChooser.ExtensionFilter("All Files", "*.*"));
+
+            // Default to checkpoints directory if it exists
+            java.nio.file.Path defaultDir = java.nio.file.Path.of(
+                    System.getProperty("user.home"), ".dlclassifier", "checkpoints");
+            if (java.nio.file.Files.isDirectory(defaultDir)) {
+                fileChooser.setInitialDirectory(defaultDir.toFile());
+            }
+
+            java.io.File selected = fileChooser.showOpenDialog(dialog.getOwner());
+            if (selected == null) return;
+
+            String checkpointPath = selected.getAbsolutePath();
+            loadedModelLabel.setText("Recovering checkpoint...");
+            loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
+
+            // Determine output directory for the recovered model
+            String modelOutputDir = null;
+            QuPathGUI qupath = QuPathGUI.getInstance();
+            if (qupath != null && qupath.getProject() != null) {
+                java.nio.file.Path classifiersDir = qupath.getProject().getPath().getParent()
+                        .resolve("classifiers").resolve("dl");
+                String baseName = selected.getName().replace(".pt", "");
+                java.nio.file.Path outputDir = classifiersDir.resolve("recovered_" + baseName);
+                try {
+                    java.nio.file.Files.createDirectories(outputDir);
+                    modelOutputDir = outputDir.toString();
+                } catch (java.io.IOException ex) {
+                    logger.warn("Could not create output dir, using default", ex);
+                }
+            }
+
+            String finalOutputDir = modelOutputDir;
+
+            // Run finalization in background to keep UI responsive
+            Thread recoverThread = new Thread(() -> {
+                try {
+                    ClassifierBackend backend = BackendFactory.getBackend();
+                    ClassifierClient.TrainingResult result =
+                            backend.finalizeTraining(checkpointPath, finalOutputDir);
+
+                    // Load the recovered model's metadata
+                    ModelManager modelManager = new ModelManager();
+                    List<ClassifierMetadata> classifiers = modelManager.listClassifiers();
+                    ClassifierMetadata recovered = null;
+                    for (ClassifierMetadata cm : classifiers) {
+                        // Match by model path
+                        Optional<java.nio.file.Path> mp = modelManager.getModelPath(cm.getId());
+                        if (mp.isPresent() && mp.get().getParent().toString()
+                                .equals(result.modelPath())) {
+                            recovered = cm;
+                            break;
+                        }
+                    }
+
+                    ClassifierMetadata finalRecovered = recovered;
+                    Platform.runLater(() -> {
+                        if (finalRecovered != null) {
+                            loadSettingsFromModel(finalRecovered);
+                            loadedModelLabel.setText("Recovered from: " + selected.getName());
+                            logger.info("Loaded settings from recovered checkpoint: {}",
+                                    selected.getName());
+                        } else {
+                            loadedModelLabel.setText("Recovered but could not load metadata");
+                            loadedModelLabel.setStyle(
+                                    "-fx-text-fill: #cc6600; -fx-font-style: italic;");
+                            logger.warn("Checkpoint finalized to {} but metadata not found",
+                                    result.modelPath());
+                        }
+                    });
+                } catch (Exception ex) {
+                    logger.error("Failed to recover checkpoint: {}", ex.getMessage(), ex);
+                    Platform.runLater(() -> {
+                        loadedModelLabel.setText("Recovery failed: " + ex.getMessage());
+                        loadedModelLabel.setStyle(
+                                "-fx-text-fill: #cc0000; -fx-font-style: italic;");
+                    });
+                }
+            }, "DLClassifier-RecoverCheckpoint");
+            recoverThread.setDaemon(true);
+            recoverThread.start();
+        }
+
         private void loadSettingsFromModel(ClassifierMetadata metadata) {
             logger.info("Loading settings from model: {} ({})", metadata.getName(), metadata.getId());
 
