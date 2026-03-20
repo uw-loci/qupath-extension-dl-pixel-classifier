@@ -174,11 +174,11 @@ public class DLPixelClassifier implements PixelClassifier {
                     + "tileSize={}, padding={}, stride~={}, est. total tiles~={}",
                     imgW, imgH, downsample, tileSize, inputPadding, stride,
                     estTilesX * estTilesY);
-            logger.info("First tile request: region=({},{}) {}x{} @ downsample={} "
-                    + "(reflection padding={} for model context)",
+            logger.info("First tile request: stride=({},{}) {}x{} @ downsample={}, "
+                    + "expanded to tileSize={} with padding={} (real context for interior tiles)",
                     request.getX(), request.getY(),
                     request.getWidth(), request.getHeight(),
-                    request.getDownsample(), inputPadding);
+                    request.getDownsample(), tileSize, inputPadding);
         }
 
         // Guard: reject oversized tile requests. QuPath sometimes sends the entire
@@ -260,10 +260,14 @@ public class DLPixelClassifier implements PixelClassifier {
             }
         }
 
-        // Read the tile from the image server (stride-sized as QuPath sends it)
-        BufferedImage tileImage = server.readRegion(request);
+        // Read expanded region from image for real context at tile boundaries.
+        // QuPath sends stride-sized requests, but the model needs tileSize input.
+        // Interior tiles: expanded = tileSize (real context on all sides).
+        // Edge tiles: expanded < tileSize (clipped to image bounds).
+        RegionRequest expanded = expandRequest(request, server);
+        BufferedImage tileImage = server.readRegion(expanded);
         if (tileImage == null) {
-            throw new IOException("Failed to read tile at " + request);
+            throw new IOException("Failed to read tile at " + expanded);
         }
 
         // Encode detail tile as raw binary (uint8 fast path for simple RGB, float32 for N-channel)
@@ -322,13 +326,16 @@ public class DLPixelClassifier implements PixelClassifier {
                 request.getX(), request.getY(), request.getWidth(), request.getHeight());
 
         try {
-            // Use binary pixel inference (single-tile batch)
-            // Pass channelCfg which includes precomputed normalization stats.
-            // QuPath sends stride-sized tiles without surrounding context. Use
-            // reflection padding so the model receives tileSize input (stride +
-            // 2*padding with mirrored edges). The Python side pads before inference
-            // and crops the output back to stride size.
-            int reflectionPadding = inputPadding;
+            // Determine reflection padding.
+            // Interior tiles: expanded image = tileSize, no reflection needed
+            // (model sees real neighboring image data on all sides).
+            // Edge tiles: expanded < tileSize, use reflection padding so the
+            // model always gets >= tileSize input for consistent predictions.
+            int expandedW = tileImage.getWidth();
+            int expandedH = tileImage.getHeight();
+            int tileSize = inferenceConfig.getTileSize();
+            int reflectionPadding = (expandedW >= tileSize && expandedH >= tileSize)
+                    ? 0 : inputPadding;
             PixelInferenceResult result = backend.runPixelInferenceBinary(
                     modelDirPath, rawBytes, List.of(tileId),
                     tileImage.getHeight(), tileImage.getWidth(), numChannels,
@@ -378,25 +385,26 @@ public class DLPixelClassifier implements PixelClassifier {
                 logger.debug("Failed to delete tile output: {}", outputPath);
             }
 
-            // ProbMap is stride-sized (Python crops after reflection padding)
-            int strideW = tileWidth;
-            int strideH = tileHeight;
+            // ProbMap matches expanded image dimensions (Python crops any
+            // reflection padding back to the expanded size). Crop to the
+            // stride region that QuPath expects.
+            float[][][] strideProbMap = cropToStride(probMap, request);
+            int strideW = strideProbMap[0].length;
+            int strideH = strideProbMap.length;
 
-            // Cache stride-sized probMap for fast path on repaint.
-            // No blending: probMaps are stride-sized (no overlap between tiles).
-            // Reflection padding provides the model with full tileSize context;
-            // seams are minimized by the model seeing sufficient surrounding data.
-            blendCache.cache(request.getX(), request.getY(), probMap);
+            // Cache stride-sized probMap for fast path on repaint
+            blendCache.cache(request.getX(), request.getY(), strideProbMap);
 
             // Success -- reset error counter and log progress
             consecutiveErrors.set(0);
             int completed = tilesCompleted.incrementAndGet();
             if (completed <= 10 || completed % 50 == 0) {
-                logger.info("Overlay tile {} completed at ({}, {}), dims={}x{}, reflPad={}",
+                logger.info("Overlay tile {} completed at ({}, {}), dims={}x{}, "
+                        + "expanded={}x{}, reflPad={}",
                         completed, request.getX(), request.getY(),
-                        strideW, strideH, reflectionPadding);
+                        strideW, strideH, expandedW, expandedH, reflectionPadding);
             }
-            return createClassIndexImage(probMap, strideW, strideH);
+            return createClassIndexImage(strideProbMap, strideW, strideH);
 
         } catch (IOException e) {
             // During shutdown, interrupted threads and missing temp files are expected.
