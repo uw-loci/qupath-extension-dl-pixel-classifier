@@ -67,9 +67,20 @@ effective_channels = base_channels * 2 if context_scale > 1 else base_channels
 # Create model
 model = training_service._create_model(model_type, architecture, effective_channels, len(classes))
 
+# Auto-detect BatchRenorm from state dict keys (rmax/dmax are unique to
+# BatchRenorm2d). The model was created with standard BatchNorm2d but may
+# have been trained with BatchRenorm2d -- replace before loading weights.
+best_state = checkpoint.get("best_model_state")
+load_state = best_state if best_state is not None else checkpoint["model_state_dict"]
+has_batchrenorm = any(k.endswith('.rmax') or k.endswith('.dmax') for k in load_state)
+if has_batchrenorm:
+    from dlclassifier_server.utils.batchrenorm import replace_bn_with_batchrenorm
+    replace_bn_with_batchrenorm(model)
+    logger.info("Auto-detected BatchRenorm from checkpoint state dict keys")
+
 # Restore best model weights
-if "best_model_state" in checkpoint and checkpoint["best_model_state"] is not None:
-    model.load_state_dict(checkpoint["best_model_state"])
+if best_state is not None:
+    model.load_state_dict(best_state)
     logger.info("Restored best model weights from checkpoint")
 else:
     model.load_state_dict(checkpoint["model_state_dict"])
