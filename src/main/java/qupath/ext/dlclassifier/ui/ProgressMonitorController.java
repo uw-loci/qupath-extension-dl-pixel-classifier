@@ -727,8 +727,10 @@ public class ProgressMonitorController {
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("Complete Training Early");
         confirm.setHeaderText("Save the best model trained so far?");
-        confirm.setContentText("The model with the best validation metrics will be saved "
-                + "as the final classifier.");
+        confirm.setContentText("The model with the best validation metrics will be\n"
+                + "saved as the final classifier.\n\n"
+                + "Training will stop after the current epoch finishes.");
+        confirm.getDialogPane().setMinWidth(400);
 
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
