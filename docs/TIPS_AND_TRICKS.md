@@ -89,7 +89,25 @@ If validation loss or mIoU plateaus early:
 3. **Try a different backbone**: resnet50 has more capacity than resnet34
 4. **Increase tile size**: the model may need more spatial context
 5. **Enable Hard Pixel %**: if easy pixels are dominating the loss (see above)
-6. **Lower learning rate**: if loss oscillates, try 1e-4 instead of 1e-3
+6. **Lower learning rate**: if loss oscillates wildly, check that LR is 1e-4 (the default)
+
+## Learning Rate: Leave It at 0.0001
+
+The default learning rate of **0.0001 (1e-4)** works well for nearly all cases. With discriminative learning rates enabled (automatic when using pretrained or frozen layers), the encoder gets 1/10th the rate (1e-5) while the decoder and head get the full 1e-4. This is a proven balance that:
+
+- Prevents catastrophic forgetting of pretrained encoder features
+- Gives the decoder enough gradient to learn your specific task
+- Works for both fresh training and continue-training from a saved model
+
+**When you might increase it:**
+- You're using **OneCycleLR scheduler** (not ReduceOnPlateau) -- OneCycleLR runs an automatic LR finder that safely determines the optimal peak rate
+- Training is converging **very slowly** after 50+ epochs with no improvement
+
+**When you might decrease it:**
+- **Continue-training** from a model that already achieved good results -- try 1e-5 for gentle fine-tuning
+- Training with **all encoder layers unfrozen** -- the full network is more sensitive to large updates
+
+**Never go above 1e-3 with ReduceOnPlateau** -- this causes wild oscillation where the model swings between excellent and terrible validation results epoch-to-epoch, especially with high class weights.
 
 ## Sharing Models
 

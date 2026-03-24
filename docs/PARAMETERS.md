@@ -37,7 +37,20 @@ Dialog sections appear in this order:
 | Parameter | Options | Description |
 |-----------|---------|-------------|
 | **Architecture** | UNet, MuViT (Transformer), Custom ONNX Model | Segmentation architecture. UNet is the best general-purpose choice. MuViT uses multi-resolution Vision Transformer feature fusion for multi-scale context. Custom ONNX allows importing externally trained models. See [UNet paper](https://arxiv.org/abs/1505.04597). |
-| **Encoder** | resnet18, resnet34, resnet50, efficientnet-b0/b1/b2, mobilenet_v2, plus 4 histology-pretrained variants (resnet50_lunit-swav, resnet50_lunit-bt, resnet50_kather100k, resnet50_tcga-brca) | Pretrained encoder network (shown for UNet only). Histology backbones use H&E tissue-pretrained weights (20x, 3-channel RGB) instead of ImageNet -- best for H&E brightfield. For fluorescence or multi-channel images, use ImageNet backbones. See [Backbone Selection](BEST_PRACTICES.md#backbone-selection). |
+| **Encoder** | resnet18, resnet34, resnet50, efficientnet-b0/b1/b2, mobilenet_v2, 4 histology-pretrained variants (resnet50_lunit-swav, resnet50_lunit-bt, resnet50_kather100k, resnet50_tcga-brca), and 6 foundation model encoders (see below) | Pretrained encoder network (shown for UNet only). Histology backbones use H&E tissue-pretrained weights (20x, 3-channel RGB) instead of ImageNet -- best for H&E brightfield. Foundation model encoders provide large-scale pretrained representations for tissue analysis. For fluorescence or multi-channel images, use ImageNet backbones. See [Backbone Selection](BEST_PRACTICES.md#backbone-selection). |
+
+**Foundation model encoders** (downloaded on-demand from HuggingFace, not bundled). Foundation model integration inspired by LazySlide (Zheng et al. 2026, Nature Methods). Only commercially-permissive licenses are included:
+
+| Encoder | Parameters | License | Notes |
+|---------|-----------|---------|-------|
+| h-optimus-0 | 1.1B | Apache 2.0 | Largest histopathology foundation model. Requires 16+ GB VRAM. |
+| virchow | 632M | Apache 2.0 | Strong general-purpose histopathology encoder. |
+| hibou-l | 300M | Apache 2.0 | Good capacity/efficiency balance for histopathology. |
+| hibou-b | 86M | Apache 2.0 | Lightweight foundation model. Suitable for 8 GB VRAM. |
+| midnight | 1.1B | MIT | Large histopathology model with permissive license. |
+| dinov2-large | 300M | Apache 2.0 | General-purpose (not histology-specific). Good for diverse image types. |
+
+Foundation model encoders default to encoder-frozen training. Gated models on HuggingFace require a HuggingFace authentication token (the extension prompts for this when needed).
 
 When **MuViT (Transformer)** is selected, the Encoder combo is hidden and a handler-specific UI appears instead:
 
@@ -70,7 +83,7 @@ When **Use pretrained backbone weights** is selected, a **Layer Freeze Panel** a
 |-----------|---------|-------|-------------|
 | **Epochs** | 50 | 1-1000 | Complete passes through training data. Early stopping prevents overfitting. 50-200 for small datasets, 20-100 for large. |
 | **Batch Size** | 8 | 1-128 | Tiles per training step. Larger = more stable gradients, more VRAM. 4-8 for 8GB VRAM with 512px tiles. |
-| **Learning Rate** | 0.001 | 0.00001-1.0 | Step size for gradient descent. 1e-3 for AdamW default, 1e-4 if oscillating, 1e-5 for full fine-tuning. When using OneCycleLR, an automatic LR finder runs before training to suggest an optimal max learning rate. |
+| **Learning Rate** | 0.0001 | 0.00001-1.0 | Step size for gradient descent. 1e-4 (0.0001) is the recommended default -- stable for both fresh training and continue-training. With discriminative LRs the encoder gets 1/10th (1e-5). Only increase to 1e-3 with OneCycleLR (which auto-finds the optimal max LR). |
 | **Validation Split** | 20% | 5-50% | Percentage held out for validation. Uses stratified sampling to ensure all classes appear in both train and validation sets. 15-25% typical. |
 | **Tile Size** | 512 | 64-1024 | Patch size in pixels. Must be divisible by 32 (encoder downsampling requirement). 256 for cell-level, 512 for tissue-level. |
 | **Whole image** | Off | Checkbox | Use the entire image as a single training tile (for small images only). Disables tile size, overlap, and context scale controls. Downsample remains unlocked so you can adjust resolution to fit within the architecture's max tile size. A dynamic warning appears: orange when images fit, red bold when images will be tiled at the current downsample (checks actual selected image dimensions). For ViT models (MuViT), tile size is capped at 512px since self-attention is O(n^2) in patch count. |

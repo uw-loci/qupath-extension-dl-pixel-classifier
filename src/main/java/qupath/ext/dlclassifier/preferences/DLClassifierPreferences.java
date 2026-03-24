@@ -43,7 +43,7 @@ public final class DLClassifierPreferences {
             "dlclassifier.defaultBatchSize", 8);
 
     private static final DoubleProperty defaultLearningRate = PathPrefs.createPersistentPreference(
-            "dlclassifier.defaultLearningRate", 0.001);
+            "dlclassifier.defaultLearningRate", 0.0001);
 
     private static final BooleanProperty useAugmentation = PathPrefs.createPersistentPreference(
             "dlclassifier.useAugmentation", true);

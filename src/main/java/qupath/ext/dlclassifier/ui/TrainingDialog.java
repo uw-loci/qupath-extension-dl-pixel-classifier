@@ -441,9 +441,16 @@ public class TrainingDialog {
             backboneInfo.setWrapText(true);
             backboneInfo.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
 
-            // Update info text when backbone changes (ImageNet vs histology)
+            // Update info text when backbone changes (ImageNet vs histology vs foundation)
             backboneCombo.valueProperty().addListener((obs, old, newVal) -> {
-                if (newVal != null && newVal.contains("_")) {
+                if (newVal != null && isFoundationModel(newVal)) {
+                    backboneInfo.setText(
+                            "Foundation model encoder (downloaded on-demand from HuggingFace). " +
+                            "Large-scale vision model with rich feature representations. " +
+                            "Gated models need HF_TOKEN env var. " +
+                            "Inspired by LazySlide (Zheng et al. 2026, Nature Methods).");
+                    backbonePretrainedRadio.setText("Use foundation model pretrained weights");
+                } else if (newVal != null && newVal.contains("_")) {
                     backboneInfo.setText(
                             "Histology-pretrained on H&E tissue patches at 20x (3-channel RGB). " +
                             "Best for H&E brightfield. Less freezing needed. " +
@@ -1475,14 +1482,19 @@ public class TrainingDialog {
             backboneLabel = new Label("Encoder:");
             TooltipHelper.installWithLink(
                     "Pretrained encoder network that extracts features:\n\n" +
+                    "--- Standard (ImageNet) ---\n" +
                     "resnet34: Best default. Good balance of speed and accuracy.\n" +
                     "resnet50: More capacity. For large datasets or complex tasks.\n" +
                     "efficientnet-b0: Lightweight, fast inference, low VRAM.\n\n" +
-                    "Histology encoders (marked 'Histology') were pretrained on\n" +
-                    "millions of H&E tissue patches at 20x. Best for H&E brightfield.\n" +
-                    "NOT recommended for fluorescence or multi-channel images --\n" +
-                    "use ImageNet backbones (resnet34/50) for IF instead.\n" +
-                    "~100MB download on first use (cached).",
+                    "--- Histology-pretrained ---\n" +
+                    "Lunit, Kather100K, TCGA-BRCA: Trained on millions of H&E tissue\n" +
+                    "patches at 20x. Best for H&E brightfield. ~100MB download.\n\n" +
+                    "--- Foundation Models (downloaded on-demand) ---\n" +
+                    "H-optimus-0, Virchow, Hibou-B/L, Midnight, DINOv2:\n" +
+                    "Large-scale vision models (86M-1.1B params). Permissive licenses\n" +
+                    "(Apache 2.0 / MIT). Gated models need HF_TOKEN env var.\n" +
+                    "~200MB-2GB download on first use.\n" +
+                    "Inspired by LazySlide (Zheng et al. 2026, Nature Methods).",
                     "https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/blob/main/docs/BEST_PRACTICES.md#backbone-selection",
                     backboneLabel, backboneCombo);
             grid.add(backboneLabel, 0, row);
@@ -1704,11 +1716,13 @@ public class TrainingDialog {
             Label lrLabel = new Label("Learning Rate:");
             TooltipHelper.install(
                     "Controls the step size during gradient descent.\n" +
-                    "Too high: training diverges. Too low: training stalls.\n\n" +
-                    "Default 1e-3 (0.001) is a safe starting point for Adam optimizer.\n" +
-                    "Reduce to 1e-4 if loss oscillates wildly.\n" +
-                    "Use 1e-5 when fine-tuning all layers (no freezing).\n" +
-                    "The LR scheduler will adjust the rate during training.",
+                    "Too high: training oscillates or diverges. Too low: training stalls.\n\n" +
+                    "Recommended: 1e-4 (0.0001) -- stable for both fresh training and\n" +
+                    "continue-training. With discriminative LRs, the encoder gets 1/10th\n" +
+                    "this rate (1e-5) and decoder/head get the full rate.\n\n" +
+                    "Only increase to 1e-3 if training is very slow to converge and you\n" +
+                    "are using OneCycleLR (which auto-finds the optimal max LR).\n\n" +
+                    "The LR scheduler will further adjust the rate during training.",
                     lrLabel, learningRateSpinner);
 
             grid.add(lrLabel, 0, row);
@@ -2852,6 +2866,19 @@ public class TrainingDialog {
             return type == ImageData.ImageType.BRIGHTFIELD_H_E
                     || type == ImageData.ImageType.BRIGHTFIELD_H_DAB
                     || type == ImageData.ImageType.BRIGHTFIELD_OTHER;
+        }
+
+        /**
+         * Checks if a backbone name refers to a foundation model encoder.
+         * Foundation models are downloaded on-demand from HuggingFace.
+         */
+        private static boolean isFoundationModel(String backbone) {
+            return backbone != null && (
+                    backbone.equals("h-optimus-0") ||
+                    backbone.equals("virchow") ||
+                    backbone.startsWith("hibou-") ||
+                    backbone.equals("midnight") ||
+                    backbone.startsWith("dinov2-"));
         }
 
         /**
