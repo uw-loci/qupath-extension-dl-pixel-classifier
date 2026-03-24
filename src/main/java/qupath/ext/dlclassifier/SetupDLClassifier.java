@@ -159,8 +159,33 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         Thread initThread = new Thread(() -> {
             try {
                 ApposeService.getInstance().initialize();
-                serverAvailable = true;
-                logger.info("Appose backend initialized successfully (background)");
+
+                // Verify the Python package version matches this JAR.
+                // init_services.py blocks services when versions mismatch,
+                // but Appose itself starts fine -- we must check health to
+                // detect the mismatch and disable menu items.
+                ClassifierBackend backend = BackendFactory.getBackend();
+                boolean healthy = backend.checkHealth();
+                String versionWarn = ApposeClassifierBackend.getVersionWarning();
+
+                if (!healthy || (versionWarn != null && !versionWarn.isEmpty())) {
+                    serverAvailable = false;
+                    String message = versionWarn != null && !versionWarn.isEmpty()
+                            ? versionWarn
+                            : "Python environment health check failed.";
+                    logger.error("Environment version mismatch: {}", message);
+                    Platform.runLater(() -> {
+                        environmentReady.set(false);
+                        Dialogs.showErrorNotification(
+                                EXTENSION_NAME,
+                                "Python package version mismatch.\n" +
+                                        "Go to Extensions > " + EXTENSION_NAME +
+                                        " > Utilities >\nRebuild DL Environment to update.");
+                    });
+                } else {
+                    serverAvailable = true;
+                    logger.info("Appose backend initialized successfully (background)");
+                }
             } catch (Exception e) {
                 logger.warn("Background Appose init failed: {}", e.getMessage());
                 serverAvailable = false;
