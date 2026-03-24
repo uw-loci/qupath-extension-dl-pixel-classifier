@@ -28,10 +28,10 @@ logger = logging.getLogger("dlclassifier.appose")
 
 # --- Version enforcement ---
 # The JAR bundles these scripts; the Python package is pip-installed in pixi.
-# Both sides MUST be in sync. When EITHER side is updated, bump the version
-# below to match the new pyproject.toml version and the health check will
-# block until the user rebuilds the pixi environment.
-_REQUIRED_PYTHON_VERSION = "0.3.6"
+# Both sides MUST be in sync. This version MUST match pyproject.toml and
+# __init__.py exactly. When EITHER side is updated, ALL THREE version
+# locations must be bumped together (see memory/feedback_version_sync.md).
+_REQUIRED_PYTHON_VERSION = "0.4.5"
 
 
 def _parse_version(v):
@@ -47,15 +47,24 @@ _installed_version = getattr(_dls, "__version__", "unknown")
 _installed_tuple = _parse_version(_installed_version)
 _required_tuple = _parse_version(_REQUIRED_PYTHON_VERSION)
 
-if _installed_tuple < _required_tuple:
-    _msg = (
-        "PYTHON PACKAGE OUT OF DATE: installed dlclassifier-server v%s "
-        "but the extension requires v%s or newer. "
-        "Go to DL Pixel Classifier > Rebuild Python Environment to update."
-        % (_installed_version, _REQUIRED_PYTHON_VERSION))
+if _installed_tuple != _required_tuple:
+    if _installed_tuple < _required_tuple:
+        _msg = (
+            "PYTHON PACKAGE OUT OF DATE: installed dlclassifier-server v%s "
+            "but the extension requires v%s. "
+            "Go to Extensions > DL Pixel Classifier > Utilities > "
+            "Rebuild DL Environment to update."
+            % (_installed_version, _REQUIRED_PYTHON_VERSION))
+    else:
+        _msg = (
+            "PYTHON PACKAGE VERSION MISMATCH: installed dlclassifier-server v%s "
+            "but the extension expects v%s. "
+            "Go to Extensions > DL Pixel Classifier > Utilities > "
+            "Rebuild DL Environment to resync."
+            % (_installed_version, _REQUIRED_PYTHON_VERSION))
     logger.error(_msg)
-    # Block initialization -- health check will return False and the Java
-    # side will show the version_warning to the user.
+    # Block initialization -- health check will return unhealthy and the
+    # Java side will show the version_warning and disable training.
     version_warning = _msg
     gpu_manager = None
     inference_service = None
@@ -63,7 +72,7 @@ if _installed_tuple < _required_tuple:
     inference_lock = threading.Lock()
 else:
     version_warning = None
-    logger.info("dlclassifier-server v%s (required >= %s) -- OK",
+    logger.info("dlclassifier-server v%s (required: %s) -- OK",
                 _installed_version, _REQUIRED_PYTHON_VERSION)
 
     # Import and initialize persistent services.
