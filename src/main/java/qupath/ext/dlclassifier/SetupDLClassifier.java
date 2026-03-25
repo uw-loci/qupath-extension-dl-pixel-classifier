@@ -503,11 +503,11 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         "Includes disk usage and links to open each folder.");
         whereFilesOption.setOnAction(e -> showWhereAreMyFiles());
 
-        utilitiesMenu.getItems().addAll(overlaySettingsOption, freeGpuOption,
-                recoverCheckpointOption, maePretrainOption,
-                new SeparatorMenuItem(), systemInfoOption,
-                whereFilesOption, pythonConsoleOption, new SeparatorMenuItem(),
-                rebuildItem);
+        utilitiesMenu.getItems().addAll(pythonConsoleOption, whereFilesOption,
+                systemInfoOption, new SeparatorMenuItem(),
+                freeGpuOption, maePretrainOption, recoverCheckpointOption,
+                overlaySettingsOption,
+                new SeparatorMenuItem(), rebuildItem);
 
         // === BUILD FINAL MENU ===
         extensionMenu.getItems().addAll(
