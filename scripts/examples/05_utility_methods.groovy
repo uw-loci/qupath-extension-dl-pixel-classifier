@@ -13,15 +13,15 @@
 
 import qupath.ext.dlclassifier.scripting.DLClassifierScripts
 
-// ============ Server Status ============
+// ============ Backend Status ============
 
-println "=== Server Status ==="
+println "=== Backend Status ==="
 if (DLClassifierScripts.isServerAvailable()) {
-    println "Server: ONLINE"
+    println "Backend: ONLINE"
     println "GPU: " + DLClassifierScripts.getGPUInfo()
 } else {
-    println "Server: OFFLINE"
-    println "Some features may not work without the server."
+    println "Backend: OFFLINE"
+    println "Go to Extensions > DL Pixel Classifier > Setup DL Environment"
 }
 
 // ============ Available Classifiers ============
@@ -89,10 +89,10 @@ if (hasResults) {
     annotations.take(3).each { ann ->
         def name = ann.getName() ?: ann.getPathClass()?.getName() ?: "Unnamed"
         println "\n  Annotation: " + name
-        ann.getMeasurementList().getMeasurementNames().findAll {
+        ann.getMeasurements().getNames().findAll {
             it.startsWith("DL:")
         }.each { measName ->
-            def value = ann.getMeasurementList().get(measName)
+            def value = ann.getMeasurements().get(measName)
             println "    " + measName + ": " + String.format("%.4f", value)
         }
     }

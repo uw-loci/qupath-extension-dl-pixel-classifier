@@ -5,7 +5,7 @@
  * that have annotations. Results are saved back to the project.
  *
  * Prerequisites:
- * - DL Classification server must be running
+ * - DL Pixel Classifier extension installed with Python environment set up
  * - A trained classifier must exist
  * - Project must be open with images containing annotations
  *
@@ -30,9 +30,10 @@ def skipAlreadyProcessed = true
 
 // ============ Main Script ============
 
-// Check server
+// Check backend
 if (!DLClassifierScripts.isServerAvailable()) {
-    println "ERROR: Classification server is not running!"
+    println "ERROR: DL backend is not available!"
+    println "Go to Extensions > DL Pixel Classifier > Setup DL Environment"
     return
 }
 

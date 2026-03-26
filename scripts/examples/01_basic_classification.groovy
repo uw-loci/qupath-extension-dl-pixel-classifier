@@ -5,7 +5,7 @@
  * to annotations in the current image.
  *
  * Prerequisites:
- * - DL Classification server must be running
+ * - DL Pixel Classifier extension installed with Python environment set up
  * - At least one trained classifier must exist
  * - Image must have annotation(s) to classify
  *
@@ -27,14 +27,14 @@ def outputType = "measurements"
 
 // ============ Main Script ============
 
-// Check server availability
+// Check backend availability
 if (!DLClassifierScripts.isServerAvailable()) {
-    println "ERROR: Classification server is not running!"
-    println "Please start the server with: python -m dlclassifier_server"
+    println "ERROR: DL backend is not available!"
+    println "Go to Extensions > DL Pixel Classifier > Setup DL Environment"
     return
 }
 
-println "Server available. GPU: " + DLClassifierScripts.getGPUInfo()
+println "Backend available. GPU: " + DLClassifierScripts.getGPUInfo()
 
 // List available classifiers
 println "\nAvailable classifiers:"
@@ -79,9 +79,9 @@ try {
     if (outputType == "measurements") {
         println "\nResults:"
         annotations.each { annotation ->
-            def ml = annotation.getMeasurementList()
+            def ml = annotation.getMeasurements()
             println "  " + (annotation.getName() ?: "Unnamed") + ":"
-            ml.getMeasurementNames().findAll { it.startsWith("DL:") }.each { name ->
+            ml.getNames().findAll { it.startsWith("DL:") }.each { name ->
                 println "    " + name + ": " + ml.get(name)
             }
         }

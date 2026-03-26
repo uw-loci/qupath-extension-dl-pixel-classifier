@@ -37,12 +37,8 @@ import java.util.function.BiConsumer;
  * def annotations = getAnnotationObjects()
  * DLClassifierScripts.classifyRegions(classifier, annotations)
  *
- * // Batch process project
- * for (entry in getProject().getImageList()) {
- *     def imageData = entry.readImageData()
- *     DLClassifierScripts.classifyRegions(classifier, imageData)
- *     entry.saveImageData(imageData)
- * }
+ * // Batch process entire project
+ * DLClassifierScripts.classifyProject(classifier)
  * }</pre>
  *
  * @author UW-LOCI
@@ -255,9 +251,9 @@ public class DLClassifierScripts {
     }
 
     /**
-     * Checks if the classification server is available.
+     * Checks if the classification backend (Appose Python environment) is available.
      *
-     * @return true if server is available
+     * @return true if backend is healthy and ready for inference/training
      */
     public static boolean isServerAvailable() {
         try {

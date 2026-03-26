@@ -155,8 +155,8 @@ def classifierIds = DLClassifierScripts.listClassifiers()
 // Batch process entire project
 DLClassifierScripts.classifyProject(classifier)
 
-// Batch with options
-DLClassifierScripts.classifyProject(classifier, InferenceConfig.OutputType.OBJECTS, true, null)
+// Batch with options (outputType is a String: "measurements", "objects", "overlay")
+DLClassifierScripts.classifyProject(classifier, "objects", true, null)
 
 // Check/clear measurements
 DLClassifierScripts.hasClassificationMeasurements(annotations)
@@ -166,7 +166,7 @@ DLClassifierScripts.clearCurrentImageMeasurements()
 // Get classification summary
 def summary = DLClassifierScripts.getClassificationSummary()
 
-// Server status
+// Backend status
 DLClassifierScripts.isServerAvailable()
 DLClassifierScripts.getGPUInfo()
 ```
@@ -195,8 +195,12 @@ for (entry in getProject().getImageList()) {
     def classifier = classifierMap.find { imageName.contains(it.key) }?.value
     if (classifier) {
         def imageData = entry.readImageData()
-        DLClassifierScripts.classifyRegions(classifier, imageData.getAnnotationObjects())
-        entry.saveImageData(imageData)
+        def annotations = imageData.getHierarchy().getAnnotationObjects()
+        if (!annotations.isEmpty()) {
+            setBatchProjectAndImage(getProject(), imageData)
+            DLClassifierScripts.classifyRegions(classifier, annotations)
+            entry.saveImageData(imageData)
+        }
     }
 }
 ```
