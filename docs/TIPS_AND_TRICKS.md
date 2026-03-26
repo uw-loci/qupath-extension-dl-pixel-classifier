@@ -109,14 +109,19 @@ The default learning rate of **0.0001 (1e-4)** works well for nearly all cases. 
 
 **Never go above 1e-3 with ReduceOnPlateau** -- this causes wild oscillation where the model swings between excellent and terrible validation results epoch-to-epoch, especially with high class weights.
 
-## Sharing Models
+## Sharing and Moving Models Between Projects
 
-To share a trained classifier with someone else:
+Trained classifiers are portable -- you can copy them between projects on the same machine or share them with collaborators. This is the key mechanism for the **recommended workflow of separating training and production projects** (see [Best Practices: Training vs. Production Projects](BEST_PRACTICES.md#training-vs-production-projects)).
+
+**To copy a classifier to another project (or share with someone else):**
 
 1. Navigate to `{project}/classifiers/dl/{model_name}/`
-2. Share **only** `model.pt` and `metadata.json`
-3. The recipient places both files in a folder under their project's `classifiers/dl/` directory
-4. Files named `best_in_progress_*.pt` and `checkpoint_*.pt` are training artifacts (5x larger) and are NOT needed for inference -- safe to delete
+2. Copy **only** `model.pt` and `metadata.json` -- these two files are all that is needed for inference
+3. Place both files in a new folder under the target project's `classifiers/dl/` directory (e.g., `{production_project}/classifiers/dl/{model_name}/`)
+4. Open the target project in QuPath -- the classifier appears in the Apply Classifier dialog
+5. Files named `best_in_progress_*.pt` and `checkpoint_*.pt` are training artifacts (5x larger) and are NOT needed for inference -- safe to delete
+
+**Why this matters:** Your training project should stay clean -- only hand-drawn annotations, no generated objects. Copy the finished classifier to a production project where you can freely apply it across images, generate objects, and run analysis without risking your curated training data.
 
 ## Multi-Scale Context
 

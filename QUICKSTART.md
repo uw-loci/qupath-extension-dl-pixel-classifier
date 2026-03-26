@@ -178,6 +178,7 @@ See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for the full troubleshoot
 
 ## Next Steps
 
+- **Use separate projects for training and production** -- keep your annotated training images in one project and apply the finished classifier in a separate project for analysis. This protects your training data from being cluttered with generated objects. See [Best Practices: Training vs. Production Projects](docs/BEST_PRACTICES.md#training-vs-production-projects) for details.
 - **Increase epochs** once you've verified the pipeline works (50-100 for real training)
 - **Try histology-pretrained backbones** -- select a backbone ending in "(Histology)" for weights pretrained on tissue patches instead of ImageNet. These produce better features for tissue classification and need less layer freezing. ~100MB download on first use (cached afterward).
 - **Try foundation model encoders** -- select h-optimus-0, virchow, hibou-l, hibou-b, midnight, or dinov2-large in the encoder dropdown for large-scale pretrained tissue representations. Downloaded on-demand (~100 MB to ~2 GB, cached after first use). Requires 10-16 GB VRAM for most models. Gated models need a HuggingFace token. See the [Training Guide](docs/TRAINING_GUIDE.md) for details.

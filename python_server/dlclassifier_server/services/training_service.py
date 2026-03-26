@@ -1119,6 +1119,30 @@ class TrainingService:
                 f"or reducing the downsample to generate more patches."
             )
 
+        # Warn about small batch sizes and their interaction with BatchRenorm.
+        # BN/BatchRenorm computes mean/var over (N, H, W) per forward pass;
+        # with batch=1-2, these statistics are extremely noisy.
+        _accum = training_params.get("gradient_accumulation_steps", 1)
+        _use_pt = architecture.get("use_pretrained", False)
+        if batch_size_requested < 4 and not _use_pt:
+            logger.warning(
+                "Batch size %d is small for training from scratch. "
+                "BatchNorm statistics will be very noisy. "
+                "Consider batch_size >= 4, or use pretrained weights "
+                "(which freeze encoder BN to pretrained running stats).",
+                batch_size_requested
+            )
+        if batch_size_requested <= 2 and _accum > 1:
+            logger.warning(
+                "Gradient accumulation (%d steps) does not help "
+                "BatchNorm stability: BN computes statistics per "
+                "forward pass (batch_size=%d), not per optimizer step "
+                "(effective_batch=%d). Consider increasing batch_size "
+                "instead of accumulation_steps for better BN stats.",
+                _accum, batch_size_requested,
+                batch_size_requested * _accum
+            )
+
         # Compute dataset-level normalization statistics for consistent inference
         _report_setup("computing_stats")
         try:
@@ -1183,6 +1207,39 @@ class TrainingService:
             shuffle=False,
             num_workers=0
         )
+
+        # Compute class distribution from training masks for diagnostic logging.
+        # This helps diagnose class imbalance issues when reviewing training logs.
+        try:
+            _class_pixel_counts = np.zeros(len(classes), dtype=np.int64)
+            _class_patch_counts = np.zeros(len(classes), dtype=np.int64)
+            _sample_count = min(len(train_dataset), 500)
+            for _i in range(_sample_count):
+                _mask_path = (train_dataset.masks_dir /
+                              train_dataset.image_files[_i].name)
+                if _mask_path.exists():
+                    _mask = np.array(
+                        SegmentationDataset._load_patch(_mask_path))
+                    for _c in range(len(classes)):
+                        _px = int((_mask == _c).sum())
+                        _class_pixel_counts[_c] += _px
+                        if _px > 0:
+                            _class_patch_counts[_c] += 1
+            _total_px = _class_pixel_counts.sum()
+            if _total_px > 0:
+                _class_dist = {
+                    classes[c]: {
+                        "pixel_pct": round(
+                            100.0 * _class_pixel_counts[c] / _total_px, 1),
+                        "patch_pct": round(
+                            100.0 * _class_patch_counts[c] / _sample_count, 1),
+                    }
+                    for c in range(len(classes))
+                }
+            else:
+                _class_dist = None
+        except Exception:
+            _class_dist = None
 
         # Setup optimizer - only optimize trainable parameters
         _report_setup("configuring_optimizer")
@@ -1626,6 +1683,23 @@ class TrainingService:
                 if isinstance(lr_val, (int, float)):
                     config_summary["LR Finder"] = f"suggested lr={lr_val:.6f}"
 
+            # Class distribution: pixel % and patch presence %
+            if _class_dist:
+                dist_parts = []
+                for cname, cinfo in _class_dist.items():
+                    dist_parts.append(
+                        f"{cname}={cinfo['pixel_pct']}% pixels, "
+                        f"in {cinfo['patch_pct']}% of patches")
+                config_summary["Class Distribution"] = "; ".join(dist_parts)
+
+                # Class weight info if set
+                weights_list = export_config.get("class_weights", None)
+                if weights_list:
+                    w_parts = [f"{classes[i]}={w:.2f}"
+                               for i, w in enumerate(weights_list)
+                               if i < len(classes)]
+                    config_summary["Class Weights"] = ", ".join(w_parts)
+
             _report_setup("training_config", config_summary)
         except Exception:
             pass  # Never let config summary break training
@@ -1686,6 +1760,19 @@ class TrainingService:
         best_accuracy = 0.0
         best_mean_iou = 0.0
 
+        # Auto-detect encoder prefix for BN freezing.  SMP models use
+        # "encoder.", but future architectures might use "backbone." or
+        # "features.".  Detect the prefix once here so the per-epoch
+        # freezing loop does not depend on a hardcoded string.
+        _encoder_prefix = None
+        for candidate in ("encoder", "backbone", "features"):
+            if hasattr(model, candidate):
+                _encoder_prefix = candidate + "."
+                break
+        if _encoder_prefix is None and model_type != "muvit":
+            logger.debug("Could not detect encoder prefix on model; "
+                         "encoder BN freezing will be skipped")
+
         # BatchRenorm warmup: linearly increase rmax/dmax over first 20% of
         # epochs from BatchNorm-equivalent (1, 0) to full BatchRenorm (3, 5).
         # Skip warmup when continuing from a pretrained model that already has
@@ -1710,6 +1797,22 @@ class TrainingService:
                 logger.info(f"Progressive resize: switching to full resolution at epoch {epoch+1}")
                 active_train_loader = train_loader
                 active_val_loader = val_loader
+                # Temporarily boost BatchRenorm running stat momentum so stats
+                # adapt faster to the new resolution's feature distribution.
+                # Default momentum=0.01 means ~100 batches for significant
+                # update; 0.1 means ~10 batches.  Boost for 1 epoch then
+                # restore (checked at epoch == phase1_end_epoch + 1 below).
+                if model_type != "muvit":
+                    _bn_original_momentum = 0.01
+                    from ..utils.batchrenorm import BatchRenorm2d as _BRN
+                    for m in model.modules():
+                        if isinstance(m, _BRN):
+                            _bn_original_momentum = m.momentum
+                            m.momentum = min(0.1, _bn_original_momentum * 10)
+                    logger.info("Boosted BatchRenorm momentum %.3f -> %.3f "
+                                "for resolution adaptation (1 epoch)",
+                                _bn_original_momentum,
+                                min(0.1, _bn_original_momentum * 10))
                 # Recreate OneCycleLR for remaining epochs
                 if isinstance(scheduler, OneCycleLR):
                     remaining_epochs = epochs - phase1_end_epoch
@@ -1727,6 +1830,17 @@ class TrainingService:
                         div_factor=scheduler_config.get("div_factor", 25.0),
                         final_div_factor=scheduler_config.get("final_div_factor", 1e4)
                     )
+            # Restore BatchRenorm momentum after progressive resize adaptation
+            if (progressive_resize and model_type != "muvit"
+                    and epoch == phase1_end_epoch + 1
+                    and checkpoint_path is None):
+                from ..utils.batchrenorm import BatchRenorm2d as _BRN
+                for m in model.modules():
+                    if isinstance(m, _BRN):
+                        m.momentum = _bn_original_momentum
+                logger.info("Restored BatchRenorm momentum to %.3f",
+                            _bn_original_momentum)
+
             # Check for cancellation
             if cancel_flag and cancel_flag.is_set():
                 logger.info("Training cancelled")
@@ -1768,17 +1882,17 @@ class TrainingService:
             # has high-quality running stats from millions of patches --
             # updating them with 6-sample batches can only hurt.
             # Decoder BN stays in train mode (no pretrained stats to preserve).
-            if has_pretrained_weights:
+            if has_pretrained_weights and _encoder_prefix:
                 frozen_bn_count = 0
                 for name, module in model.named_modules():
-                    if name.startswith("encoder."):
+                    if name.startswith(_encoder_prefix):
                         module.eval()
                         frozen_bn_count += 1
                 if epoch == start_epoch and frozen_bn_count > 0:
-                    logger.info("Set %d encoder modules to eval mode "
+                    logger.info("Set %d %s* modules to eval mode "
                                 "(BN uses pretrained running stats, "
                                 "weights still trainable)",
-                                frozen_bn_count)
+                                frozen_bn_count, _encoder_prefix)
 
             train_loss = 0.0
 
@@ -2776,7 +2890,11 @@ class TrainingService:
             from .pretrained_models import PretrainedModelsService, get_pretrained_service
 
             encoder_name = architecture.get("backbone", "resnet34")
-            encoder_weights = "imagenet" if architecture.get("use_pretrained", True) else None
+            # Default to False (no pretrained weights) for safety -- callers
+            # must explicitly opt in.  Java always sets this via the
+            # architecture dict; the default only matters if a new code path
+            # omits it.  Matches the default in the training code (~line 1200).
+            encoder_weights = "imagenet" if architecture.get("use_pretrained", False) else None
 
             # Map model types to smp classes
             model_map = {
@@ -2854,23 +2972,16 @@ class TrainingService:
                                 model_type, encoder_name)
                     return model
                 except Exception as e:
-                    logger.warning("SMP timm adapter failed for %s: %s. "
-                                   "Falling back to timm direct loading with FPN decoder.",
-                                   encoder_name, e)
-                    # Fallback: load timm model directly and wrap with simple FPN
-                    import timm
-                    timm_model = timm.create_model(
-                        hub_id, pretrained=True, num_classes=0)
-                    # Use as a standard encoder with smp FPN decoder
-                    model = model_map["fpn"](
-                        encoder_name="resnet50",
-                        encoder_weights=None,
-                        in_channels=num_channels,
-                        classes=num_classes
-                    )
-                    logger.info("Created FPN model with %s foundation encoder (fallback mode)",
-                                encoder_name)
-                    return model
+                    raise ValueError(
+                        f"Foundation model encoder '{encoder_name}' failed to "
+                        f"load via SMP timm adapter (tu-{hub_id}): {e}. "
+                        f"This may be caused by: (1) the model requires a "
+                        f"HuggingFace token (set HF_TOKEN environment variable), "
+                        f"(2) network issues downloading the model, or "
+                        f"(3) incompatible timm/SMP versions. "
+                        f"Try a different encoder or check the Python Console "
+                        f"for details."
+                    ) from e
 
             model = model_map[model_type](
                 encoder_name=encoder_name,

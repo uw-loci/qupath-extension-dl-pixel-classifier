@@ -1,6 +1,63 @@
 # Best Practices
 
-Guidance for backbone selection, annotation strategy, hyperparameter tuning, and improving classifier results.
+Guidance for project organization, backbone selection, annotation strategy, hyperparameter tuning, and improving classifier results.
+
+## Training vs. Production Projects
+
+**The single most important organizational practice: keep your training annotations in a dedicated project, separate from where you apply the classifier for analysis.**
+
+### Why separate projects?
+
+A training project is a curated dataset -- your annotations are the ground truth that the model learns from. When you run inference in the same project (especially with OBJECTS output), the classifier generates thousands of detection or annotation objects on top of your hand-drawn training annotations. This creates several problems:
+
+- **Data corruption risk**: Generated objects mix with your training annotations, making it hard to distinguish human labels from model predictions. If you retrain from this project, the model may inadvertently learn from its own (potentially incorrect) outputs.
+- **Difficult iteration**: When you want to refine annotations and retrain, you must first clean out all the generated objects -- a tedious and error-prone process, especially across many images.
+- **No clean baseline**: You lose the ability to compare different classifiers on the same images, since each run's objects accumulate.
+
+### The recommended workflow
+
+```
+TRAINING PROJECT                         PRODUCTION PROJECT
++----------------------------------+     +----------------------------------+
+| 1. Create annotation classes     |     | 1. Create a new QuPath project   |
+| 2. Draw training annotations     |     |    with the images to analyze    |
+| 3. Train classifier              |     | 2. Copy the trained classifier   |
+| 4. Toggle overlay to check       |     |    into this project             |
+|    quality visually              |     | 3. Apply classifier to images    |
+| 5. Fix annotations, retrain     |     |    (OBJECTS, MEASUREMENTS, etc.) |
+| 6. Repeat until satisfied        |     | 4. Run downstream analysis       |
++----------------------------------+     +----------------------------------+
+```
+
+**Step by step:**
+
+1. **Training project**: Create a QuPath project with representative images. Draw annotations, train classifiers, and iterate. Use the **overlay** and **Review Training Areas** to evaluate quality -- these do not create persistent objects.
+2. **Export the model**: When satisfied, locate the classifier directory at `{project}/classifiers/dl/{model_name}/`. You need `model.pt` and `metadata.json`. (Checkpoint files like `best_in_progress_*.pt` are not needed for inference.)
+3. **Production project**: Create a separate QuPath project containing the images you want to analyze. Create a `classifiers/dl/{model_name}/` directory and copy `model.pt` and `metadata.json` into it. The model now appears in the inference dialog.
+4. **Apply the classifier**: Use **Apply Classifier** or the [Scripting API](SCRIPTING.md) to run the model across all images. Generate OBJECTS, MEASUREMENTS, or RENDERED_OVERLAY as needed for your analysis.
+5. **Iterate safely**: If the classifier needs improvement, go back to the training project, refine annotations, retrain, and copy the updated model to the production project. The training project remains clean.
+
+### What is safe to do in the training project?
+
+| Action | Safe? | Why |
+|--------|-------|-----|
+| **Toggle Prediction Overlay** | Yes | Renders on-the-fly, creates no persistent objects |
+| **Review Training Areas** | Yes | Read-only evaluation of training tiles |
+| **Apply Classifier (MEASUREMENTS)** | Use caution | Adds measurement columns to existing annotations -- won't create new objects, but modifies your training annotations' measurement tables |
+| **Apply Classifier (OBJECTS)** | No | Creates detection/annotation objects that mix with training annotations |
+| **Apply Classifier (RENDERED_OVERLAY)** | Yes | Creates a static image overlay, no objects |
+
+### Quick project setup for production
+
+The fastest way to set up a production project:
+
+1. In QuPath, create a new project (**File > Project > Create project**)
+2. Add your images to the project
+3. In a file browser, navigate to `{training_project}/classifiers/dl/`
+4. Copy the entire model folder(s) into `{production_project}/classifiers/dl/`
+5. Open the production project in QuPath -- the classifiers appear in the Apply Classifier dialog
+
+For scripted batch processing across an entire production project, see [Scripting: Batch process a project](SCRIPTING.md#batch-process-a-project).
 
 ## Backbone Selection
 

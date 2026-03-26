@@ -78,6 +78,14 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and G
 
 See [QUICKSTART.md](QUICKSTART.md) for a complete walkthrough (zero to classifier in ~10 minutes).
 
+### Recommended workflow: separate training and production projects
+
+> **Keep your annotated training data in a dedicated "training project" and apply the finished classifier in a separate "production project."**
+>
+> Training projects contain your carefully curated annotations -- the ground truth your model learns from. Running inference (especially OBJECTS output) in the same project adds thousands of generated objects alongside your annotations, making it difficult to retrain or refine the classifier later. Instead, once you are satisfied with a trained model, copy it to a production project and apply it there across all your images. This keeps your training data clean for future iterations and lets you freely re-run or compare classifiers in the production project without risk.
+>
+> See [Best Practices: Training vs. Production Projects](docs/BEST_PRACTICES.md#training-vs-production-projects) for details, and [Tips and Tricks: Sharing Models](docs/TIPS_AND_TRICKS.md#sharing-models) for how to move classifiers between projects.
+
 ## Requirements
 
 - QuPath 0.6.0+ (including 0.7.0)
