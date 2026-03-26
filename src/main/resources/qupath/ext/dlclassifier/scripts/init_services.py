@@ -32,15 +32,23 @@ logger = logging.getLogger("dlclassifier.appose")
 # Both sides MUST be in sync. This version MUST match pyproject.toml and
 # __init__.py exactly. When EITHER side is updated, ALL THREE version
 # locations must be bumped together (see memory/feedback_version_sync.md).
-_REQUIRED_PYTHON_VERSION = "0.5.0"
+_REQUIRED_PYTHON_VERSION = "0.5.1-dev"
 
 
 def _parse_version(v):
-    """Parse a version string into a comparable tuple of ints."""
+    """Parse a version string into a comparable tuple of ints.
+    Strips dev/pre-release suffixes (e.g., '0.5.1.dev0' -> (0, 5, 1))."""
     try:
-        return tuple(int(x) for x in v.split(".")[:3])
+        # Strip common suffixes: .dev0, -dev, .rc1, etc.
+        clean = v.split("-")[0].split(".dev")[0].split("rc")[0]
+        return tuple(int(x) for x in clean.split(".")[:3])
     except (ValueError, AttributeError):
         return (0, 0, 0)
+
+
+def _is_dev_version(v):
+    """Check if a version string indicates a development build."""
+    return "dev" in v.lower() if v else False
 
 
 import dlclassifier_server as _dls
@@ -48,7 +56,19 @@ _installed_version = getattr(_dls, "__version__", "unknown")
 _installed_tuple = _parse_version(_installed_version)
 _required_tuple = _parse_version(_REQUIRED_PYTHON_VERSION)
 
-if _installed_tuple != _required_tuple:
+# Dev builds skip strict version matching -- both sides are from main
+# branch and may be at slightly different commits.  Only check that the
+# major.minor match so completely wrong versions are still caught.
+if _is_dev_version(_REQUIRED_PYTHON_VERSION):
+    # Dev mode: accept any version with matching major.minor
+    _version_ok = (_installed_tuple[:2] == _required_tuple[:2]
+                   if len(_installed_tuple) >= 2 and len(_required_tuple) >= 2
+                   else True)
+else:
+    # Release mode: exact major.minor.patch match
+    _version_ok = (_installed_tuple == _required_tuple)
+
+if not _version_ok:
     if _installed_tuple < _required_tuple:
         _msg = (
             "PYTHON PACKAGE OUT OF DATE: installed dlclassifier-server v%s "

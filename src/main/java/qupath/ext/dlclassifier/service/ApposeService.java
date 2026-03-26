@@ -806,20 +806,41 @@ public class ApposeService {
 
     /**
      * URL for the dlclassifier-server pip install via GitHub archive tarball.
-     * Uses a version-tagged archive so the pip package matches the JAR release.
      * The #subdirectory fragment tells pip to look for pyproject.toml in the
      * python_server/ directory.
      * <p>
-     * IMPORTANT: This URL must reference the tag matching the current version.
-     * Using "master" instead of a tag causes version mismatch loops when the
-     * main branch has moved ahead of the released JAR.
+     * <b>Dev vs Release builds:</b>
+     * <ul>
+     *   <li>Dev builds (version contains "-dev"): install from master branch
+     *       so developers always test the latest Python code.</li>
+     *   <li>Release builds (no "-dev"): install from the matching version tag
+     *       so users always get Python code that matches their JAR.</li>
+     * </ul>
+     * <p>
+     * <b>Release workflow:</b>
+     * <ol>
+     *   <li>Develop on main with version "X.Y.Z-dev" (pip uses master)</li>
+     *   <li>At release: bump to "X.Y.Z", commit, tag, build JAR, create release</li>
+     *   <li>After release: bump to "X.Y.(Z+1)-dev" on main</li>
+     * </ol>
      */
-    private static final String DL_SERVER_VERSION = "0.5.0";
-    private static final String DL_SERVER_PIP_URL =
-            "dlclassifier-server @ https://github.com/uw-loci/"
+    private static final String DL_SERVER_VERSION = "0.5.1-dev";
+    private static final boolean IS_DEV_BUILD = DL_SERVER_VERSION.contains("-dev");
+    private static final String DL_SERVER_PIP_URL;
+    static {
+        if (IS_DEV_BUILD) {
+            // Dev builds: always install latest from main branch
+            DL_SERVER_PIP_URL = "dlclassifier-server @ https://github.com/uw-loci/"
+                    + "qupath-extension-dl-pixel-classifier/archive/refs/heads/"
+                    + "master.tar.gz#subdirectory=python_server";
+        } else {
+            // Release builds: install from the matching version tag
+            DL_SERVER_PIP_URL = "dlclassifier-server @ https://github.com/uw-loci/"
                     + "qupath-extension-dl-pixel-classifier/archive/refs/tags/"
                     + "v" + DL_SERVER_VERSION
                     + ".tar.gz#subdirectory=python_server";
+        }
+    }
 
     /**
      * Installs or upgrades the dlclassifier-server package via pip in the
