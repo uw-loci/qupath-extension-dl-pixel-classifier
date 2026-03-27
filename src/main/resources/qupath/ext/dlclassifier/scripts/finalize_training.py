@@ -27,7 +27,11 @@ except NameError:
 
 from dlclassifier_server.services.training_service import TrainingService
 
+# Use CPU for finalization -- we only load weights and save.
+# This avoids VRAM conflicts with the training session that just ended,
+# whose tensors may still be resident in the Appose worker process.
 training_service = TrainingService(gpu_manager=gpu_manager)
+training_service.device = "cpu"
 
 # Redirect model saving to project directory when specified
 if model_output_dir:
@@ -49,8 +53,19 @@ if model_output_dir:
 
     training_service._save_model = _redirected_save_model
 
+# Free GPU memory from the training session that just ended.
+# The Appose worker process persists across tasks, so training tensors
+# may still be resident.  Force-clear them before loading the checkpoint.
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
+
+# Load checkpoint on CPU to avoid doubling GPU memory usage.
+# We only need to load weights and save -- no GPU computation needed.
 logger.info("Loading checkpoint: %s", checkpoint_path)
-checkpoint = torch.load(checkpoint_path, map_location=training_service.device, weights_only=False)
+checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
 # Extract config from checkpoint
 config = checkpoint["training_config"]
@@ -86,7 +101,8 @@ else:
     model.load_state_dict(checkpoint["model_state_dict"])
     logger.info("No best model state in checkpoint, using last epoch weights")
 
-model = model.to(training_service.device)
+# Keep model on CPU -- we only need to save it, no GPU computation needed.
+# This avoids VRAM issues if the training session's tensors haven't been freed.
 
 # Extract classifier name from checkpoint (survives training interruption)
 _training_params = config.get("training_params", {})
