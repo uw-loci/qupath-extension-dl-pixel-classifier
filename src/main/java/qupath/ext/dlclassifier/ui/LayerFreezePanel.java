@@ -570,6 +570,8 @@ public class LayerFreezePanel extends VBox {
      * learning to distinguish detail tiles from context tiles.
      */
     private void updateContextWarning() {
+        logger.info("updateContextWarning called: contextScale={}, layerCount={}",
+                currentContextScale, layers.size());
         if (currentContextScale <= 1) {
             contextWarningLabel.setVisible(false);
             contextWarningLabel.setManaged(false);
@@ -579,6 +581,7 @@ public class LayerFreezePanel extends VBox {
         // Check if depth-0 (first conv) layer is frozen
         boolean firstLayerFrozen = layers.stream()
                 .anyMatch(l -> l.getDepth() == 0 && l.isEncoder() && l.isFrozen());
+        logger.info("Context warning: firstLayerFrozen={}", firstLayerFrozen);
 
         if (firstLayerFrozen) {
             contextWarningLabel.setText(
