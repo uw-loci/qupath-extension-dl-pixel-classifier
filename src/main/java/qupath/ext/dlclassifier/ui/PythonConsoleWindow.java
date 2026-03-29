@@ -17,10 +17,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.gui.QuPathGUI;
 
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -63,6 +67,11 @@ public class PythonConsoleWindow {
     /** Bounded buffer of formatted lines (accessed only on FX thread during flush). */
     private static final java.util.LinkedList<String> lineBuffer = new java.util.LinkedList<>();
 
+    // --- File logging ---
+    private static volatile BufferedWriter logFileWriter;
+    private static volatile Path logFilePath;
+    private static final Object logFileLock = new Object();
+
     private static PythonConsoleWindow instance;
 
     private Stage stage;
@@ -103,11 +112,112 @@ public class PythonConsoleWindow {
         String timestamp = LocalTime.now().format(TIME_FMT);
         String formatted = "[" + timestamp + "] " + msg;
 
+        // Write to log file if one is open
+        writeToLogFile(formatted);
+
         messageQueue.add(formatted);
 
         // Schedule a flush on the FX thread (coalesced -- at most one pending)
         if (flushPending.compareAndSet(false, true)) {
             Platform.runLater(PythonConsoleWindow::flushQueue);
+        }
+    }
+
+    /**
+     * Starts logging Python output to a file in the project directory.
+     * Creates {@code {project}/logs/dl-pixel-classifier/session_{timestamp}.log}.
+     * <p>
+     * Call this when a project is opened or training starts. Safe to call
+     * multiple times -- only opens a new file if none is currently active.
+     */
+    public static void startFileLogging() {
+        synchronized (logFileLock) {
+            if (logFileWriter != null) return;  // already logging
+            try {
+                var qupath = QuPathGUI.getInstance();
+                if (qupath == null || qupath.getProject() == null) return;
+                Path projectDir = qupath.getProject().getPath().getParent();
+                Path logDir = projectDir.resolve("logs").resolve("dl-pixel-classifier");
+                Files.createDirectories(logDir);
+
+                String timestamp = LocalDateTime.now()
+                        .format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+                logFilePath = logDir.resolve("session_" + timestamp + ".log");
+                logFileWriter = Files.newBufferedWriter(logFilePath, StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+
+                // Write header
+                logFileWriter.write("# DL Pixel Classifier Python Log");
+                logFileWriter.newLine();
+                logFileWriter.write("# Started: " + LocalDateTime.now());
+                logFileWriter.newLine();
+                logFileWriter.write("# Project: " + projectDir);
+                logFileWriter.newLine();
+                logFileWriter.newLine();
+                logFileWriter.flush();
+
+                logger.info("Python log file: {}", logFilePath);
+            } catch (IOException e) {
+                logger.warn("Could not start Python log file: {}", e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Stops file logging and closes the log file.
+     */
+    public static void stopFileLogging() {
+        synchronized (logFileLock) {
+            if (logFileWriter != null) {
+                try {
+                    logFileWriter.flush();
+                    logFileWriter.close();
+                    logger.info("Python log file closed: {}", logFilePath);
+                } catch (IOException e) {
+                    logger.debug("Error closing log file", e);
+                }
+                logFileWriter = null;
+                logFilePath = null;
+            }
+        }
+    }
+
+    /**
+     * Returns the current log file path, or null if not logging.
+     */
+    public static Path getLogFilePath() {
+        return logFilePath;
+    }
+
+    /**
+     * Flushes the log file buffer to disk. Call after training/inference
+     * completes to ensure all output is written.
+     */
+    public static void flushLogFile() {
+        synchronized (logFileLock) {
+            if (logFileWriter != null) {
+                try {
+                    logFileWriter.flush();
+                } catch (IOException e) {
+                    logger.debug("Error flushing log file", e);
+                }
+            }
+        }
+    }
+
+    private static void writeToLogFile(String formatted) {
+        var writer = logFileWriter;  // volatile read
+        if (writer == null) return;
+        synchronized (logFileLock) {
+            if (logFileWriter == null) return;
+            try {
+                logFileWriter.write(formatted);
+                logFileWriter.newLine();
+                // Flush periodically (not every line -- batch for performance)
+                // The writer will auto-flush on close or when buffer fills
+            } catch (IOException e) {
+                logger.debug("Error writing to log file", e);
+            }
         }
     }
 

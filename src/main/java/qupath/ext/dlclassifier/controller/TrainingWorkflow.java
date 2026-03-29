@@ -13,6 +13,7 @@ import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
 
 import java.time.LocalDateTime;
+import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
 import qupath.ext.dlclassifier.service.ApposeClassifierBackend;
 import qupath.ext.dlclassifier.service.ApposeService;
 import qupath.ext.dlclassifier.service.BackendFactory;
@@ -569,6 +570,9 @@ public class TrainingWorkflow {
             return;
         }
 
+        // Start Python log file in project directory
+        PythonConsoleWindow.startFileLogging();
+
         // Prevent concurrent training across QuPath instances
         if (!acquireTrainingLock()) {
             Dialogs.showErrorMessage("Training In Progress",
@@ -813,6 +817,7 @@ public class TrainingWorkflow {
             } finally {
                 overlayService.resumeAfterTraining();
                 releaseTrainingLock();
+                PythonConsoleWindow.flushLogFile();
             }
         });
 
