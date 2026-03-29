@@ -1472,6 +1472,10 @@ class TrainingService:
         best_model_state = None
         training_history = []
 
+        # Training diagnostics: automated checks for common issues
+        from .training_diagnostics import TrainingDiagnostics
+        _diagnostics = TrainingDiagnostics(classes=classes)
+
         def _is_best(current, best):
             if best_score_mode == "max":
                 return current > best
@@ -2200,6 +2204,11 @@ class TrainingService:
                 "mean_iou": mean_iou
             })
 
+            # Run training diagnostics periodically to detect common issues
+            _hist_len = len(training_history)
+            if _hist_len >= 15 and _hist_len % 10 == 0:
+                _diagnostics.run_checks(training_history)
+
             # Log with per-class breakdown
             # Use scientific notation for very small train_loss to avoid
             # misleading 0.0000 display when loss < 0.00005 (common when
@@ -2299,6 +2308,11 @@ class TrainingService:
             # Check for pause request
             if pause_flag and pause_flag.is_set():
                 logger.info(f"Training paused at epoch {epoch+1}")
+                # Run diagnostics at pause
+                pause_warnings = _diagnostics.run_all_checks(training_history)
+                if pause_warnings:
+                    logger.info("=== Training Diagnostics (%d warnings) ===",
+                                len(pause_warnings))
                 checkpoint_save_path = self._save_checkpoint(
                     model=model,
                     optimizer=optimizer,
@@ -2417,6 +2431,12 @@ class TrainingService:
 
         # Log final memory status
         self.gpu_manager.log_memory_status(prefix="Training complete: ")
+
+        # Run all diagnostic checks at completion
+        completion_warnings = _diagnostics.run_all_checks(training_history)
+        if completion_warnings:
+            logger.info("=== Training Diagnostics (%d warnings) ===",
+                        len(completion_warnings))
 
         # Save checkpoint for potential "continue training" (before restoring best weights).
         # This preserves the last-epoch model/optimizer/scheduler state for seamless resume.
