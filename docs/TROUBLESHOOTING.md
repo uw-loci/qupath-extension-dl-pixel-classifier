@@ -23,6 +23,16 @@ Use **Copy to Clipboard** to capture the full log for bug reports.
 
 > **Tip:** Keep the Python Console open during training and inference to monitor the Python backend's activity.
 
+### Saved log files
+
+Python worker output is automatically saved to your project directory during training:
+
+```
+{project}/logs/dl-pixel-classifier/session_20260328_143052.log
+```
+
+Each training session creates a new timestamped log file. These persist after QuPath is closed, so you can review them later for debugging or share them in bug reports. The log contains all Python-side output: model creation, checkpoint loading, per-epoch progress, errors, and warnings.
+
 ### System Info
 
 **Extensions > DL Pixel Classifier > Utilities > System Info** provides a complete diagnostic dump:
@@ -241,6 +251,31 @@ Quick checklist:
 - [ ] Pretrained weights enabled
 - [ ] Appropriate backbone for dataset size
 - [ ] Augmentation enabled (at least flips and rotation)
+
+### One class has wildly inconsistent IoU or loss across epochs
+
+**Symptom:** A class oscillates between good IoU (e.g., 0.85) and terrible IoU (0.00 or 0.06) from one epoch to the next, while other classes are stable. The per-class loss for that class may spike to a consistent high value (e.g., always ~6.2) on bad epochs.
+
+**Cause: Rare or localized annotations landing entirely in the validation set.** The train/validation split assigns whole annotations to one side or the other. If a class has only one annotation, or one annotation that looks visually distinct from the others, all tiles from that annotation may end up in validation. The model never trains on those tiles but gets penalized for them at every epoch.
+
+This is especially common with:
+- **Background/ignore classes** that include both typical regions (e.g., white slide) and atypical regions (e.g., dark debris, ink marks, tissue folds)
+- **Rare structures** that only appear on one or two slides
+- **Edge cases** where the class looks very different in one region vs. another
+
+**How to identify it:** Look for a suspiciously consistent per-class loss value appearing at roughly half the epochs. A loss that's always ~6.2 (or any specific repeating value) on "bad" epochs points to one specific validation tile or region that the model consistently misclassifies.
+
+**Fixes:**
+
+1. **Break large annotations into smaller pieces.** The stratified splitter assigns whole annotations to train or val. One large annotation = all-or-nothing. Three smaller annotations = the splitter is more likely to place some in train and some in val, so the model learns the pattern.
+
+2. **Add annotations of the rare pattern to multiple images.** If dark debris exists on one slide, annotate it on several images. Even small annotations ensure the pattern appears in training tiles across the split.
+
+3. **Consider a separate class for visually distinct patterns.** If "Ignore" includes both white background and black debris, the model must learn that visually opposite things are the same class. A 4th class ("Artifact" or "Debris") lets the model learn each pattern independently. You can merge classes at analysis time.
+
+4. **Check what's in the validation set.** After a short training run (5-10 epochs), use **Review Training Areas** to see which tiles have the highest loss. Double-click to navigate to them. If they're all from one annotation, that annotation is likely in the validation set and underrepresented in training.
+
+> **Note:** The random train/val split changes each time you start training or resume with re-exported data. A class that's problematic in one run may be fine in the next (different split), which makes this issue intermittent and hard to diagnose without the per-class loss breakdown.
 
 ### Validation loss spikes to extreme values
 
