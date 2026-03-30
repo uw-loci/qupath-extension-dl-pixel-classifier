@@ -64,6 +64,10 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     // retrieve the checkpoint path and original training inputs.
     private static final ConcurrentHashMap<String, CheckpointInfo> checkpointStore = new ConcurrentHashMap<>();
 
+    // Maps old job IDs to new ones after resume, so pauseTraining() can
+    // find the correct pause signal path even when called with the old ID.
+    private static final ConcurrentHashMap<String, String> jobIdRedirects = new ConcurrentHashMap<>();
+
     /**
      * Stores checkpoint state for a paused training job.
      *
@@ -405,9 +409,17 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
     @Override
     public void pauseTraining(String jobId) throws IOException {
-        Path signalPath = getPauseSignalPath(jobId);
+        // Follow redirect chain: after resume, the old jobId maps to a new one
+        // with a different pause signal path.
+        String effectiveId = jobId;
+        String redirect = jobIdRedirects.get(effectiveId);
+        while (redirect != null) {
+            effectiveId = redirect;
+            redirect = jobIdRedirects.get(effectiveId);
+        }
+        Path signalPath = getPauseSignalPath(effectiveId);
         Files.writeString(signalPath, "pause");
-        logger.info("Pause signal written for job {}", jobId);
+        logger.info("Pause signal written for job {} (effective: {})", jobId, effectiveId);
     }
 
     /**
@@ -454,6 +466,11 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
         String newJobId = "appose-resume-" + System.currentTimeMillis();
         inputs.put("pause_signal_path", getPauseSignalPath(newJobId).toString());
+
+        // Store old -> new job ID mapping so pauseTraining() can find the
+        // correct pause signal path even if called with the old job ID.
+        jobIdRedirects.put(jobId, newJobId);
+        logger.info("Resume: new jobId={}, mapped from old={}", newJobId, jobId);
 
         ClassLoader extensionCL = ApposeService.class.getClassLoader();
         ClassLoader originalCL = Thread.currentThread().getContextClassLoader();
