@@ -149,7 +149,8 @@ The setup wizard reports which GPU backend was detected at completion. See [docs
 | Immunofluorescence | 2-8+ | 8/12/16-bit | Channel selection + normalization |
 | Spectral/Hyperspectral | 10-100+ | 16-bit | Channel grouping |
 
-## Architecture
+<details>
+<summary><h2>Architecture</h2></summary>
 
 ```
 qupath-extension-dl-pixel-classifier/
@@ -211,7 +212,10 @@ qupath-extension-dl-pixel-classifier/
 |       `-- utils/                     # Shared utilities (normalization, etc.)
 ```
 
-## For Developers
+</details>
+
+<details>
+<summary><h2>For Developers</h2></summary>
 
 ### Building from source
 
@@ -239,7 +243,10 @@ pytest tests/ -v
 
 Current status: **78 tests passing, 5 skipped**
 
-## Acknowledgements
+</details>
+
+<details>
+<summary><h2>Acknowledgements</h2></summary>
 
 This extension builds on many excellent open-source projects and pretrained models.
 
@@ -320,6 +327,8 @@ Foundation model integration inspired by **[LazySlide](https://github.com/rendei
 ### Host Application
 
 - **[QuPath](https://qupath.github.io/)** (GPL-3.0) -- Bankhead et al., "QuPath: Open source software for digital pathology image analysis" (Scientific Reports 2017). The digital pathology platform this extension integrates with.
+
+</details>
 
 ## License
 
