@@ -124,7 +124,7 @@ public class DLPixelClassifier implements PixelClassifier {
         // fully convolutional and handles larger input (must be divisible by 32).
         // For 4x context with 512px tile: extra 128px/side -> 768px model input.
         if (contextScale > 1) {
-            int extra = inferenceConfig.getTileSize() / 2;  // 256px for 512px tile
+            int extra = inferenceConfig.getTileSize() / 4;  // 128px for 512px tile
             // Round to multiple of 32 for encoder compatibility
             extra = (extra / 32) * 32;
             this.contextInferencePad = extra;
@@ -561,9 +561,19 @@ public class DLPixelClassifier implements PixelClassifier {
         int cx, cy, readW, readH;
 
         if (imgW >= contextW && imgH >= contextH) {
-            // Tier 1/2: Image large enough -- clamp position to keep context within bounds
+            // Tier 1/2: Image large enough -- clamp position to keep context within bounds.
+            // Snap context center to a coarse grid so adjacent detail tiles share
+            // identical (or nearly identical) context views. This eliminates tile
+            // boundary artifacts caused by small context shifts between tiles.
+            // Grid spacing = detailW (one training tile width in full-res coords).
+            // Groups of (detailW / stride) tiles share the same context center.
             int centerX = detailX + detailW / 2;
             int centerY = detailY + detailH / 2;
+            int gridSpacing = detailW;  // snap to training-tile-sized grid
+            if (gridSpacing > 0) {
+                centerX = Math.round((float) centerX / gridSpacing) * gridSpacing;
+                centerY = Math.round((float) centerY / gridSpacing) * gridSpacing;
+            }
             cx = centerX - contextW / 2;
             cy = centerY - contextH / 2;
             cx = Math.max(0, Math.min(cx, imgW - contextW));
