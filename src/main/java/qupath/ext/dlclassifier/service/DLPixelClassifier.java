@@ -110,11 +110,14 @@ public class DLPixelClassifier implements PixelClassifier {
         this.inputPadding = InferenceConfig.computeEffectivePadding(
                 inferenceConfig.getTileSize(), inferenceConfig.getOverlap());
 
-        // Always use GAUSSIAN blending for overlays -- the cosine-bell S-curve
-        // smoothly averages overlapping predictions from adjacent tiles,
-        // eliminating visible grid artifacts at tile boundaries.
-        InferenceConfig.BlendMode overlayBlendMode = InferenceConfig.BlendMode.GAUSSIAN;
-        int overlayMaxBlendDist = -1;  // Use full inputPadding for blend zone
+        // Use CENTER_CROP for overlays: each pixel's classification comes from the
+        // tile where it was closest to center, with no averaging at boundaries.
+        // This avoids artifacts where adjacent tiles disagree at their edges
+        // (e.g., context-scale models seeing different surrounding tissue).
+        // GAUSSIAN blending averages predictions but can produce visible seams
+        // when edge predictions fundamentally differ from center predictions.
+        InferenceConfig.BlendMode overlayBlendMode = InferenceConfig.BlendMode.CENTER_CROP;
+        int overlayMaxBlendDist = -1;
 
         this.blendCache = new TileBlendCache(100, inputPadding,
                 overlayBlendMode, overlayMaxBlendDist,
