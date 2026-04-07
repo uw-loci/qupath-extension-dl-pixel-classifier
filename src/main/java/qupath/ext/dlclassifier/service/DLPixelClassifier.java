@@ -124,7 +124,7 @@ public class DLPixelClassifier implements PixelClassifier {
         // fully convolutional and handles larger input (must be divisible by 32).
         // For 4x context with 512px tile: extra 128px/side -> 768px model input.
         if (contextScale > 1) {
-            int extra = inferenceConfig.getTileSize() / 4;  // 128px for 512px tile
+            int extra = inferenceConfig.getTileSize() / 2;  // 256px for 512px tile
             // Round to multiple of 32 for encoder compatibility
             extra = (extra / 32) * 32;
             this.contextInferencePad = extra;
