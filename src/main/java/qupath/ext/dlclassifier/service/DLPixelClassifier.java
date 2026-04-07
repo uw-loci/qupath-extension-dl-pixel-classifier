@@ -304,7 +304,10 @@ public class DLPixelClassifier implements PixelClassifier {
         byte[] rawBytes;
         int numChannels;
         if (contextScale > 1) {
-            BufferedImage contextImage = readContextTile(server, request,
+            // Context tile must be sized from the EXPANDED request (= model input),
+            // not the stride request. The context area = expanded.getWidth() * contextScale.
+            // Using the stride request would under-size the context when padding > 0.
+            BufferedImage contextImage = readContextTile(server, expanded,
                     tileImage.getWidth(), tileImage.getHeight());
             byte[] contextBytes;
             if ("uint8".equals(dtype)) {
