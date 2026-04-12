@@ -59,37 +59,55 @@ public class LayerFreezePanel extends VBox {
         headerLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
 
         Label infoLabel = new Label(
-                "Early layers learn universal features (edges, textures) that transfer well. " +
-                "Later layers learn high-level concepts that need retraining for histopathology."
+                "The model starts with features learned from millions of images. " +
+                "You choose how much to keep vs. retrain on your data."
         );
         infoLabel.setWrapText(true);
         infoLabel.setStyle("-fx-text-fill: #666666;");
 
-        // Preset selection - based on data available (affects overfitting risk)
+        Hyperlink learnMoreLink = new Hyperlink("What is transfer learning?");
+        learnMoreLink.setStyle("-fx-font-size: 11px;");
+        learnMoreLink.setOnAction(e -> {
+            try {
+                java.awt.Desktop.getDesktop().browse(
+                        java.net.URI.create("https://course.fast.ai/Lessons/lesson6.html"));
+            } catch (Exception ex) {
+                logger.debug("Could not open link: {}", ex.getMessage());
+            }
+        });
+        TooltipHelper.install(learnMoreLink,
+                "Opens the fast.ai Practical Deep Learning course (Lesson 6)\n" +
+                "which covers transfer learning and fine-tuning in plain language.");
+
+        // Preset selection - framed in terms of retraining behavior
         HBox presetBox = new HBox(10);
         presetBox.setAlignment(Pos.CENTER_LEFT);
-        Label presetLabel = new Label("Training Data:");
+        Label presetLabel = new Label("Retraining:");
         presetCombo = new ComboBox<>();
         presetCombo.getItems().addAll(
-                "Small (<500 tiles) - Conservative",
-                "Medium (500-5000) - Balanced",
-                "Large (>5000) - Full adaptation",
+                "Keep most, retrain a little -- small dataset (<500 tiles)",
+                "Keep basics, retrain upper layers -- medium dataset (500-5000)",
+                "Retrain nearly everything -- large dataset (>5000)",
                 "Custom"
         );
-        presetCombo.setValue("Medium (500-5000) - Balanced");
+        presetCombo.setValue("Keep basics, retrain upper layers -- medium dataset (500-5000)");
         presetCombo.setOnAction(e -> applyPreset());
         TooltipHelper.install(presetCombo,
-                "Select a freeze strategy based on your dataset size:\n\n" +
-                "Small (<500 tiles): Freeze most encoder layers to prevent overfitting.\n" +
-                "  Best when you have limited annotations -- preserves pretrained features.\n\n" +
-                "Medium (500-5000): Balanced freeze of early layers only.\n" +
-                "  Good default for most histopathology projects.\n\n" +
-                "Large (>5000): Fine-tune nearly all layers for best adaptation.\n" +
-                "  Enough data to train most layers without overfitting.\n\n" +
+                "How much of the pretrained model to keep vs. retrain on your data.\n\n" +
+                "Keep most, retrain a little:\n" +
+                "  Preserves most pretrained features. Only the final layers adapt to\n" +
+                "  your images. Best with limited annotations (<500 tiles) to avoid\n" +
+                "  overfitting. Fastest training.\n\n" +
+                "Keep basics, retrain upper layers:\n" +
+                "  Keeps low-level features (edges, textures) but retrains higher layers\n" +
+                "  to learn your tissue patterns. Good default for most projects.\n\n" +
+                "Retrain nearly everything:\n" +
+                "  Retrains almost all layers for maximum adaptation to your data.\n" +
+                "  Needs a large dataset (>5000 tiles) to avoid overfitting.\n\n" +
                 "Custom: Manually toggle individual layers below.");
 
         Button applyButton = new Button("Apply");
-        TooltipHelper.install(applyButton, "Apply the selected freeze preset to all layers");
+        TooltipHelper.install(applyButton, "Apply the selected retraining preset to all layers");
         applyButton.setOnAction(e -> applyPreset());
         presetBox.getChildren().addAll(presetLabel, presetCombo, applyButton);
 
@@ -99,39 +117,37 @@ public class LayerFreezePanel extends VBox {
         layerListView.setPrefHeight(200);
         TooltipHelper.install(layerListView,
                 "Model layers from early (top) to late (bottom).\n" +
-                "Check a layer to freeze (skip training) it.\n" +
+                "Checked = keep pretrained, Unchecked = retrain on your data.\n" +
                 "Green = early/general features, Red = late/specific features.\n\n" +
-                "Early layers learn edges and textures -- these transfer well and\n" +
-                "are safe to freeze. Later layers learn task-specific patterns\n" +
-                "and benefit from fine-tuning on your data.");
+                "Early layers learn edges and textures -- these are useful\n" +
+                "across many image types and are safe to keep. Later layers\n" +
+                "learn task-specific patterns and benefit from retraining.");
         VBox.setVgrow(layerListView, Priority.ALWAYS);
 
         // Quick actions
         HBox actionBox = new HBox(10);
         actionBox.setAlignment(Pos.CENTER);
 
-        Button freezeAllEncoderBtn = new Button("Freeze All Encoder");
-        TooltipHelper.installWithLink(freezeAllEncoderBtn,
-                "Freeze all encoder layers -- only the decoder will be trained.\n" +
-                "Most conservative option, best for very small datasets (<200 tiles).\n" +
-                "Fastest training since fewer parameters are updated.",
-                "https://cs231n.github.io/transfer-learning/");
+        Button freezeAllEncoderBtn = new Button("Keep All Pretrained");
+        TooltipHelper.install(freezeAllEncoderBtn,
+                "Keep all pretrained encoder layers -- only the decoder retrains.\n" +
+                "Best for very small datasets (<200 tiles) where overfitting\n" +
+                "is a risk. Fastest training since fewer parameters are updated.");
         freezeAllEncoderBtn.setOnAction(e -> setAllEncoderLayers(true));
 
-        Button unfreezeAllBtn = new Button("Unfreeze All");
+        Button unfreezeAllBtn = new Button("Retrain Everything");
         TooltipHelper.install(unfreezeAllBtn,
-                "Unfreeze all layers for full fine-tuning.\n" +
-                "Most aggressive option -- best for large datasets (>5000 tiles).\n" +
+                "Retrain all layers from your data.\n" +
+                "Maximum adaptation -- best for large datasets (>5000 tiles).\n" +
                 "Risk of overfitting with small datasets. Use a lower learning\n" +
-                "rate (e.g. 1e-5) when fine-tuning all layers.");
+                "rate (e.g. 1e-5) when retraining all layers.");
         unfreezeAllBtn.setOnAction(e -> setAllLayers(false));
 
         Button recommendedBtn = new Button("Use Recommended");
         TooltipHelper.install(recommendedBtn,
-                "Apply the server's recommended freeze configuration\n" +
-                "based on the selected architecture and backbone.\n" +
-                "The server analyzes layer depth and parameter counts\n" +
-                "to suggest a balanced freeze strategy.");
+                "Apply the recommended configuration based on the\n" +
+                "selected architecture and backbone. Balances keeping\n" +
+                "useful pretrained features with adapting to your data.");
         recommendedBtn.setOnAction(e -> applyRecommended());
 
         actionBox.getChildren().addAll(freezeAllEncoderBtn, unfreezeAllBtn, recommendedBtn);
@@ -149,8 +165,8 @@ public class LayerFreezePanel extends VBox {
         statusLabel = new Label("Select architecture and encoder to view layers");
         statusLabel.setStyle("-fx-text-fill: #888888;");
 
-        getChildren().addAll(headerLabel, infoLabel, presetBox, contextWarningLabel,
-                layerListView, actionBox, statusLabel);
+        getChildren().addAll(headerLabel, infoLabel, learnMoreLink, presetBox,
+                contextWarningLabel, layerListView, actionBox, statusLabel);
     }
 
     /**
@@ -366,20 +382,20 @@ public class LayerFreezePanel extends VBox {
     private String getLayerDescription(int depth, boolean isHistology) {
         if (isHistology) {
             return switch (depth) {
-                case 0 -> "Basic tissue textures - already tissue-aware, safe to freeze";
-                case 1 -> "Cell-level patterns - tissue-relevant, freeze for small datasets";
+                case 0 -> "Basic tissue textures - already tissue-aware, safe to keep";
+                case 1 -> "Cell-level patterns - tissue-relevant, keep for small datasets";
                 case 2 -> "Tissue microstructure - already captures histology patterns";
-                case 3 -> "Tissue architecture features - train for best adaptation";
-                case 4 -> "High-level tissue semantics - fine-tune for your task";
+                case 3 -> "Tissue architecture - retrain for best adaptation";
+                case 4 -> "High-level tissue semantics - retrain for your task";
                 default -> "Deep features - likely need retraining";
             };
         }
         return switch (depth) {
-            case 0 -> "Edges, gradients, basic textures - universal features, freeze";
-            case 1 -> "Low-level patterns - transfer well across domains, freeze";
-            case 2 -> "Texture combinations - partial transfer, consider fine-tuning";
-            case 3 -> "Mid-level shapes - limited transfer to histopathology, train";
-            case 4 -> "High-level semantic features - must retrain for histopathology";
+            case 0 -> "Edges, gradients, basic textures - universal, safe to keep";
+            case 1 -> "Low-level patterns - transfer well across domains, keep";
+            case 2 -> "Texture combinations - partial transfer, consider retraining";
+            case 3 -> "Mid-level shapes - limited transfer, retrain recommended";
+            case 4 -> "High-level semantic features - retrain for your images";
             default -> "Deep features - likely need retraining";
         };
     }
@@ -428,11 +444,11 @@ public class LayerFreezePanel extends VBox {
         String selection = presetCombo.getValue();
         String datasetSize;
 
-        if (selection.contains("Small")) {
+        if (selection.startsWith("Keep most")) {
             datasetSize = "small";
-        } else if (selection.contains("Medium")) {
+        } else if (selection.startsWith("Keep basics")) {
             datasetSize = "medium";
-        } else if (selection.contains("Large")) {
+        } else if (selection.startsWith("Retrain nearly")) {
             datasetSize = "large";
         } else {
             return; // Custom - don't change
@@ -661,7 +677,7 @@ public class LayerFreezePanel extends VBox {
                 paramsLabel.setText(formatParams(item.getParamCount()));
                 descLabel.setText(item.getDescription());
 
-                // Color based on depth (green=early/freeze, red=late/train)
+                // Color based on depth (green=early/keep, red=late/retrain)
                 double hue = 120 - (item.getDepth() * 20); // Green to red
                 hue = Math.max(0, Math.min(120, hue));
                 depthIndicator.setFill(Color.hsb(hue, 0.6, 0.8));
