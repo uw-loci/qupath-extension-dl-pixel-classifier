@@ -59,8 +59,8 @@ dependencies {
     testImplementation("org.openjfx:javafx-base:$javafxVersion")
     testImplementation("org.openjfx:javafx-graphics:$javafxVersion")
     testImplementation("org.openjfx:javafx-controls:$javafxVersion")
-    testImplementation("org.mockito:mockito-core:5.2.0")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.2.0")
+    testImplementation("org.mockito:mockito-core:5.23.0")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")
 }
 
 tasks.shadowJar {
