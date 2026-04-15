@@ -2055,9 +2055,13 @@ public class TrainingDialog {
             String metric = earlyStoppingMetricCombo != null
                     ? mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue())
                     : "mean_iou";
+            if ("disabled".equals(metric)) {
+                earlyStoppingStatusLabel.setText(
+                        "Early stopping disabled (will train all configured epochs)");
+                return;
+            }
             int patience = earlyStoppingPatienceSpinner != null
                     ? earlyStoppingPatienceSpinner.getValue() : 15;
-            // Capitalize metric for display
             String metricDisplay = "mean_iou".equals(metric) ? "Mean IoU" : "Validation Loss";
             earlyStoppingStatusLabel.setText(String.format(
                     "Early stopping enabled (patience: %d, metric: %s)", patience, metricDisplay));
@@ -2913,7 +2917,7 @@ public class TrainingDialog {
 
             // Early stopping metric
             earlyStoppingMetricCombo = new ComboBox<>(FXCollections.observableArrayList(
-                    "Mean IoU", "Validation Loss"));
+                    "Mean IoU", "Validation Loss", "Disabled"));
             earlyStoppingMetricCombo.setValue(
                     mapEarlyStoppingMetricToDisplay(DLClassifierPreferences.getDefaultEarlyStoppingMetric()));
             Label esMetricLabel = new Label("Early Stop Metric:");
@@ -2926,7 +2930,10 @@ public class TrainingDialog {
                     "  all classes. Directly measures segmentation quality.\n\n" +
                     "Validation Loss: Combined loss on held-out data.\n" +
                     "  Can oscillate while IoU still improves, so Mean IoU is\n" +
-                    "  generally more reliable.",
+                    "  generally more reliable.\n\n" +
+                    "Disabled: Train for the full epoch count regardless of\n" +
+                    "  metric progress. Best-model selection still tracks Mean IoU\n" +
+                    "  internally so the saved model is still from the best epoch.",
                     esMetricLabel, earlyStoppingMetricCombo);
 
             grid.add(esMetricLabel, 0, row);
@@ -3094,11 +3101,20 @@ public class TrainingDialog {
 
             grid.add(progressiveResizeCheck, 0, row, 2, 1);
 
-            // Update the basic-mode early stopping status label when these controls change
-            earlyStoppingMetricCombo.valueProperty().addListener(
-                    (obs, o, n) -> updateEarlyStoppingStatusLabel());
+            // Update the basic-mode early stopping status label when these controls change,
+            // and grey out the patience spinner when early stopping is disabled.
+            Runnable applyEarlyStoppingDisableState = () -> {
+                boolean disabled = "Disabled".equals(earlyStoppingMetricCombo.getValue());
+                earlyStoppingPatienceSpinner.setDisable(disabled);
+                esPatienceLabel.setDisable(disabled);
+            };
+            earlyStoppingMetricCombo.valueProperty().addListener((obs, o, n) -> {
+                updateEarlyStoppingStatusLabel();
+                applyEarlyStoppingDisableState.run();
+            });
             earlyStoppingPatienceSpinner.valueProperty().addListener(
                     (obs, o, n) -> updateEarlyStoppingStatusLabel());
+            applyEarlyStoppingDisableState.run();
 
             TitledPane pane = new TitledPane("TRAINING STRATEGY", grid);
             pane.setExpanded(false); // Collapsed by default - advanced settings
@@ -4111,6 +4127,7 @@ public class TrainingDialog {
             if (schedulerCombo != null && !"One Cycle".equals(schedulerCombo.getValue())) return true;
             if (lossFunctionCombo != null && !"Cross-Entropy + Dice".equals(lossFunctionCombo.getValue())) return true;
             if (earlyStoppingPatienceSpinner != null && earlyStoppingPatienceSpinner.getValue() != 15) return true;
+            if (earlyStoppingMetricCombo != null && "Disabled".equals(earlyStoppingMetricCombo.getValue())) return true;
             if (mixedPrecisionCheck != null && !mixedPrecisionCheck.isSelected()) return true;
             if (gradientAccumulationSpinner != null && gradientAccumulationSpinner.getValue() != 1) return true;
             if (progressiveResizeCheck != null && progressiveResizeCheck.isSelected()) return true;
@@ -4883,11 +4900,13 @@ public class TrainingDialog {
 
         private static String mapEarlyStoppingMetricToDisplay(String value) {
             if ("val_loss".equals(value)) return "Validation Loss";
+            if ("disabled".equals(value)) return "Disabled";
             return "Mean IoU";
         }
 
         private static String mapEarlyStoppingMetricFromDisplay(String display) {
             if ("Validation Loss".equals(display)) return "val_loss";
+            if ("Disabled".equals(display)) return "disabled";
             return "mean_iou";
         }
 
