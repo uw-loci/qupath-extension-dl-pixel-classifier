@@ -36,23 +36,23 @@ public final class PatchSampler {
     public record AnnotationGeometry(ROI roi, boolean isSparse) {}
 
     /**
-     * Determines if an ROI represents sparse annotation (line, polyline, etc.).
+     * Determines if an ROI represents sparse annotation (line, polyline).
      * <p>
-     * Lines, polylines, and shapes with very small area relative to their
-     * bounding box (less than 5%) are considered sparse.
+     * Only true line / polyline ROIs are treated as sparse. Area ROIs
+     * (polygon, rectangle, ellipse, freehand brush strokes) are always
+     * filled when rasterised, regardless of how curved or elongated they
+     * happen to be.
+     * <p>
+     * A previous implementation also classified area ROIs with area/bbox
+     * ratio below 5% as sparse, but this mis-rendered curved tissue
+     * annotations (whose axis-aligned bounding box is large relative to
+     * their area) as stroked outlines instead of filled regions --
+     * producing masks that only covered the contour and heatmaps that
+     * dramatically under-represented the labelled area. If a user wants a
+     * thin stroke label, they should use QuPath's line tool explicitly.
      */
     public static boolean isSparseROI(ROI roi) {
-        // Lines, polylines, and very thin shapes are sparse
-        if (roi.isLine()) return true;
-
-        // Check if the shape has very small area relative to its bounding box
-        double bounds = roi.getBoundsWidth() * roi.getBoundsHeight();
-        if (bounds > 0) {
-            double areaRatio = roi.getArea() / bounds;
-            // If area is less than 5% of bounding box, treat as sparse
-            return areaRatio < 0.05;
-        }
-        return false;
+        return roi.isLine();
     }
 
     /**
