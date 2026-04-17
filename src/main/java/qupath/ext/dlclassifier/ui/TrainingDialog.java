@@ -565,6 +565,14 @@ public class TrainingDialog {
                         + "This cannot be undone.",
                         ButtonType.OK, ButtonType.CANCEL);
                 confirm.setHeaderText("Delete Checkpoint");
+                // The Train dialog is alwaysOnTop, so child dialogs must own up
+                // to it AND flip their own alwaysOnTop flag, otherwise the
+                // confirmation opens behind the dialog and becomes unclickable.
+                if (dialog != null) {
+                    confirm.initOwner(dialog);
+                }
+                Stage confirmStage = (Stage) confirm.getDialogPane().getScene().getWindow();
+                confirmStage.setAlwaysOnTop(true);
                 if (confirm.showAndWait().orElse(null) == ButtonType.OK) {
                     try {
                         java.nio.file.Files.deleteIfExists(orphan.file());
