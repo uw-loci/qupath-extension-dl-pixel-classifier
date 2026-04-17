@@ -106,6 +106,31 @@ public class TrainingIssuesOverlayController {
                 ImagePlane.getDefaultPlane().getZ(),
                 ImagePlane.getDefaultPlane().getT());
 
+        // Runtime diagnostics -- logs the inputs that determine overlay scale
+        // and placement so a mismatch (overlay scaled wrong on the viewer)
+        // can be traced back to whichever input is off.
+        int imgW = img.getWidth();
+        int imgH = img.getHeight();
+        double imageFullResW = -1, imageFullResH = -1;
+        double imagePixelSizeUm = Double.NaN;
+        try {
+            var imageData = viewer.getImageData();
+            if (imageData != null && imageData.getServer() != null) {
+                imageFullResW = imageData.getServer().getWidth();
+                imageFullResH = imageData.getServer().getHeight();
+                imagePixelSizeUm = imageData.getServer().getPixelCalibration()
+                        .getAveragedPixelSizeMicrons();
+            }
+        } catch (Exception ignored) {
+            // best-effort -- diagnostics only
+        }
+        logger.info("TrainingIssues overlay: row=({},{}) pngSize={}x{} "
+                        + "patchSize={} downsample={} -> regionSize={} "
+                        + "imageLevel0={}x{} imagePixelUm={}",
+                row.x(), row.y(), imgW, imgH,
+                patchSize, downsample, regionSize,
+                (long) imageFullResW, (long) imageFullResH, imagePixelSizeUm);
+
         QuPathGUI qupath = QuPathGUI.getInstance();
         if (qupath == null) {
             return;

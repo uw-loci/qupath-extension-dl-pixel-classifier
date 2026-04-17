@@ -65,6 +65,10 @@ public class TrainingAreaIssuesDialog {
     private final ClassifierMetadata classifierMetadata;
     private final Path modelDir;
     private final String classifierName;
+    // Threshold slider + label refs, so session reload can re-scale to the
+    // new dataset's loss range.
+    private Slider thresholdSliderRef;
+    private Label thresholdLabelRef;
 
     // Renders the selected tile's heatmap/disagreement PNG as a real QuPath
     // overlay aligned to the tile coordinates in the main viewer.
@@ -144,21 +148,35 @@ public class TrainingAreaIssuesDialog {
                 + "Val tiles are more diagnostic -- high loss there\n"
                 + "suggests annotation problems, not just overfitting."));
 
-        Slider thresholdSlider = new Slider(0, 10, 0);
+        // Size the slider range to the actual loss distribution in the data
+        // rather than a fixed [0, 10]. When a reload replaces the rows the
+        // range is recomputed via updateThresholdSliderRange().
+        double dataMinLoss = results.stream().mapToDouble(
+                ClassifierClient.TileEvaluationResult::loss).min().orElse(0.0);
+        double dataMaxLoss = results.stream().mapToDouble(
+                ClassifierClient.TileEvaluationResult::loss).max().orElse(1.0);
+        if (dataMaxLoss <= dataMinLoss) {
+            dataMaxLoss = dataMinLoss + 1.0;
+        }
+        Slider thresholdSlider = new Slider(dataMinLoss, dataMaxLoss, dataMinLoss);
         thresholdSlider.setShowTickLabels(true);
         thresholdSlider.setShowTickMarks(true);
-        thresholdSlider.setMajorTickUnit(2);
+        double span = dataMaxLoss - dataMinLoss;
+        thresholdSlider.setMajorTickUnit(Math.max(span / 4.0, 0.01));
         thresholdSlider.setMinorTickCount(1);
         thresholdSlider.setPrefWidth(200);
         thresholdSlider.setTooltip(TooltipHelper.create(
                 "Show only tiles with loss above this threshold.\n"
+                + "Range auto-sized to this dataset's min/max loss.\n"
                 + "Increase to focus on the most problematic tiles."));
+        this.thresholdSliderRef = thresholdSlider;
 
-        Label thresholdLabel = new Label("Min Loss: 0.00");
+        Label thresholdLabel = new Label(String.format("Min Loss: %.2f", dataMinLoss));
         thresholdSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
             thresholdLabel.setText(String.format("Min Loss: %.2f", newVal.doubleValue()));
             updateFilter(splitFilter.getValue(), newVal.doubleValue());
         });
+        this.thresholdLabelRef = thresholdLabel;
 
         splitFilter.setOnAction(e -> updateFilter(splitFilter.getValue(),
                 thresholdSlider.getValue()));
@@ -573,6 +591,22 @@ public class TrainingAreaIssuesDialog {
                 "%d tiles loaded | %d with loss > 1.0", allRows.size(), highLoss));
         stage.setTitle("Training Area Issues - " + classifierName
                 + " (session " + loaded.info().sessionId() + ")");
+        rescaleThresholdSlider();
+    }
+
+    /** Re-scales the Min Loss slider to the current row set's loss range. */
+    private void rescaleThresholdSlider() {
+        if (thresholdSliderRef == null) return;
+        double min = allRows.stream().mapToDouble(TileRow::getLoss).min().orElse(0.0);
+        double max = allRows.stream().mapToDouble(TileRow::getLoss).max().orElse(1.0);
+        if (max <= min) max = min + 1.0;
+        thresholdSliderRef.setMin(min);
+        thresholdSliderRef.setMax(max);
+        thresholdSliderRef.setValue(min);
+        thresholdSliderRef.setMajorTickUnit(Math.max((max - min) / 4.0, 0.01));
+        if (thresholdLabelRef != null) {
+            thresholdLabelRef.setText(String.format("Min Loss: %.2f", min));
+        }
     }
 
     /**
