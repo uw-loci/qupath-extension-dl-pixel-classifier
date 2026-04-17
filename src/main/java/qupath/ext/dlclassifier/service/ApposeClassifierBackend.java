@@ -336,6 +336,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         // Generate a synthetic job ID for Appose-based training
         String jobId = "appose-" + System.currentTimeMillis();
         inputs.put("pause_signal_path", getPauseSignalPath(jobId).toString());
+        // TODO(diagnostic): remove after pause regression is diagnosed (2026-04-17).
+        logger.info("DIAG pause: startTraining jobId={}, signal path={}",
+                jobId, getPauseSignalPath(jobId));
         if (jobIdCallback != null) {
             jobIdCallback.accept(jobId);
         }
@@ -456,6 +459,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
     @Override
     public void pauseTraining(String jobId) throws IOException {
+        // TODO(diagnostic): remove after pause regression is diagnosed (2026-04-17).
+        logger.info("DIAG pause: pauseTraining called with jobId={}", jobId);
         // Follow redirect chain: after resume, the old jobId maps to a new one
         // with a different pause signal path.
         String effectiveId = jobId;
@@ -466,7 +471,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         }
         Path signalPath = getPauseSignalPath(effectiveId);
         Files.writeString(signalPath, "pause");
-        logger.info("Pause signal written for job {} (effective: {})", jobId, effectiveId);
+        logger.info("Pause signal written for job {} (effective: {}) at {}",
+                jobId, effectiveId, signalPath);
     }
 
     /**

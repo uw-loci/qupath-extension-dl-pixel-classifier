@@ -359,6 +359,28 @@ def watch_pause():
 pause_watcher = threading.Thread(target=watch_pause, daemon=True)
 pause_watcher.start()
 
+# TODO(diagnostic): remove after pause regression is diagnosed (2026-04-17).
+# Confirms (a) that the script received pause_signal_path, (b) that the
+# watcher thread started, and (c) whether the installed pip package actually
+# accepts and checks the pause_flag kwarg. The third check is a heuristic:
+# _run_training's source is inspected for "pause_flag.is_set" and the result
+# logged. If the installed package predates the pause feature, this prints a
+# clear warning pointing at a stale pip install as the root cause.
+logger.info("DIAG pause: pause_signal_path=%s, watcher_alive=%s",
+            pause_signal_path, pause_watcher.is_alive())
+try:
+    import inspect as _inspect
+    _rt_src = _inspect.getsource(training_service._run_training)
+    _has_pause_check = "pause_flag.is_set" in _rt_src
+    logger.info("DIAG pause: installed _run_training has pause check: %s",
+                _has_pause_check)
+    if not _has_pause_check:
+        logger.warning("DIAG pause: INSTALLED pip package is STALE -- "
+                       "pause_flag is accepted but never checked. "
+                       "Reinstall dlclassifier-server from current source.")
+except Exception as _e:
+    logger.warning("DIAG pause: could not inspect _run_training source: %s", _e)
+
 # Extract frozen layers from architecture dict (Java puts them there)
 frozen_layers = architecture.get("frozen_layers", None)
 
