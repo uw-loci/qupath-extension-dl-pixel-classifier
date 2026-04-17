@@ -202,6 +202,13 @@ public final class DLClassifierPreferences {
     private static final IntegerProperty lastSeed = PathPrefs.createPersistentPreference(
             "dlclassifier.lastSeed", 0);
 
+    // DataLoader num_workers. 0 = load on main thread (safe default -- older
+    // Appose releases hang with multiprocessing). >0 = spawn worker processes
+    // to overlap I/O/augmentation with GPU compute; faster but may hang
+    // depending on Appose/pip versions.
+    private static final IntegerProperty defaultDataLoaderWorkers = PathPrefs.createPersistentPreference(
+            "dlclassifier.defaultDataLoaderWorkers", 0);
+
     // ==================== Inference Dialog Preferences ====================
 
     private static final StringProperty lastOutputType = PathPrefs.createPersistentPreference(
@@ -318,6 +325,20 @@ public final class DLClassifierPreferences {
                         "Recommended for context-scale models where seams are visible. " +
                         "Applies to both the overlay and Apply Classifier. " +
                         "~4x slower but produces seamless results.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(defaultDataLoaderWorkers, Integer.class)
+                .name("Training: DataLoader Workers")
+                .category(CATEGORY)
+                .description("Number of background worker processes used by the PyTorch " +
+                        "DataLoader to prefetch training patches. " +
+                        "0 = load on the main thread (safe default). " +
+                        ">0 = overlap I/O and augmentation with GPU compute, which can " +
+                        "significantly reduce per-epoch time on GPU-bound setups. " +
+                        "Try 2 first. Higher values (4-8) help on slower disks or " +
+                        "heavy augmentation. " +
+                        "WARNING: some Appose / Python versions hang when >0 -- if " +
+                        "training stops progressing after the first batch, set back to 0.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(showMenuDot, Boolean.class)
@@ -850,6 +871,18 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty defaultOhemAdaptiveFloorProperty() {
         return defaultOhemAdaptiveFloor;
+    }
+
+    public static int getDefaultDataLoaderWorkers() {
+        return defaultDataLoaderWorkers.get();
+    }
+
+    public static void setDefaultDataLoaderWorkers(int n) {
+        defaultDataLoaderWorkers.set(Math.max(0, Math.min(8, n)));
+    }
+
+    public static IntegerProperty defaultDataLoaderWorkersProperty() {
+        return defaultDataLoaderWorkers;
     }
 
     public static double getDefaultFocalGamma() {

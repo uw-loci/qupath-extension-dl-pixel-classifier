@@ -1952,6 +1952,7 @@ public class TrainingDialog {
                     .ohemSchedule(ohemStartSpinner.getValue() > ohemSpinner.getValue()
                             ? "anneal" : "fixed")
                     .ohemAdaptiveFloor(ohemAdaptiveFloorCheck.isSelected())
+                    .dataLoaderWorkers(DLClassifierPreferences.getDefaultDataLoaderWorkers())
                     .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
                     .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
                     .mixedPrecision(mixedPrecisionCheck.isSelected())

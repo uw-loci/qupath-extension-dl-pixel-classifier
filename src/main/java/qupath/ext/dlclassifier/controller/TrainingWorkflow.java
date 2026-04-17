@@ -2231,6 +2231,7 @@ public class TrainingWorkflow {
             settings.put("ohem_schedule", config.getOhemSchedule());
             settings.put("ohem_adaptive_floor", config.isOhemAdaptiveFloor());
         }
+        settings.put("data_loader_workers", config.getDataLoaderWorkers());
         settings.put("early_stopping_metric", config.getEarlyStoppingMetric());
         settings.put("early_stopping_patience", config.getEarlyStoppingPatience());
         settings.put("mixed_precision", config.isMixedPrecision());

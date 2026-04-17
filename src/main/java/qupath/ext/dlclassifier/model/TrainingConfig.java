@@ -66,6 +66,7 @@ public class TrainingConfig {
     private final double ohemHardRatioStart;
     private final String ohemSchedule; // "fixed" or "anneal" -- derived from start vs end
     private final boolean ohemAdaptiveFloor;
+    private final int dataLoaderWorkers;
     private final String earlyStoppingMetric;
     private final int earlyStoppingPatience;
     private final boolean mixedPrecision;
@@ -138,6 +139,7 @@ public class TrainingConfig {
         this.ohemHardRatioStart = builder.ohemHardRatioStart;
         this.ohemSchedule = builder.ohemSchedule;
         this.ohemAdaptiveFloor = builder.ohemAdaptiveFloor;
+        this.dataLoaderWorkers = builder.dataLoaderWorkers;
         this.earlyStoppingMetric = builder.earlyStoppingMetric;
         this.earlyStoppingPatience = builder.earlyStoppingPatience;
         this.mixedPrecision = builder.mixedPrecision;
@@ -367,6 +369,15 @@ public class TrainingConfig {
      */
     public boolean isOhemAdaptiveFloor() {
         return ohemAdaptiveFloor;
+    }
+
+    /**
+     * Gets the number of DataLoader worker processes. 0 = load on main
+     * thread (safe default). >0 = spawn workers to overlap I/O and
+     * augmentation with GPU compute.
+     */
+    public int getDataLoaderWorkers() {
+        return dataLoaderWorkers;
     }
 
     /**
@@ -669,6 +680,7 @@ public class TrainingConfig {
                 Double.compare(that.ohemHardRatio, ohemHardRatio) == 0 &&
                 Double.compare(that.ohemHardRatioStart, ohemHardRatioStart) == 0 &&
                 ohemAdaptiveFloor == that.ohemAdaptiveFloor &&
+                dataLoaderWorkers == that.dataLoaderWorkers &&
                 Objects.equals(earlyStoppingMetric, that.earlyStoppingMetric) &&
                 Objects.equals(focusClass, that.focusClass) &&
                 Objects.equals(intensityAugMode, that.intensityAugMode) &&
@@ -687,6 +699,7 @@ public class TrainingConfig {
                 usePretrainedWeights, freezeEncoderLayers, frozenLayers, lineStrokeWidth,
                 classWeightMultipliers, contextScale, schedulerType, lossFunction,
                 focalGamma, ohemHardRatio, ohemHardRatioStart, ohemAdaptiveFloor,
+                dataLoaderWorkers,
                 earlyStoppingMetric, earlyStoppingPatience, mixedPrecision,
                 focusClass, focusClassMinIoU, intensityAugMode,
                 gradientAccumulationSteps, progressiveResize, wholeImage, pretrainedModelPath);
@@ -736,6 +749,7 @@ public class TrainingConfig {
         private double ohemHardRatioStart = 1.0;
         private String ohemSchedule = "fixed";
         private boolean ohemAdaptiveFloor = false;
+        private int dataLoaderWorkers = 0;
         private String earlyStoppingMetric = "mean_iou";
         private int earlyStoppingPatience = 15;
         private boolean mixedPrecision = true;
@@ -792,6 +806,7 @@ public class TrainingConfig {
             this.ohemHardRatioStart = config.ohemHardRatioStart;
             this.ohemSchedule = config.ohemSchedule;
             this.ohemAdaptiveFloor = config.ohemAdaptiveFloor;
+            this.dataLoaderWorkers = config.dataLoaderWorkers;
             this.earlyStoppingMetric = config.earlyStoppingMetric;
             this.earlyStoppingPatience = config.earlyStoppingPatience;
             this.mixedPrecision = config.mixedPrecision;
@@ -1055,6 +1070,16 @@ public class TrainingConfig {
          */
         public Builder ohemAdaptiveFloor(boolean ohemAdaptiveFloor) {
             this.ohemAdaptiveFloor = ohemAdaptiveFloor;
+            return this;
+        }
+
+        /**
+         * Sets the number of DataLoader worker processes. 0 = load on main
+         * thread (safe default). >0 = spawn workers to overlap I/O and
+         * augmentation with GPU compute, typically 2-4 on modern systems.
+         */
+        public Builder dataLoaderWorkers(int n) {
+            this.dataLoaderWorkers = Math.max(0, Math.min(8, n));
             return this;
         }
 
