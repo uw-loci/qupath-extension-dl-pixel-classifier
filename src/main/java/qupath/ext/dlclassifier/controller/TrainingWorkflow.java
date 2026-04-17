@@ -2079,7 +2079,7 @@ public class TrainingWorkflow {
                                                           int currentBatch) {
         Dialog<ResumeParams> dialog = new Dialog<>();
         dialog.setTitle("Resume Training");
-        dialog.setHeaderText("Adjust parameters for resumed training");
+        dialog.setHeaderText("How many additional epochs?");
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
 
         GridPane grid = new GridPane();
@@ -2097,41 +2097,33 @@ public class TrainingWorkflow {
             row++;
         }
 
-        // Default additional epochs to the original configured count
-        int defaultAdditional = Math.max(originalEpochs, 10);
+        // Default additional epochs to the remaining portion of the original
+        // configured count (or at least 10 if we have already hit the target).
+        int defaultAdditional = Math.max(originalEpochs - epochsCompleted, 10);
         Spinner<Integer> epochSpinner = new Spinner<>(
                 new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 1000, defaultAdditional));
         epochSpinner.setEditable(true);
-
-        TextField lrField = new TextField(String.valueOf(currentLR));
-        lrField.setPrefWidth(120);
-
-        Spinner<Integer> batchSpinner = new Spinner<>(
-                new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 128, currentBatch));
-        batchSpinner.setEditable(true);
+        epochSpinner.setPrefWidth(120);
 
         grid.add(new Label("Additional Epochs:"), 0, row);
         grid.add(epochSpinner, 1, row);
         row++;
-        grid.add(new Label("Learning Rate:"), 0, row);
-        grid.add(lrField, 1, row);
-        row++;
-        grid.add(new Label("Batch Size:"), 0, row);
-        grid.add(batchSpinner, 1, row);
+
+        // Reassure the user that other hyperparameters are unchanged on resume
+        // (they still take effect through currentLR / currentBatch below).
+        Label hint = new Label(
+                "Learning rate and batch size are unchanged from the original run.");
+        hint.setStyle("-fx-text-fill: #666; -fx-font-style: italic; -fx-font-size: 11px;");
+        hint.setWrapText(true);
+        grid.add(hint, 0, row, 2, 1);
 
         dialog.getDialogPane().setContent(grid);
 
         final int completed = epochsCompleted;
         dialog.setResultConverter(buttonType -> {
             if (buttonType == ButtonType.OK) {
-                try {
-                    double lr = Double.parseDouble(lrField.getText().trim());
-                    int totalEpochs = completed + epochSpinner.getValue();
-                    return new ResumeParams(totalEpochs, lr, batchSpinner.getValue());
-                } catch (NumberFormatException e) {
-                    logger.warn("Invalid learning rate value: {}", lrField.getText());
-                    return null;
-                }
+                int totalEpochs = completed + epochSpinner.getValue();
+                return new ResumeParams(totalEpochs, currentLR, currentBatch);
             }
             return null;
         });
