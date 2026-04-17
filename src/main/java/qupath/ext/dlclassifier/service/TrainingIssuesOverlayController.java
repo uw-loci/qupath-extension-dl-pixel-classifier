@@ -102,17 +102,32 @@ public class TrainingIssuesOverlayController {
             return;
         }
 
-        int regionSize = (int) Math.round(patchSize * downsample);
+        // The saved PNG covers the full evaluation patch INCLUDING reflection
+        // padding (training adds a ring of context around the core patchSize
+        // tile so the model can predict centered pixels). So:
+        //   pngSize_downsampled = patchSize + 2 * padding
+        // We compute the full-res region from the PNG size directly rather
+        // than from patchSize, and offset top-left by the padding so that
+        // the core of the PNG lands on row.x / row.y (which refer to the
+        // un-padded top-left in the tile manifest).
+        int imgW = img.getWidth();
+        int imgH = img.getHeight();
+        int regionWidth = (int) Math.round(imgW * downsample);
+        int regionHeight = (int) Math.round(imgH * downsample);
+        // Padding is half the excess on each side, in downsampled pixels,
+        // converted to full-res pixels. If the PNG is exactly patchSize
+        // (no padding) this collapses to zero.
+        int paddingFullResX = (int) Math.round(((imgW - patchSize) / 2.0) * downsample);
+        int paddingFullResY = (int) Math.round(((imgH - patchSize) / 2.0) * downsample);
+        int regionX = row.x() - paddingFullResX;
+        int regionY = row.y() - paddingFullResY;
         ImageRegion region = ImageRegion.createInstance(
-                row.x(), row.y(), regionSize, regionSize,
+                regionX, regionY, regionWidth, regionHeight,
                 ImagePlane.getDefaultPlane().getZ(),
                 ImagePlane.getDefaultPlane().getT());
 
-        // Runtime diagnostics -- logs the inputs that determine overlay scale
-        // and placement so a mismatch (overlay scaled wrong on the viewer)
-        // can be traced back to whichever input is off.
-        int imgW = img.getWidth();
-        int imgH = img.getHeight();
+        // Diagnostics -- surface every input to the scale / placement math so
+        // a future mismatch can be traced to whichever input is off.
         double imageFullResW = -1, imageFullResH = -1;
         double imagePixelSizeUm = Double.NaN;
         try {
@@ -127,10 +142,12 @@ public class TrainingIssuesOverlayController {
             // best-effort -- diagnostics only
         }
         logger.info("TrainingIssues overlay: row=({},{}) pngSize={}x{} "
-                        + "patchSize={} downsample={} -> regionSize={} "
+                        + "patchSize={} downsample={} paddingFullRes=({},{}) "
+                        + "-> regionTL=({},{}) regionSize={}x{} "
                         + "imageLevel0={}x{} imagePixelUm={}",
                 row.x(), row.y(), imgW, imgH,
-                patchSize, downsample, regionSize,
+                patchSize, downsample, paddingFullResX, paddingFullResY,
+                regionX, regionY, regionWidth, regionHeight,
                 (long) imageFullResW, (long) imageFullResH, imagePixelSizeUm);
 
         QuPathGUI qupath = QuPathGUI.getInstance();
