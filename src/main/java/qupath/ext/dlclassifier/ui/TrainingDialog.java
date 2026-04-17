@@ -2687,6 +2687,14 @@ public class TrainingDialog {
             backboneCombo.valueProperty().addListener((obs, o, n) -> {
                 if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
             });
+            // Context scale affects the in-memory cache estimate (2x storage
+            // when > 1) -- refresh the tile/cache label when it changes.
+            contextScaleCombo.valueProperty().addListener((obs, o, n) -> {
+                if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
+            });
+            DLClassifierPreferences.defaultInMemoryDatasetProperty().addListener((obs, o, n) -> {
+                if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
+            });
 
             // Overlap (advanced only)
             overlapSpinner = new Spinner<>(0, 50, DLClassifierPreferences.getTileOverlap(), 5);
@@ -3651,11 +3659,90 @@ public class TrainingDialog {
         private void updateTileEstimateLabel(int classCount, int imageCount) {
             if (tileEstimateLabel == null || cachedTotalAnnotationArea <= 0) return;
             int est = estimateTileCount();
-            tileEstimateLabel.setText(String.format(
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format(
                     "Loaded %d classes from %d images. Estimated ~%,d training tiles.",
                     classCount, imageCount, est));
+            appendInMemoryCacheEstimate(sb, est);
+            tileEstimateLabel.setText(sb.toString());
             tileEstimateLabel.setVisible(true);
             tileEstimateLabel.setManaged(true);
+        }
+
+        /**
+         * Appends an in-memory dataset cache estimate to the tile-estimate
+         * label so the user sees RAM requirements at selection time (not
+         * post-mortem during training). Mirrors the Python-side decision
+         * (25% ceiling for "auto"; warns if "on" exceeds free RAM).
+         */
+        private void appendInMemoryCacheEstimate(StringBuilder sb, int tileEst) {
+            String mode = DLClassifierPreferences.getDefaultInMemoryDataset();
+            if ("off".equals(mode)) {
+                sb.append(" In-memory cache: off.");
+                tileEstimateLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
+                return;
+            }
+            int tile = tileSizeSpinner != null ? tileSizeSpinner.getValue() : 512;
+            int chs = 3;
+            try {
+                if (channelPanel != null && channelPanel.isValid()) {
+                    chs = Math.max(1, channelPanel.getChannelConfiguration().getNumChannels());
+                }
+            } catch (Exception ignored) {
+                // Pre-selection: fall back to 3 channels default
+            }
+            int ctxScale = contextScaleCombo != null
+                    ? parseContextScale(contextScaleCombo.getValue()) : 1;
+            boolean hasContext = ctxScale > 1;
+            long perImage = (long) tile * tile * chs;
+            if (hasContext) perImage *= 2L;
+            long perMask = (long) tile * tile;
+            long totalBytes = (long) tileEst * (perImage + perMask);
+            double estGb = totalBytes / 1e9;
+
+            long availableBytes = -1L;
+            try {
+                java.lang.management.OperatingSystemMXBean osBean =
+                        java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+                if (osBean instanceof com.sun.management.OperatingSystemMXBean sun) {
+                    availableBytes = sun.getFreeMemorySize();
+                }
+            } catch (Throwable ignored) {
+                // com.sun.* unavailable on some JVMs
+            }
+
+            if (availableBytes <= 0) {
+                sb.append(String.format(" In-memory cache: ~%.2f GB (mode=%s).", estGb, mode));
+                tileEstimateLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
+                return;
+            }
+            double availGb = availableBytes / 1e9;
+
+            String color = "#2a7a2a"; // green
+            String verdict;
+            if ("auto".equals(mode)) {
+                if (totalBytes < 0.25 * availableBytes) {
+                    verdict = "auto -> will enable";
+                } else {
+                    verdict = "auto -> will decline (>25% of free); set to 'on' to force";
+                    color = "#cc6600"; // orange
+                }
+            } else { // "on"
+                if (totalBytes > availableBytes) {
+                    verdict = "on -> FORCED over free RAM; preload may OOM";
+                    color = "#cc0000"; // red
+                } else if (totalBytes > 0.5 * availableBytes) {
+                    verdict = "on -> forced (>50% of free RAM; tight)";
+                    color = "#cc6600";
+                } else {
+                    verdict = "on -> forced";
+                }
+            }
+            sb.append(String.format(
+                    " In-memory cache: ~%.2f GB of %.2f GB free RAM (%s).",
+                    estGb, availGb, verdict));
+            tileEstimateLabel.setStyle(
+                    "-fx-text-fill: " + color + "; -fx-font-size: 11px;");
         }
 
         /** Estimates tile count from cached annotation area and current settings. */
