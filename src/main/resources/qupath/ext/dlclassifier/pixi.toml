@@ -14,7 +14,7 @@ cuda = "12"
 [dependencies]
 python = "3.11.*"
 pip = ">=23.0"
-appose = ">=0.7.2"
+appose = ">=0.10.1"
 numpy = ">=1.24.0,<2.0"
 pillow = ">=10.0.0"
 scikit-image = ">=0.21.0"

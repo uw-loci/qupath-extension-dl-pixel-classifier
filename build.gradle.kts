@@ -44,7 +44,7 @@ dependencies {
     shadow(libs.gson)
 
     // Appose for embedded Java-Python IPC with shared memory
-    implementation("org.apposed:appose:0.10.0")
+    implementation("org.apposed:appose:0.11.0")
 
     // Groovy for scripting support
     shadow(libs.bundles.groovy)
