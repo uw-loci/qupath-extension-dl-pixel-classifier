@@ -1188,6 +1188,7 @@ public class TrainingWorkflow {
             if (progress != null) {
                 progress.log("Exported " + patchCount + " training patches");
                 progress.setStatus("Exported " + patchCount + " patches. Connecting to backend...");
+                logInMemoryCacheEstimate(progress, trainingConfig, channelConfig, patchCount);
             }
 
             if (progress != null && progress.isCancelled()) {
@@ -2305,6 +2306,82 @@ public class TrainingWorkflow {
      */
     private static int computeTrainingContextPadding(int tileSize, TrainingConfig config) {
         return InferenceConfig.computeEffectivePadding(tileSize, config.getOverlap());
+    }
+
+    /**
+     * Logs a pre-flight estimate of the in-memory dataset cache size versus
+     * available system RAM so the user sees it before training starts. The
+     * actual decision still happens in Python (the Java estimate may differ
+     * slightly because Python measures a real tile after export), but the
+     * two agree to within a factor of two and that is good enough for the
+     * user to decide whether to cancel and flip the preference off.
+     */
+    private static void logInMemoryCacheEstimate(ProgressMonitorController progress,
+                                                 TrainingConfig config,
+                                                 ChannelConfiguration channels,
+                                                 int patchCount) {
+        if (progress == null) return;
+        String mode = config.getInMemoryDataset();
+        if ("off".equals(mode)) {
+            progress.log("In-memory cache: off (streaming from disk). "
+                    + "Set preference to 'auto' if you want to try caching.");
+            return;
+        }
+        int tile = config.getTileSize();
+        int chs = Math.max(1, channels.getSelectedChannels().size());
+        boolean hasContext = config.getContextScale() > 1;
+        long perImage = (long) tile * tile * chs; // uint8 bytes
+        if (hasContext) perImage *= 2L;
+        long perMask = (long) tile * tile; // uint8
+        long totalBytes = (long) patchCount * (perImage + perMask);
+
+        long availableBytes = -1L;
+        try {
+            java.lang.management.OperatingSystemMXBean osBean =
+                    java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+            if (osBean instanceof com.sun.management.OperatingSystemMXBean sun) {
+                availableBytes = sun.getFreeMemorySize();
+            }
+        } catch (Throwable t) {
+            // com.sun.* not available on some JVMs -- fall through
+        }
+
+        double estGb = totalBytes / 1e9;
+        String header = String.format(
+                "In-memory cache: ~%.2f GB needed for %d patches (mode=%s)",
+                estGb, patchCount, mode);
+        if (availableBytes <= 0) {
+            progress.log(header + ". Free RAM unknown -- Python will make the "
+                    + "final decision based on psutil.");
+            return;
+        }
+        double availGb = availableBytes / 1e9;
+        double usedPct = 100.0 * totalBytes / availableBytes;
+        String body = String.format(
+                " / %.2f GB OS free RAM (would use %.0f%% of free).",
+                availGb, usedPct);
+        progress.log(header + body);
+
+        if ("auto".equals(mode)) {
+            if (totalBytes < 0.25 * availableBytes) {
+                progress.log("  auto -> ENABLED (fits under the 25% ceiling).");
+            } else {
+                progress.log("  auto -> DISABLED (would exceed 25% ceiling). "
+                        + "Training will stream from disk. Set preference "
+                        + "to 'on' to override.");
+            }
+        } else if ("on".equals(mode)) {
+            if (totalBytes > availableBytes) {
+                progress.log("  on -> FORCED despite ESTIMATE EXCEEDING FREE RAM. "
+                        + "Preload may fail with MemoryError. "
+                        + "Consider Cancel -> set preference to 'auto' or 'off'.");
+            } else if (totalBytes > 0.5 * availableBytes) {
+                progress.log("  on -> forced. Warning: cache will use more than "
+                        + "50% of free RAM -- other processes may be squeezed.");
+            } else {
+                progress.log("  on -> forced (comfortably within free RAM).");
+            }
+        }
     }
 
     /**
