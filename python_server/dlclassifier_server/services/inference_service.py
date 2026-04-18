@@ -815,6 +815,22 @@ class InferenceService:
                     int(arch.get("depth", 4)),
                     arch.get("norm", "brn"),
                 )
+            elif model_type == "fast-pretrained":
+                # SMP U-Net with a small mobile encoder and scaled decoder.
+                # encoder_weights=None because the saved state_dict already
+                # holds the (possibly fine-tuned) weights.
+                fp_decoder = arch.get("decoder_channels", [128, 64, 32, 16, 8])
+                model = smp.Unet(
+                    encoder_name=smp_encoder_name,
+                    encoder_weights=None,
+                    in_channels=num_channels,
+                    classes=num_classes,
+                    decoder_channels=fp_decoder,
+                )
+                logger.info(
+                    "Reconstructed Fast Pretrained UNet (encoder=%s, decoder=%s)",
+                    smp_encoder_name, fp_decoder,
+                )
             else:
                 model_cls = model_map.get(model_type, smp.Unet)
                 model = model_cls(

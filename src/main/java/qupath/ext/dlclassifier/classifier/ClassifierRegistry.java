@@ -3,6 +3,7 @@ package qupath.ext.dlclassifier.classifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.classifier.handlers.CustomONNXHandler;
+import qupath.ext.dlclassifier.classifier.handlers.FastPretrainedHandler;
 import qupath.ext.dlclassifier.classifier.handlers.MuViTHandler;
 import qupath.ext.dlclassifier.classifier.handlers.TinyUNetHandler;
 import qupath.ext.dlclassifier.classifier.handlers.UNetHandler;
@@ -55,6 +56,7 @@ public final class ClassifierRegistry {
         logger.info("Initializing ClassifierRegistry with default handlers");
         registerHandler(new UNetHandler());
         registerHandler(new TinyUNetHandler());
+        registerHandler(new FastPretrainedHandler());
         registerHandler(new MuViTHandler());
         registerHandler(new CustomONNXHandler());
         logger.info("ClassifierRegistry initialization complete. Registered {} handlers", HANDLERS.size());

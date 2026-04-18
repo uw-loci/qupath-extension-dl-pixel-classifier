@@ -1370,7 +1370,13 @@ class TrainingService:
         # Discriminative learning rates for pretrained encoders (fast.ai style)
         use_pretrained = architecture.get("use_pretrained", False)
         has_frozen = frozen_layers is not None and len(frozen_layers) > 0
-        discriminative_lr_ratio = training_params.get("discriminative_lr_ratio", 0.1)
+        # Default 0.1 matches UNet with ResNet encoders. Handlers can override
+        # via the architecture dict (e.g., Fast Pretrained uses 0.2 for mobile
+        # encoders -- see agent report A2).
+        discriminative_lr_ratio = training_params.get(
+            "discriminative_lr_ratio",
+            architecture.get("discriminative_lr_ratio", 0.1),
+        )
         param_groups = self._create_param_groups(
             model, learning_rate, discriminative_lr_ratio
         ) if (use_pretrained or has_frozen) else None
@@ -3269,6 +3275,33 @@ class TrainingService:
                     int(architecture.get("base", 16)),
                     int(architecture.get("depth", 4)),
                     architecture.get("norm", "brn"),
+                )
+                return model
+
+            # Fast Pretrained: SMP U-Net with a small ImageNet-pretrained
+            # mobile encoder (EfficientNet-Lite0 or MobileNetV3-Small) and
+            # a scaled-down decoder.  Intended for small RGB H&E datasets
+            # where ImageNet priors are worth keeping.
+            if model_type == "fast-pretrained":
+                fp_encoder = architecture.get(
+                    "backbone", "timm-tf_efficientnet_lite0"
+                )
+                fp_decoder = architecture.get(
+                    "decoder_channels", [128, 64, 32, 16, 8]
+                )
+                model = smp.Unet(
+                    encoder_name=fp_encoder,
+                    encoder_weights=encoder_weights,
+                    in_channels=num_channels,
+                    classes=num_classes,
+                    decoder_channels=fp_decoder,
+                )
+                logger.info(
+                    "Created Fast Pretrained UNet (encoder=%s, decoder=%s, "
+                    "pretrained=%s, in_channels=%d, classes=%d)",
+                    fp_encoder, fp_decoder,
+                    encoder_weights is not None,
+                    num_channels, num_classes,
                 )
                 return model
 
