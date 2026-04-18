@@ -94,6 +94,10 @@ try:
     use_tta
 except NameError:
     use_tta = False
+try:
+    output_format
+except NameError:
+    output_format = "prob_fp32"
 
 # Zero-copy read from shared memory NDArray.
 # Copy immediately so the shared memory segment can be reused by Java.
@@ -125,10 +129,19 @@ num_classes = prob_map.shape[0]
 
 # Write result to shared memory NDArray (outside lock -- no GPU needed).
 # NDArray auto-creates SharedMemory of the correct size when shm=None.
+# Phase 3c: optionally return uint8 (H, W) argmax instead of float32 (C,H,W).
 from appose import NDArray as PyNDArray
 
-out_nd = PyNDArray(dtype="float32", shape=[num_classes, tile_height, tile_width])
-np.copyto(out_nd.ndarray(), prob_map)
-
-task.outputs["probabilities"] = out_nd
-task.outputs["num_classes"] = num_classes
+if output_format == "argmax_uint8":
+    argmax_hw = np.argmax(prob_map, axis=0).astype(np.uint8)
+    out_nd = PyNDArray(dtype="uint8", shape=[tile_height, tile_width])
+    np.copyto(out_nd.ndarray(), argmax_hw)
+    task.outputs["probabilities"] = out_nd
+    task.outputs["num_classes"] = num_classes
+    task.outputs["output_format"] = "argmax_uint8"
+else:
+    out_nd = PyNDArray(dtype="float32", shape=[num_classes, tile_height, tile_width])
+    np.copyto(out_nd.ndarray(), prob_map)
+    task.outputs["probabilities"] = out_nd
+    task.outputs["num_classes"] = num_classes
+    task.outputs["output_format"] = "prob_fp32"

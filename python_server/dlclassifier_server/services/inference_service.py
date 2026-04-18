@@ -38,6 +38,41 @@ logger = logging.getLogger(__name__)
 DEFAULT_GPU_BATCH_SIZE = 16
 
 
+def _write_pixel_outputs(
+    output_dir: str,
+    tile_ids: List[str],
+    prob_maps: List[np.ndarray],
+    output_format: str,
+) -> Dict[str, str]:
+    """Serialize per-tile inference outputs to disk.
+
+    Two wire formats are supported; Java's ClassifierClient picks the
+    matching reader based on the preference that was passed in.
+
+    - ``prob_fp32`` (default): float32, shape ``(C, H, W)``, CHW order.
+      Required for tile blending, multi-pass averaging, and overlay
+      smoothing.
+    - ``argmax_uint8``: uint8, shape ``(H, W)``, class indices only.
+      ~20x smaller; skips softmax. Disables any downstream logic that
+      requires per-class probabilities.
+
+    See Phase 3c notes in the TrainingDialog preferences and
+    docs/TINY_MODEL.md. Same ``.bin`` extension in both cases -- the
+    caller knows which one it asked for.
+    """
+    output_paths = {}
+    for tile_id, prob_map in zip(tile_ids, prob_maps):
+        output_path = os.path.join(output_dir, "%s.bin" % tile_id)
+        if output_format == "argmax_uint8":
+            # prob_map shape: (C, H, W). Argmax over channel dim first.
+            argmax_hw = np.argmax(prob_map, axis=0).astype(np.uint8)
+            argmax_hw.tofile(output_path)
+        else:
+            prob_map.astype(np.float32).tofile(output_path)
+        output_paths[tile_id] = output_path
+    return output_paths
+
+
 class InferenceService:
     """Service for running model inference.
 
@@ -172,6 +207,7 @@ class InferenceService:
         gpu_batch_size: int = DEFAULT_GPU_BATCH_SIZE,
         use_amp: bool = True,
         compile_model: bool = True,
+        output_format: str = "prob_fp32",
     ) -> Dict[str, str]:
         """Run inference returning per-pixel probability maps saved as files.
 
@@ -187,6 +223,9 @@ class InferenceService:
             gpu_batch_size: Max tiles per GPU forward pass (default 16)
             use_amp: Use FP16 mixed precision on CUDA (default True)
             compile_model: Use torch.compile on PyTorch models (default True)
+            output_format: "prob_fp32" (default) writes (C,H,W) float32
+                per tile; "argmax_uint8" writes (H,W) uint8 class indices
+                (20x smaller, no softmax, but no blending/smoothing).
 
         Returns:
             Dict mapping tile_id to output file path
@@ -215,17 +254,15 @@ class InferenceService:
         )
 
         # Save each probability map to disk
-        output_paths = {}
-        for tile_id, prob_map in zip(tile_ids, all_prob_maps):
-            output_path = os.path.join(output_dir, "%s.bin" % tile_id)
-            prob_map.astype(np.float32).tofile(output_path)
-            output_paths[tile_id] = output_path
+        output_paths = _write_pixel_outputs(
+            output_dir, tile_ids, all_prob_maps, output_format
+        )
 
         # Clear GPU cache after batch
         self._cleanup_after_inference()
 
-        logger.info("Pixel inference complete: %d tiles -> %s",
-                     len(output_paths), output_dir)
+        logger.info("Pixel inference complete: %d tiles -> %s (format=%s)",
+                     len(output_paths), output_dir, output_format)
         return output_paths
 
     def run_batch_from_buffer(
@@ -321,6 +358,7 @@ class InferenceService:
         gpu_batch_size: int = DEFAULT_GPU_BATCH_SIZE,
         use_amp: bool = True,
         compile_model: bool = True,
+        output_format: str = "prob_fp32",
     ) -> Dict[str, str]:
         """Run pixel-level inference on tiles from a raw binary buffer.
 
@@ -377,16 +415,14 @@ class InferenceService:
             gpu_batch_size=gpu_batch_size, use_amp=use_amp
         )
 
-        output_paths = {}
-        for tile_id, prob_map in zip(tile_ids, all_prob_maps):
-            output_path = os.path.join(output_dir, "%s.bin" % tile_id)
-            prob_map.astype(np.float32).tofile(output_path)
-            output_paths[tile_id] = output_path
+        output_paths = _write_pixel_outputs(
+            output_dir, tile_ids, all_prob_maps, output_format
+        )
 
         self._cleanup_after_inference()
 
-        logger.info("Pixel inference (binary) complete: %d tiles -> %s",
-                     len(output_paths), output_dir)
+        logger.info("Pixel inference (binary) complete: %d tiles -> %s (format=%s)",
+                     len(output_paths), output_dir, output_format)
         return output_paths
 
     def run_batch_files(

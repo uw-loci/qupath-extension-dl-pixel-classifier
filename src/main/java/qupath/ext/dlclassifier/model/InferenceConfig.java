@@ -82,6 +82,11 @@ public class InferenceConfig {
     // Overlay probability smoothing
     private final double overlaySmoothingSigma;
 
+    // Phase 3c: return uint8 class indices from Python instead of float32
+    // probability maps. Disables smoothing, multi-pass, and tile blending
+    // because those require floats.
+    private final boolean useCompactArgmaxOutput;
+
     private InferenceConfig(Builder builder) {
         this.tileSize = builder.tileSize;
         this.overlap = builder.overlap;
@@ -97,6 +102,7 @@ public class InferenceConfig {
         this.useTTA = builder.useTTA;
         this.multiPassAveraging = builder.multiPassAveraging;
         this.overlaySmoothingSigma = builder.overlaySmoothingSigma;
+        this.useCompactArgmaxOutput = builder.useCompactArgmaxOutput;
     }
 
     // Getters
@@ -187,6 +193,16 @@ public class InferenceConfig {
     }
 
     /**
+     * Returns true if inference should request uint8 argmax output from
+     * the Python side instead of float32 probability maps. When true,
+     * overlay smoothing, multi-pass averaging, and tile boundary blending
+     * are effectively disabled since they require floats.
+     */
+    public boolean isUseCompactArgmaxOutput() {
+        return useCompactArgmaxOutput;
+    }
+
+    /**
      * Returns the effective tile step size (tileSize - overlap).
      */
     public int getStepSize() {
@@ -216,6 +232,7 @@ public class InferenceConfig {
                 useTTA == that.useTTA &&
                 multiPassAveraging == that.multiPassAveraging &&
                 Double.compare(that.overlaySmoothingSigma, overlaySmoothingSigma) == 0 &&
+                useCompactArgmaxOutput == that.useCompactArgmaxOutput &&
                 blendMode == that.blendMode &&
                 outputType == that.outputType &&
                 objectType == that.objectType;
@@ -225,14 +242,16 @@ public class InferenceConfig {
     public int hashCode() {
         return Objects.hash(tileSize, overlap, overlapPercent, blendMode, outputType, objectType,
                 minObjectSizeMicrons, holeFillingMicrons, boundarySmoothing,
-                maxTilesInMemory, useGPU, useTTA, multiPassAveraging, overlaySmoothingSigma);
+                maxTilesInMemory, useGPU, useTTA, multiPassAveraging, overlaySmoothingSigma,
+                useCompactArgmaxOutput);
     }
 
     @Override
     public String toString() {
-        return String.format("InferenceConfig{tile=%d, overlap=%d (%.1f%%), output=%s, objectType=%s, blend=%s, tta=%b%s}",
+        return String.format("InferenceConfig{tile=%d, overlap=%d (%.1f%%), output=%s, objectType=%s, blend=%s, tta=%b%s%s}",
                 tileSize, overlap, overlapPercent, outputType, objectType, blendMode, useTTA,
-                multiPassAveraging ? ", multiPass" : "");
+                multiPassAveraging ? ", multiPass" : "",
+                useCompactArgmaxOutput ? ", argmax8" : "");
     }
 
     /**
@@ -350,6 +369,7 @@ public class InferenceConfig {
         private boolean useTTA = false;
         private boolean multiPassAveraging = false;
         private double overlaySmoothingSigma = 2.0;
+        private boolean useCompactArgmaxOutput = false;
 
         public Builder tileSize(int tileSize) {
             this.tileSize = tileSize;
@@ -497,6 +517,16 @@ public class InferenceConfig {
          */
         public Builder overlaySmoothingSigma(double sigma) {
             this.overlaySmoothingSigma = Math.max(0.0, sigma);
+            return this;
+        }
+
+        /**
+         * Enables the compact uint8 argmax output path (Phase 3c). When on,
+         * the Python side returns class indices directly; smoothing,
+         * multi-pass averaging, and tile blending become no-ops.
+         */
+        public Builder useCompactArgmaxOutput(boolean enabled) {
+            this.useCompactArgmaxOutput = enabled;
             return this;
         }
 

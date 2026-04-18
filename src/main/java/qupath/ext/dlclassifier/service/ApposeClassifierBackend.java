@@ -1061,6 +1061,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         if (inferenceConfig.isUseTTA()) {
                             inputs.put("use_tta", true);
                         }
+                        if (inferenceConfig.isUseCompactArgmaxOutput()) {
+                            inputs.put("output_format", "argmax_uint8");
+                        }
 
                         Task task = appose.runTask("inference_pixel", inputs);
 
@@ -1068,12 +1071,14 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         NDArray resultNd = (NDArray) task.outputs.get("probabilities");
 
                         try {
-                            // Read probability map from shared memory and save as .bin file
-                            // (matching the existing file-based contract for DLPixelClassifier)
+                            // Read result from shared memory and save as .bin file
+                            // (matching the existing file-based contract for
+                            // DLPixelClassifier). Phase 3c: content is either
+                            // (C,H,W) float32 probabilities or (H,W) uint8
+                            // argmax -- Java knows which via inferenceConfig.
                             Files.createDirectories(outputDir);
                             Path outputPath = outputDir.resolve(tileId + ".bin");
 
-                            // Result is in CHW order (C classes, H height, W width) as float32
                             ByteBuffer resultBuf = resultNd.buffer().order(ByteOrder.nativeOrder());
                             byte[] resultBytes = new byte[resultBuf.remaining()];
                             resultBuf.get(resultBytes);
@@ -1179,6 +1184,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     inputs.put("reflection_padding", reflectionPadding);
                     if (inferenceConfig.isUseTTA()) {
                         inputs.put("use_tta", true);
+                    }
+                    if (inferenceConfig.isUseCompactArgmaxOutput()) {
+                        inputs.put("output_format", "argmax_uint8");
                     }
 
                     Task task = appose.runTask("inference_pixel_batch", inputs);

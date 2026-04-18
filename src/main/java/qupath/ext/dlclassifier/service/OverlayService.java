@@ -191,12 +191,14 @@ public class OverlayService {
         double smoothingSigma = DLClassifierPreferences.getOverlaySmoothing();
         double overlapPercent = DLClassifierPreferences.getTileOverlapPercent();
         boolean multiPass = DLClassifierPreferences.isMultiPassAveraging();
+        boolean compactArgmax = DLClassifierPreferences.isUseCompactArgmaxOutput();
         InferenceConfig config = InferenceConfig.builder()
                 .tileSize(tileSize)
                 .overlapPercent(overlapPercent)
                 .blendMode(InferenceConfig.BlendMode.GAUSSIAN)
                 .overlaySmoothingSigma(smoothingSigma)
                 .multiPassAveraging(multiPass)
+                .useCompactArgmaxOutput(compactArgmax)
                 .outputType(InferenceConfig.OutputType.OVERLAY)
                 .build();
 
@@ -227,12 +229,14 @@ public class OverlayService {
         double smoothingSigma = DLClassifierPreferences.getOverlaySmoothing();
         double overlapPercent = DLClassifierPreferences.getTileOverlapPercent();
         boolean multiPass = DLClassifierPreferences.isMultiPassAveraging();
+        boolean compactArgmax = DLClassifierPreferences.isUseCompactArgmaxOutput();
         InferenceConfig newConfig = InferenceConfig.builder()
                 .tileSize(tileSize)
                 .overlapPercent(overlapPercent)
                 .blendMode(InferenceConfig.BlendMode.GAUSSIAN)
                 .overlaySmoothingSigma(smoothingSigma)
                 .multiPassAveraging(multiPass)
+                .useCompactArgmaxOutput(compactArgmax)
                 .outputType(InferenceConfig.OutputType.OVERLAY)
                 .build();
 

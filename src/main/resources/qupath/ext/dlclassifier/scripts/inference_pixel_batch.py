@@ -95,6 +95,10 @@ try:
     use_tta
 except NameError:
     use_tta = False
+try:
+    output_format
+except NameError:
+    output_format = "prob_fp32"
 
 num_tiles = len(tile_ids)
 os.makedirs(output_dir, exist_ok=True)
@@ -120,14 +124,22 @@ with inference_lock:
     )
     inference_service._cleanup_after_inference()
 
-# Save probability maps to disk (outside lock -- file I/O, no GPU)
+# Save probability maps to disk (outside lock -- file I/O, no GPU).
+# Phase 3c: when output_format == "argmax_uint8", write (H, W) uint8 class
+# indices instead of (C, H, W) float32 probabilities. Same .bin extension;
+# the Java side knows which reader to use based on the flag it passed in.
 output_paths = {}
 num_classes = 0
 for tile_id, prob_map in zip(tile_ids, all_prob_maps):
     num_classes = prob_map.shape[0]
     output_path = os.path.join(output_dir, "%s.bin" % tile_id)
-    prob_map.astype(np.float32).tofile(output_path)
+    if output_format == "argmax_uint8":
+        argmax_hw = np.argmax(prob_map, axis=0).astype(np.uint8)
+        argmax_hw.tofile(output_path)
+    else:
+        prob_map.astype(np.float32).tofile(output_path)
     output_paths[tile_id] = output_path
 
 task.outputs["output_paths"] = output_paths
 task.outputs["num_classes"] = num_classes
+task.outputs["output_format"] = output_format

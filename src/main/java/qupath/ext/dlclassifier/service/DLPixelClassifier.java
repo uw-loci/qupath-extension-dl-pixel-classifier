@@ -282,14 +282,19 @@ public class DLPixelClassifier implements PixelClassifier {
         // Cache-hit fast path: if this tile's prob map is already cached,
         // skip inference entirely. Blend with neighbors (on repaint, more
         // neighbors may be cached than on first render, improving boundaries).
-        float[][][] cachedProbMap = blendCache.getIfCached(request.getX(), request.getY());
-        if (cachedProbMap != null) {
-            int cachedH = cachedProbMap.length;
-            int cachedW = cachedProbMap[0].length;
-            logger.debug("Cache hit at ({}, {}), dims={}x{}, cache size={}",
-                    request.getX(), request.getY(), cachedW, cachedH, blendCache.size());
-            consecutiveErrors.set(0);
-            return createClassIndexImage(cachedProbMap, cachedW, cachedH);
+        // Skipped in compact-argmax mode since the blend cache stores floats
+        // that only a probability-map pipeline can produce.
+        boolean useArgmax = inferenceConfig.isUseCompactArgmaxOutput();
+        if (!useArgmax) {
+            float[][][] cachedProbMap = blendCache.getIfCached(request.getX(), request.getY());
+            if (cachedProbMap != null) {
+                int cachedH = cachedProbMap.length;
+                int cachedW = cachedProbMap[0].length;
+                logger.debug("Cache hit at ({}, {}), dims={}x{}, cache size={}",
+                        request.getX(), request.getY(), cachedW, cachedH, blendCache.size());
+                consecutiveErrors.set(0);
+                return createClassIndexImage(cachedProbMap, cachedW, cachedH);
+            }
         }
 
         ImageServer<BufferedImage> server = imageData.getServer();
@@ -437,9 +442,33 @@ public class DLPixelClassifier implements PixelClassifier {
                 throw new IOException("No output path for tile " + tileId);
             }
 
-            // Read probability map
             int tileWidth = tileImage.getWidth();
             int tileHeight = tileImage.getHeight();
+
+            // Phase 3c compact argmax path. Python returned (H, W) uint8
+            // class indices; render directly without smoothing, multi-pass,
+            // or tile blending (all of which require floats).
+            if (useArgmax) {
+                byte[][] argmaxMap = ClassifierClient.readArgmaxMap(
+                        Path.of(outputPath), tileHeight, tileWidth);
+                try {
+                    Files.deleteIfExists(Path.of(outputPath));
+                } catch (IOException e) {
+                    logger.debug("Failed to delete tile output: {}", outputPath);
+                }
+                byte[][] strideArgmax = cropArgmaxToStride(argmaxMap, request);
+                int strideW = strideArgmax[0].length;
+                int strideH = strideArgmax.length;
+                consecutiveErrors.set(0);
+                int completedArg = tilesCompleted.incrementAndGet();
+                if (completedArg <= 10 || completedArg % 50 == 0) {
+                    logger.info("Overlay argmax tile {} completed at ({}, {}), dims={}x{}",
+                            completedArg, request.getX(), request.getY(), strideW, strideH);
+                }
+                return createClassIndexImageFromArgmax(strideArgmax, strideW, strideH);
+            }
+
+            // Read probability map
             float[][][] probMap = ClassifierClient.readProbabilityMap(
                     Path.of(outputPath), result.numClasses(), tileHeight, tileWidth);
 
@@ -1005,6 +1034,55 @@ public class DLPixelClassifier implements PixelClassifier {
      * the expanded tile. At image edges where expansion was clipped, the offset
      * is reduced accordingly.
      */
+    /**
+     * Crops a uint8 argmax map from expanded dimensions down to stride size.
+     * Mirror of {@link #cropToStride} for the Phase 3c fast path.
+     */
+    private byte[][] cropArgmaxToStride(byte[][] argmaxMap, RegionRequest request) {
+        int strideW = (int) (request.getWidth() / request.getDownsample());
+        int strideH = (int) (request.getHeight() / request.getDownsample());
+        int expandedW = argmaxMap[0].length;
+        int expandedH = argmaxMap.length;
+
+        if (expandedW <= strideW && expandedH <= strideH) {
+            return argmaxMap;
+        }
+
+        double ds = request.getDownsample();
+        int totalPad = inputPadding + contextInferencePad;
+        int padFullRes = (int) (totalPad * ds);
+        int expandedX = Math.max(0, request.getX() - padFullRes);
+        int expandedY = Math.max(0, request.getY() - padFullRes);
+        int offsetX = (int) ((request.getX() - expandedX) / ds);
+        int offsetY = (int) ((request.getY() - expandedY) / ds);
+
+        int cropW = Math.min(strideW, expandedW - offsetX);
+        int cropH = Math.min(strideH, expandedH - offsetY);
+
+        byte[][] cropped = new byte[cropH][cropW];
+        for (int y = 0; y < cropH; y++) {
+            System.arraycopy(argmaxMap[y + offsetY], offsetX, cropped[y], 0, cropW);
+        }
+        return cropped;
+    }
+
+    /**
+     * Builds the indexed BufferedImage from a byte[][] class-index map.
+     * Phase 3c fast path: skips smoothing and argmax since Python already
+     * did them.
+     */
+    private BufferedImage createClassIndexImageFromArgmax(byte[][] argmaxMap, int width, int height) {
+        BufferedImage indexed = new BufferedImage(width, height,
+                BufferedImage.TYPE_BYTE_INDEXED, colorModel);
+        var raster = indexed.getRaster();
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                raster.setSample(x, y, 0, argmaxMap[y][x] & 0xFF);
+            }
+        }
+        return indexed;
+    }
+
     private float[][][] cropToStride(float[][][] probMap, RegionRequest request) {
         int strideW = (int) (request.getWidth() / request.getDownsample());
         int strideH = (int) (request.getHeight() / request.getDownsample());

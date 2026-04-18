@@ -86,6 +86,34 @@ public class ClassifierClient {
         return result;
     }
 
+    /**
+     * Reads a compact uint8 argmax map from a raw binary file.
+     * <p>
+     * This is the Phase 3c fast path: Python returns class indices directly
+     * instead of float32 probability maps. Used only when
+     * {@code InferenceConfig.isUseCompactArgmaxOutput()} is true.
+     *
+     * @param filePath path to the binary file (H*W bytes, uint8)
+     * @param height   tile height
+     * @param width    tile width
+     * @return class-index map with shape [height][width]
+     * @throws IOException if reading fails or size mismatches
+     */
+    public static byte[][] readArgmaxMap(Path filePath, int height, int width) throws IOException {
+        byte[] bytes = java.nio.file.Files.readAllBytes(filePath);
+        long expectedSize = (long) height * width;
+        if (bytes.length != expectedSize) {
+            throw new IOException(String.format(
+                    "Argmax map size mismatch for %s: expected %d bytes (H=%d, W=%d) but got %d bytes",
+                    filePath.getFileName(), expectedSize, height, width, bytes.length));
+        }
+        byte[][] result = new byte[height][width];
+        for (int y = 0; y < height; y++) {
+            System.arraycopy(bytes, y * width, result[y], 0, width);
+        }
+        return result;
+    }
+
     // ==================== Data Classes ====================
 
     /**

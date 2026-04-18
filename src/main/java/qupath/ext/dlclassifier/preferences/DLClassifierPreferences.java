@@ -226,6 +226,13 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty multiPassAveraging = PathPrefs.createPersistentPreference(
             "dlclassifier.multiPassAveraging", false);
 
+    // Phase 3c: compact uint8 argmax output instead of float32 probability maps.
+    // When on, Python inference returns class indices directly (20x smaller
+    // payload, no softmax). Disables overlay smoothing, multi-pass averaging,
+    // and tile blending since those operate on floats.
+    private static final BooleanProperty useCompactArgmaxOutput = PathPrefs.createPersistentPreference(
+            "dlclassifier.useCompactArgmaxOutput", false);
+
     // Preload training patches into RAM to skip per-batch disk I/O and
     // TIFF decode. "auto" = enable when the dataset fits in ~25% of free
     // RAM; "on" = always enable (may exhaust memory on huge datasets);
@@ -325,6 +332,18 @@ public final class DLClassifierPreferences {
                         "Recommended for context-scale models where seams are visible. " +
                         "Applies to both the overlay and Apply Classifier. " +
                         "~4x slower but produces seamless results.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(useCompactArgmaxOutput, Boolean.class)
+                .name("Overlay Fast Argmax (uint8)")
+                .category(CATEGORY)
+                .description("Return class indices directly from inference instead of " +
+                        "full probability maps. ~20x smaller payload and slightly " +
+                        "faster per tile. " +
+                        "Trade-off: disables overlay smoothing, multi-pass averaging, " +
+                        "and tile boundary blending (these all require float " +
+                        "probabilities). Leave off for highest-quality overlays; " +
+                        "turn on for quick previews or lower memory use.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(defaultInMemoryDataset, String.class)
@@ -1043,6 +1062,20 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty multiPassAveragingProperty() {
         return multiPassAveraging;
+    }
+
+    // ==================== Compact Argmax Output (Phase 3c) ====================
+
+    public static boolean isUseCompactArgmaxOutput() {
+        return useCompactArgmaxOutput.get();
+    }
+
+    public static void setUseCompactArgmaxOutput(boolean enabled) {
+        useCompactArgmaxOutput.set(enabled);
+    }
+
+    public static BooleanProperty useCompactArgmaxOutputProperty() {
+        return useCompactArgmaxOutput;
     }
 
     /**
