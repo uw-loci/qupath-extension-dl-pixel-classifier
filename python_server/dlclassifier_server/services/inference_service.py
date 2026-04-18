@@ -26,6 +26,11 @@ from PIL import Image
 from .gpu_manager import GPUManager, get_gpu_manager
 from ..utils.normalization import normalize as normalize_image
 from ..utils.batchrenorm import replace_bn_with_batchrenorm
+from ..utils.spatial import (
+    get_spatial_divisor,
+    pad_to_multiple,
+    crop_to_original,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -501,6 +506,14 @@ class InferenceService:
                     batch_tensor = batch_tensor.contiguous(
                         memory_format=torch.channels_last
                     )
+                # Per-architecture spatial auto-pad. See
+                # claude-reports/2026-04-17_input-size-divisibility.md.
+                divisor = int(
+                    getattr(model, "_dlclassifier_spatial_divisor", 1)
+                )
+                batch_tensor, pad_h, pad_w = pad_to_multiple(
+                    batch_tensor, divisor
+                )
                 with torch.no_grad():
                     if use_amp and self._device_str == "cuda":
                         # Prefer BF16 on Ampere+ GPUs, fall back to FP16
@@ -511,6 +524,7 @@ class InferenceService:
                             outputs = model(batch_tensor)
                     else:
                         outputs = model(batch_tensor)
+                    outputs = crop_to_original(outputs, pad_h, pad_w)
                     batch_logits = outputs.cpu().float().numpy()
 
             # Softmax per-tile and collect
@@ -910,6 +924,19 @@ class InferenceService:
             # silently undo the NHWC propagation).
             if self._apply_channels_last(model, model_type, arch):
                 self._channels_last_models.add(model_path)
+
+            # Stash the architecture's spatial divisor on the model so
+            # _infer_batch_spatial can auto-pad inputs. See
+            # claude-reports/2026-04-17_input-size-divisibility.md.
+            try:
+                setattr(
+                    model,
+                    "_dlclassifier_spatial_divisor",
+                    int(get_spatial_divisor(model_type, arch)),
+                )
+            except Exception as e:
+                logger.debug("spatial divisor tagging failed: %s", e)
+                setattr(model, "_dlclassifier_spatial_divisor", 32)
 
             self._model_cache[model_path] = ("pytorch", model)
 

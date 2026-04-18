@@ -37,6 +37,12 @@ from ..utils.batchrenorm import (
     replace_bn_with_batchrenorm, set_batchrenorm_limits
 )
 
+from ..utils.spatial import (
+    get_spatial_divisor,
+    pad_to_multiple,
+    crop_to_original,
+)
+
 logger = logging.getLogger(__name__)
 
 # Try to import albumentations for augmentation
@@ -1171,6 +1177,18 @@ class TrainingService:
 
         model = model.to(self.device)
 
+        # Per-architecture spatial divisibility requirement. See
+        # claude-reports/2026-04-17_input-size-divisibility.md. The training
+        # + validation + LR-finder forward passes below pad inputs up to a
+        # multiple of this value and crop the output back, so tile+context
+        # sizes that are not model-aligned still train.
+        spatial_divisor = get_spatial_divisor(model_type, architecture)
+        logger.info(
+            "Spatial auto-pad divisor for %s: %d (tile+context will be "
+            "reflection-padded to the next multiple if necessary)",
+            model_type, spatial_divisor,
+        )
+
         # torch.compile (opt-in, experimental).  Gated on Linux + CUDA +
         # Triton availability; silently falls back to eager on any failure.
         # BRN's in-place buffer updates are the known weak spot for compile
@@ -1750,7 +1768,8 @@ class TrainingService:
             _report_setup("finding_learning_rate")
             try:
                 suggested_lr, finder_lrs, finder_losses = self.find_learning_rate(
-                    model, train_loader, criterion)
+                    model, train_loader, criterion,
+                    spatial_divisor=spatial_divisor)
                 # Guard rails: reject suggestions that are too small or too large.
                 # Cap at both an absolute ceiling (0.01) and a relative ceiling
                 # (10x the user's specified lr).  The relative cap prevents the
@@ -2347,9 +2366,15 @@ class TrainingService:
                     # (nearest-interpolated) safely castable to long.
                     masks = masks_aug.squeeze(1).round().long()
 
+                # Per-architecture spatial auto-padding. See
+                # claude-reports/2026-04-17_input-size-divisibility.md -- tile
+                # + context padding can produce sizes the model cannot pool.
+                images_padded, pad_h, pad_w = pad_to_multiple(images, spatial_divisor)
+
                 if use_mixed_precision:
                     with torch.amp.autocast("cuda", dtype=amp_dtype):
-                        outputs = model(images)
+                        outputs = model(images_padded)
+                        outputs = crop_to_original(outputs, pad_h, pad_w)
                         loss = criterion(outputs, masks)
                     # Capture loss for logging BEFORE backward.
                     # When loss is already float32 (CE promotes under
@@ -2365,7 +2390,8 @@ class TrainingService:
                         # BF16 path: no scaler needed
                         scaled_loss.backward()
                 else:
-                    outputs = model(images)
+                    outputs = model(images_padded)
+                    outputs = crop_to_original(outputs, pad_h, pad_w)
                     loss = criterion(outputs, masks)
                     train_loss += loss.detach().item()
                     scaled_loss = loss / accumulation_steps
@@ -2488,15 +2514,23 @@ class TrainingService:
                     images = images.to(self.device)
                     masks = masks.to(self.device)
 
+                    # Match the training path's spatial auto-pad. See
+                    # claude-reports/2026-04-17_input-size-divisibility.md.
+                    images_padded, pad_h, pad_w = pad_to_multiple(
+                        images, spatial_divisor
+                    )
+
                     if use_mixed_precision:
                         with torch.amp.autocast("cuda", dtype=amp_dtype):
-                            outputs = model(images)
+                            outputs = model(images_padded)
+                        outputs = crop_to_original(outputs, pad_h, pad_w)
                         # Compute val loss in FP32 to avoid BF16 overflow.
                         # BF16 logits from confident pretrained models can
                         # overflow exp() in cross-entropy, producing inf loss.
                         loss = criterion(outputs.float(), masks)
                     else:
-                        outputs = model(images)
+                        outputs = model(images_padded)
+                        outputs = crop_to_original(outputs, pad_h, pad_w)
                         loss = criterion(outputs, masks)
                     val_loss += loss.item()
 
@@ -3084,7 +3118,8 @@ class TrainingService:
         return desc
 
     def find_learning_rate(self, model, train_loader, criterion,
-                           start_lr=1e-7, end_lr=10, num_iter=100):
+                           start_lr=1e-7, end_lr=10, num_iter=100,
+                           spatial_divisor: int = 1):
         """Fast.ai-style LR range test.
 
         Exponentially increases LR from start_lr to end_lr over num_iter steps,
@@ -3132,7 +3167,13 @@ class TrainingService:
             masks = masks.to(self.device)
 
             optimizer.zero_grad()
-            outputs = model(images)
+            # Same spatial auto-pad as the main training loop. See
+            # claude-reports/2026-04-17_input-size-divisibility.md.
+            images_padded, pad_h, pad_w = pad_to_multiple(
+                images, spatial_divisor
+            )
+            outputs = model(images_padded)
+            outputs = crop_to_original(outputs, pad_h, pad_w)
             loss = criterion(outputs, masks)
 
             # Exponential smoothing with bias correction
