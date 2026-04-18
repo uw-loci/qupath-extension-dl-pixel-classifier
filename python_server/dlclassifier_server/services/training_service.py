@@ -1274,12 +1274,14 @@ class TrainingService:
         # training_params["gpu_augmentation"], auto-disabled when kornia is
         # unavailable or when the device is not CUDA.  When active, CPU-side
         # albumentations is skipped in the dataset to avoid double-augment.
+        # self.device is a STRING in TrainingService (set in __init__), unlike
+        # InferenceService which uses a torch.device instance.
         use_gpu_aug = bool(training_params.get("gpu_augmentation", False))
+        device_str = self.device if isinstance(self.device, str) else self.device.type
         gpu_augment_on_cuda = (
             use_gpu_aug
             and KORNIA_AVAILABLE
-            and isinstance(self.device, torch.device)
-            and self.device.type == "cuda"
+            and device_str == "cuda"
         )
         if use_gpu_aug and not KORNIA_AVAILABLE:
             logger.warning(
@@ -1533,10 +1535,14 @@ class TrainingService:
         # Fused AdamW: single CUDA kernel for the param update, saves 2-5 ms/step
         # on tiny models. Safe since PyTorch 2.0 but requires all params on the
         # same CUDA device. Opt-out via training_params["fused_optimizer"]=False.
+        # self.device is a string here (set in __init__), not a torch.device.
+        _fused_device_str = (
+            self.device if isinstance(self.device, str) else self.device.type
+        )
         use_fused = (
             training_params.get("fused_optimizer", True)
             and torch.cuda.is_available()
-            and self.device.type == "cuda"
+            and _fused_device_str == "cuda"
         )
         fused_kwargs = {"fused": True} if use_fused else {}
 
@@ -3415,12 +3421,15 @@ class TrainingService:
                         "(Windows/macOS: Triton support is incomplete); "
                         "using eager mode.")
             return model
-        if not (isinstance(self.device, torch.device)
-                and self.device.type == "cuda"):
+        # self.device is a string in TrainingService.
+        _compile_device_str = (
+            self.device if isinstance(self.device, str) else self.device.type
+        )
+        if _compile_device_str != "cuda":
             logger.info("torch.compile requires CUDA; device=%s", self.device)
             return model
         try:
-            cap = torch.cuda.get_device_capability(self.device)
+            cap = torch.cuda.get_device_capability()
             if cap[0] < 7:
                 logger.info(
                     "torch.compile skipped: GPU capability %d.%d < 7.0 "
