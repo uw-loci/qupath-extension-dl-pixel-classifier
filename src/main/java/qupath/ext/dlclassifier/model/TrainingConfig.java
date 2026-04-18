@@ -71,6 +71,10 @@ public class TrainingConfig {
     private final String earlyStoppingMetric;
     private final int earlyStoppingPatience;
     private final boolean mixedPrecision;
+    // Fused AdamW: single-kernel param update on CUDA, ~2-5 ms/step saved for tiny models.
+    private final boolean fusedOptimizer;
+    // When false, skip the LR Finder presweep and use a heuristic max_lr.
+    private final boolean useLrFinder;
 
     // Focus class for best model selection and early stopping
     private final String focusClass;       // null = disabled (use earlyStoppingMetric as-is)
@@ -145,6 +149,8 @@ public class TrainingConfig {
         this.earlyStoppingMetric = builder.earlyStoppingMetric;
         this.earlyStoppingPatience = builder.earlyStoppingPatience;
         this.mixedPrecision = builder.mixedPrecision;
+        this.fusedOptimizer = builder.fusedOptimizer;
+        this.useLrFinder = builder.useLrFinder;
         this.focusClass = builder.focusClass;
         this.focusClassMinIoU = builder.focusClassMinIoU;
         this.intensityAugMode = builder.intensityAugMode;
@@ -415,6 +421,14 @@ public class TrainingConfig {
      */
     public boolean isMixedPrecision() {
         return mixedPrecision;
+    }
+
+    public boolean isFusedOptimizer() {
+        return fusedOptimizer;
+    }
+
+    public boolean isUseLrFinder() {
+        return useLrFinder;
     }
 
     /**
@@ -765,6 +779,8 @@ public class TrainingConfig {
         private String earlyStoppingMetric = "mean_iou";
         private int earlyStoppingPatience = 15;
         private boolean mixedPrecision = true;
+        private boolean fusedOptimizer = true;
+        private boolean useLrFinder = true;
         private String focusClass = null;
         private double focusClassMinIoU = 0.5;
         private String intensityAugMode = "none";
@@ -823,6 +839,8 @@ public class TrainingConfig {
             this.earlyStoppingMetric = config.earlyStoppingMetric;
             this.earlyStoppingPatience = config.earlyStoppingPatience;
             this.mixedPrecision = config.mixedPrecision;
+            this.fusedOptimizer = config.fusedOptimizer;
+            this.useLrFinder = config.useLrFinder;
             this.focusClass = config.focusClass;
             this.focusClassMinIoU = config.focusClassMinIoU;
             this.intensityAugMode = config.intensityAugMode;
@@ -1135,6 +1153,16 @@ public class TrainingConfig {
          *
          * @param mixedPrecision true to enable mixed precision on CUDA devices
          */
+        public Builder fusedOptimizer(boolean fusedOptimizer) {
+            this.fusedOptimizer = fusedOptimizer;
+            return this;
+        }
+
+        public Builder useLrFinder(boolean useLrFinder) {
+            this.useLrFinder = useLrFinder;
+            return this;
+        }
+
         public Builder mixedPrecision(boolean mixedPrecision) {
             this.mixedPrecision = mixedPrecision;
             return this;

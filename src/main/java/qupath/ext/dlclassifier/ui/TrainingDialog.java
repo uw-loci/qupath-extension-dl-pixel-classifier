@@ -219,6 +219,8 @@ public class TrainingDialog {
         private CheckBox mixedPrecisionCheck;
         private Spinner<Integer> gradientAccumulationSpinner;
         private CheckBox progressiveResizeCheck;
+        private CheckBox fusedOptimizerCheck;
+        private CheckBox useLrFinderCheck;
 
         // Focus class
         private ComboBox<String> focusClassCombo;
@@ -1961,6 +1963,10 @@ public class TrainingDialog {
                     .earlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(earlyStoppingMetricCombo.getValue()))
                     .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
+                    .fusedOptimizer(fusedOptimizerCheck != null
+                            ? fusedOptimizerCheck.isSelected() : true)
+                    .useLrFinder(useLrFinderCheck != null
+                            ? useLrFinderCheck.isSelected() : true)
                     .gradientAccumulationSteps(gradientAccumulationSpinner.getValue())
                     .progressiveResize(progressiveResizeCheck.isSelected())
                     .focusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()))
@@ -3221,6 +3227,34 @@ public class TrainingDialog {
                     "plenty of annotated data.");
 
             grid.add(progressiveResizeCheck, 0, row, 2, 1);
+            row++;
+
+            // Fused optimizer: one-kernel AdamW update, saves 2-5 ms/step on tiny models.
+            fusedOptimizerCheck = new CheckBox("Fused optimizer (CUDA only)");
+            fusedOptimizerCheck.setSelected(true);
+            TooltipHelper.install(fusedOptimizerCheck,
+                    "Use PyTorch's fused AdamW implementation on NVIDIA GPUs.\n\n" +
+                    "Benefits:\n" +
+                    "- Single CUDA kernel for the full param update (2-5 ms/step saved)\n" +
+                    "- No accuracy change; same math as the standard implementation\n\n" +
+                    "Safe to leave enabled. Ignored on CPU, MPS, and older PyTorch (<2.0).\n" +
+                    "Disable only if you hit a CUDA kernel error that mentions 'fused'.");
+            grid.add(fusedOptimizerCheck, 0, row, 2, 1);
+            row++;
+
+            // Auto-find learning rate (LR Finder presweep toggle)
+            useLrFinderCheck = new CheckBox("Auto-find learning rate (LR Finder)");
+            useLrFinderCheck.setSelected(true);
+            TooltipHelper.install(useLrFinderCheck,
+                    "Run a 100-iteration LR Finder presweep before training to pick\n" +
+                    "a good OneCycleLR peak learning rate.\n\n" +
+                    "When to disable:\n" +
+                    "- Training a tiny model where the presweep is a big fraction of\n" +
+                    "  total training time\n" +
+                    "- You already know a good learning rate for this task\n\n" +
+                    "When disabled, max_lr = base_lr * sqrt(batch_size / 8) is used.\n" +
+                    "Only affects training when the scheduler is OneCycleLR.");
+            grid.add(useLrFinderCheck, 0, row, 2, 1);
 
             // Update the basic-mode early stopping status label when these controls change,
             // and grey out the patience spinner when early stopping is disabled.
@@ -4942,7 +4976,17 @@ public class TrainingDialog {
                         ? parseContextScale(contextScaleCombo.getValue()) : 1;
 
                 double modelMb = estimateModelSizeMb(modelType, backbone);
-                double actMultiplier = "muvit".equals(modelType) ? 10.0 : 4.0;
+                double actMultiplier;
+                if ("muvit".equals(modelType)) {
+                    actMultiplier = 10.0;
+                } else if ("tiny-unet".equals(modelType)) {
+                    // Tiny UNet activations are driven by base channels, not param
+                    // count -- param-proportional multiplier under-estimates, so bump
+                    // this up to give a realistic ~1/50 of a ResNet-UNet estimate.
+                    actMultiplier = 20.0;
+                } else {
+                    actMultiplier = 4.0;
+                }
                 if (mixedPrec) actMultiplier *= 0.6;
 
                 // Context scale enlarges tiles via padding AND doubles channels.
@@ -5005,6 +5049,17 @@ public class TrainingDialog {
          */
         private static double estimateModelSizeMb(String modelType, String backbone) {
             if ("muvit".equals(modelType)) return 140.0;
+            if ("tiny-unet".equals(modelType)) {
+                // Per-preset parameter footprint (weights + grads + Adam state ~4x).
+                if (backbone == null) return 1.5;
+                return switch (backbone) {
+                    case "nano-8x3"     -> 0.4;
+                    case "compact-16x3" -> 0.8;
+                    case "tiny-16x4"    -> 1.5;
+                    case "small-24x4"   -> 3.5;
+                    default             -> 1.5;
+                };
+            }
             if (backbone == null) return 30.0;
             // Approximate parameter counts (MB) for common backbones in a UNet decoder.
             // Values include both encoder and decoder parameters.

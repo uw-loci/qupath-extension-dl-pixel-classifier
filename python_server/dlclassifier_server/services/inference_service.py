@@ -800,6 +800,21 @@ class InferenceService:
                     num_channels=num_channels,
                     num_classes=num_classes,
                 )
+            elif model_type == "tiny-unet":
+                from ..models.tiny_unet import TinyUNet
+                model = TinyUNet(
+                    in_channels=num_channels,
+                    n_classes=num_classes,
+                    base=int(arch.get("base", 16)),
+                    depth=int(arch.get("depth", 4)),
+                    norm=str(arch.get("norm", "brn")),
+                )
+                logger.info(
+                    "Reconstructed Tiny UNet (base=%d, depth=%d, norm=%s)",
+                    int(arch.get("base", 16)),
+                    int(arch.get("depth", 4)),
+                    arch.get("norm", "brn"),
+                )
             else:
                 model_cls = model_map.get(model_type, smp.Unet)
                 model = model_cls(

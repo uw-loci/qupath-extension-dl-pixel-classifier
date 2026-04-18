@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.classifier.handlers.CustomONNXHandler;
 import qupath.ext.dlclassifier.classifier.handlers.MuViTHandler;
+import qupath.ext.dlclassifier.classifier.handlers.TinyUNetHandler;
 import qupath.ext.dlclassifier.classifier.handlers.UNetHandler;
 
 import java.util.Collection;
@@ -53,6 +54,7 @@ public final class ClassifierRegistry {
     static {
         logger.info("Initializing ClassifierRegistry with default handlers");
         registerHandler(new UNetHandler());
+        registerHandler(new TinyUNetHandler());
         registerHandler(new MuViTHandler());
         registerHandler(new CustomONNXHandler());
         logger.info("ClassifierRegistry initialization complete. Registered {} handlers", HANDLERS.size());

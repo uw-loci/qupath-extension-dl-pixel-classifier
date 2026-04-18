@@ -1375,25 +1375,38 @@ class TrainingService:
             model, learning_rate, discriminative_lr_ratio
         ) if (use_pretrained or has_frozen) else None
 
+        # Fused AdamW: single CUDA kernel for the param update, saves 2-5 ms/step
+        # on tiny models. Safe since PyTorch 2.0 but requires all params on the
+        # same CUDA device. Opt-out via training_params["fused_optimizer"]=False.
+        use_fused = (
+            training_params.get("fused_optimizer", True)
+            and torch.cuda.is_available()
+            and self.device.type == "cuda"
+        )
+        fused_kwargs = {"fused": True} if use_fused else {}
+
         if param_groups and len(param_groups) > 1:
             optimizer = torch.optim.AdamW(
                 param_groups,
                 betas=(0.9, 0.99), eps=1e-5,
-                weight_decay=weight_decay
+                weight_decay=weight_decay,
+                **fused_kwargs,
             )
             lr_parts = " ".join(
                 f"{g.get('group_name', '?')}={g['lr']:.6f}" for g in param_groups
             )
-            logger.info(f"Using AdamW with discriminative LRs (ratio={discriminative_lr_ratio}): {lr_parts}")
+            logger.info(f"Using AdamW with discriminative LRs (ratio={discriminative_lr_ratio}, "
+                       f"fused={use_fused}): {lr_parts}")
         else:
             optimizer = torch.optim.AdamW(
                 trainable_params,
                 lr=learning_rate,
                 betas=(0.9, 0.99), eps=1e-5,
-                weight_decay=weight_decay
+                weight_decay=weight_decay,
+                **fused_kwargs,
             )
             logger.info(f"Using AdamW optimizer (lr={learning_rate}, wd={weight_decay}, "
-                       f"betas=(0.9, 0.99), eps=1e-5)")
+                       f"betas=(0.9, 0.99), eps=1e-5, fused={use_fused})")
 
         # Scheduler setup is deferred until after criterion is created (LR finder needs it)
         epochs = training_params.get("epochs", 50)
@@ -1552,8 +1565,27 @@ class TrainingService:
         scheduler_config["accumulation_steps"] = accumulation_steps
         scheduler_type = training_params.get("scheduler", "onecycle")
 
-        # LR Finder: auto-run before OneCycleLR on new training (not checkpoint resume)
-        if scheduler_type == "onecycle" and checkpoint_path is None:
+        # LR Finder: auto-run before OneCycleLR on new training (not checkpoint resume).
+        # Can be skipped via training_params["use_lr_finder"]=False, in which case
+        # we use a heuristic max_lr = base_lr * sqrt(batch_size / 8) so OneCycleLR
+        # has a reasonable peak.  Saves ~10s of presweep time for tiny models.
+        use_lr_finder = training_params.get("use_lr_finder", True)
+        if (scheduler_type == "onecycle" and checkpoint_path is None
+                and not use_lr_finder):
+            import math as _math
+            heuristic_lr = learning_rate * _math.sqrt(
+                max(1, training_params.get("batch_size", 8)) / 8.0
+            )
+            scheduler_config["max_lr"] = heuristic_lr
+            logger.info(
+                "LR Finder disabled, using heuristic max_lr=%.6f (base_lr=%.6f, "
+                "batch_size=%d)",
+                heuristic_lr, learning_rate,
+                training_params.get("batch_size", 8),
+            )
+
+        if (scheduler_type == "onecycle" and checkpoint_path is None
+                and use_lr_finder):
             _report_setup("finding_learning_rate")
             try:
                 suggested_lr, finder_lrs, finder_losses = self.find_learning_rate(
@@ -3219,6 +3251,26 @@ class TrainingService:
                 "linknet": smp.Linknet,
                 "pan": smp.PAN,
             }
+
+            # Tiny UNet: hand-rolled depthwise-separable U-Net for fast
+            # training on simple 2-5 class tasks. Defaults to BatchRenorm.
+            if model_type == "tiny-unet":
+                from ..models.tiny_unet import TinyUNet
+                model = TinyUNet(
+                    in_channels=num_channels,
+                    n_classes=num_classes,
+                    base=int(architecture.get("base", 16)),
+                    depth=int(architecture.get("depth", 4)),
+                    norm=str(architecture.get("norm", "brn")),
+                )
+                logger.info(
+                    "Created Tiny UNet model (preset=%s, base=%d, depth=%d, norm=%s)",
+                    architecture.get("backbone", "tiny-16x4"),
+                    int(architecture.get("base", 16)),
+                    int(architecture.get("depth", 4)),
+                    architecture.get("norm", "brn"),
+                )
+                return model
 
             # MuViT transformer: delegate to dedicated factory
             if model_type == "muvit":

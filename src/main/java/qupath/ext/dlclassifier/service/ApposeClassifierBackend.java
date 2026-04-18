@@ -302,6 +302,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         trainingParams.put("early_stopping_metric",
                 earlyStoppingEnabled ? trainingConfig.getEarlyStoppingMetric() : "mean_iou");
         trainingParams.put("mixed_precision", trainingConfig.isMixedPrecision());
+        trainingParams.put("fused_optimizer", trainingConfig.isFusedOptimizer());
+        trainingParams.put("use_lr_finder", trainingConfig.isUseLrFinder());
         if (trainingConfig.getGradientAccumulationSteps() > 1) {
             trainingParams.put("gradient_accumulation_steps", trainingConfig.getGradientAccumulationSteps());
         }
