@@ -3286,9 +3286,20 @@ public class TrainingDialog {
             grid.add(gpuAugmentationCheck, 0, row, 2, 1);
             row++;
 
-            // torch.compile at training (experimental, Linux+CUDA only)
-            useTorchCompileCheck = new CheckBox("torch.compile (experimental, Linux+CUDA)");
+            // torch.compile at training (experimental, Linux+CUDA only).
+            // Disable the checkbox on non-Linux hosts: triton is the Inductor
+            // backend for GPU kernel generation and does not install cleanly on
+            // Windows or macOS today, so even if the user toggled it the Python
+            // side would log "torch.compile is Linux-gated" and fall back. Grey
+            // the box + append a hint so that gate is visible in the UI.
+            boolean isLinux = System.getProperty("os.name", "")
+                    .toLowerCase().contains("linux");
+            String compileLabel = isLinux
+                    ? "torch.compile (experimental, Linux+CUDA)"
+                    : "torch.compile (Linux-only, disabled on this OS)";
+            useTorchCompileCheck = new CheckBox(compileLabel);
             useTorchCompileCheck.setSelected(false);
+            useTorchCompileCheck.setDisable(!isLinux);
             TooltipHelper.installWithLink(useTorchCompileCheck,
                     "Wrap the training model with torch.compile(mode=\"reduce-overhead\")\n" +
                     "for kernel fusion and CUDA graph capture. On tiny models this is\n" +
@@ -5026,31 +5037,47 @@ public class TrainingDialog {
                         ? parseContextScale(contextScaleCombo.getValue()) : 1;
 
                 double modelMb = estimateModelSizeMb(modelType, backbone);
-                double actMultiplier;
-                if ("muvit".equals(modelType)) {
-                    actMultiplier = 10.0;
-                } else if ("tiny-unet".equals(modelType)) {
-                    // Tiny UNet activations are driven by base channels, not param
-                    // count -- param-proportional multiplier under-estimates, so bump
-                    // this up to give a realistic ~1/50 of a ResNet-UNet estimate.
-                    actMultiplier = 20.0;
-                } else {
-                    actMultiplier = 4.0;
-                }
-                if (mixedPrec) actMultiplier *= 0.6;
 
                 // Context scale enlarges tiles via padding AND doubles channels.
-                // Padding adds tileSize/contextScale pixels per side, so actual
-                // tile = tileSize + 2*(tileSize/contextScale).  The doubled
-                // channels add ~10% more activation memory on top of the area.
                 int effectiveTile = tileSize;
                 if (contextScale > 1) {
                     effectiveTile = tileSize + 2 * (tileSize / contextScale);
-                    actMultiplier *= 1.1;
                 }
 
-                double areaScale = (double)(effectiveTile * effectiveTile) / (256.0 * 256.0);
-                double estimatedMb = modelMb * (1 + 3 + actMultiplier * areaScale * batchSize);
+                double estimatedMb;
+                if ("tiny-unet".equals(modelType)) {
+                    // TinyUNet activations are driven by base channels x spatial
+                    // area x batch -- NOT by param count.  Every encoder/decoder
+                    // stage stores its feature map for backward, and BRN adds
+                    // three (x_hat, weight-broadcast, bias-broadcast) per layer,
+                    // so the integer factor is large.  Empirical at B=64,
+                    // tile=512, base=16, bf16: ~45 GB OOM on a 24 GB 3090 ->
+                    // peak usage about 100x * base * H * W * bytes * batch.
+                    // See agent B1/B2 reports and
+                    // claude-reports/2026-04-17_input-size-divisibility.md.
+                    int base = tinyUnetBase(backbone);
+                    double bytesPerElem = mixedPrec ? 2.0 : 4.0;
+                    double actBytes = (double) batchSize
+                            * base
+                            * effectiveTile * effectiveTile
+                            * bytesPerElem
+                            * 100.0;
+                    // Model + gradients + Adam state: tiny (< 20 MB even for
+                    // small-24x4) but include for completeness.
+                    estimatedMb = actBytes / (1024.0 * 1024.0) + 5.0 * modelMb;
+                } else {
+                    // Pretrained encoders (UNet / Fast Pretrained / MuViT).
+                    // Here model weights dominate deeper in the encoder, so a
+                    // param-proportional multiplier is a reasonable first cut.
+                    double actMultiplier = "muvit".equals(modelType) ? 10.0 : 4.0;
+                    if (mixedPrec) actMultiplier *= 0.6;
+                    if (contextScale > 1) actMultiplier *= 1.1;
+                    double areaScale = (double)(effectiveTile * effectiveTile)
+                            / (256.0 * 256.0);
+                    estimatedMb = modelMb
+                            * (1 + 3 + actMultiplier * areaScale * batchSize);
+                }
+
                 double budgetMb = gpuTotalMb * 0.85;
 
                 double pct = (estimatedMb / gpuTotalMb) * 100;
@@ -5064,10 +5091,13 @@ public class TrainingDialog {
                     // Exceeds safe budget -- red warning
                     vramEstimateLabel.setStyle(
                             "-fx-font-size: 11px; -fx-text-fill: #CC0000; -fx-font-weight: bold;");
-                    // Find max batch that fits
+                    // Find max batch that fits by linearly scaling the
+                    // activation term.  Both estimators above are linear in
+                    // batchSize so divide the "above budget" excess out.
+                    double perBatchMb = (estimatedMb - 5.0 * modelMb) / batchSize;
                     int maxBatch = 0;
                     for (int b = batchSize; b >= 1; b--) {
-                        double est = modelMb * (1 + 3 + actMultiplier * areaScale * b);
+                        double est = 5.0 * modelMb + perBatchMb * b;
                         if (est <= budgetMb) { maxBatch = b; break; }
                     }
                     if (maxBatch > 0) {
@@ -5097,6 +5127,22 @@ public class TrainingDialog {
          * These are approximate values for the model weights only -- optimizer state
          * and activations are accounted for by multipliers in the caller.
          */
+        /**
+         * Base-channel count for a Tiny UNet preset. Activation memory at
+         * training time scales linearly with this, so the VRAM estimator
+         * reads it directly rather than guessing via param count.
+         */
+        private static int tinyUnetBase(String backbone) {
+            if (backbone == null) return 16;
+            return switch (backbone) {
+                case "nano-8x3"     -> 8;
+                case "compact-16x3" -> 16;
+                case "tiny-16x4"    -> 16;
+                case "small-24x4"   -> 24;
+                default             -> 16;
+            };
+        }
+
         private static double estimateModelSizeMb(String modelType, String backbone) {
             if ("muvit".equals(modelType)) return 140.0;
             if ("tiny-unet".equals(modelType)) {
