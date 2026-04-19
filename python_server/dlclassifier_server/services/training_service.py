@@ -2370,7 +2370,8 @@ class TrainingService:
             scheduler_type=scheduler_type,
             scheduler_config=scheduler_config,
             epochs=epochs,
-            steps_per_epoch=len(train_loader)
+            steps_per_epoch=len(train_loader),
+            early_stopping_metric=early_stopping_metric,
         )
 
         # Save scheduler_config back into training_params so it survives in
@@ -3523,7 +3524,8 @@ class TrainingService:
         scheduler_type: str,
         scheduler_config: Dict[str, Any],
         epochs: int,
-        steps_per_epoch: int
+        steps_per_epoch: int,
+        early_stopping_metric: Optional[str] = None,
     ) -> Optional[torch.optim.lr_scheduler.LRScheduler]:
         """Create learning rate scheduler.
 
@@ -3608,8 +3610,26 @@ class TrainingService:
             return scheduler
 
         elif scheduler_type == "plateau":
-            # ReduceLROnPlateau: reduce LR when metric stops improving
-            mode = scheduler_config.get("mode", "max")  # "max" for mIoU
+            # ReduceLROnPlateau: reduce LR when metric stops improving.
+            # The mode MUST match the direction of the metric fed in
+            # via scheduler.step(metric):
+            #   val_loss    -> mode="min"  (loss decreases when better)
+            #   mean_iou    -> mode="max"
+            #   per_class_iou[focus_class] -> mode="max"
+            # Before this fix plateau always got mode="max", so
+            # val_loss users had plateau interpret every IMPROVEMENT
+            # as "no improvement" and reduce LR on every ES win.
+            # Derive mode from early_stopping_metric when available;
+            # scheduler_config["mode"] still overrides for explicit
+            # user control.
+            mode = scheduler_config.get("mode")
+            if mode is None:
+                if early_stopping_metric == "val_loss":
+                    mode = "min"
+                else:
+                    # mean_iou and focus-class-IoU both increase
+                    # when improving.
+                    mode = "max"
             factor = scheduler_config.get("factor", 0.5)
             patience = scheduler_config.get("patience", 10)
             min_lr = scheduler_config.get("min_lr", 1e-7)
