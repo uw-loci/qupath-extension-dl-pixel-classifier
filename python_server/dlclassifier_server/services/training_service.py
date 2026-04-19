@@ -4410,6 +4410,11 @@ class TrainingService:
                 _onnx_export_kwargs = {}
 
             # Static-shape variant. Phase 3b / Phase 4 prerequisite.
+            # H and W are baked (that's the whole point -- TRT / ORT
+            # build a shape-specialised kernel) but we keep batch
+            # dynamic so the inference service can use gpu_batch_size
+            # > 1 without falling back to the dynamic ONNX on every
+            # tile. The E.1 audit row documented this.
             try:
                 onnx_static_path = output_dir / "model_static.onnx"
                 torch.onnx.export(
@@ -4419,17 +4424,24 @@ class TrainingService:
                     opset_version=14,
                     input_names=["input"],
                     output_names=["output"],
-                    # no dynamic_axes -> fully static shape baked into the graph
+                    dynamic_axes={
+                        "input": {0: "batch"},
+                        "output": {0: "batch"},
+                    },
                     **_onnx_export_kwargs,
                 )
                 logger.info(
-                    "Exported static-shape ONNX model to %s (shape=%s)",
+                    "Exported static-shape ONNX model to %s "
+                    "(C,H,W fixed at [%d,%d,%d]; batch dynamic)",
                     onnx_static_path,
-                    [1, actual_channels, input_size[0], input_size[1]],
+                    actual_channels, input_size[0], input_size[1],
                 )
                 onnx_variants["static"] = {
                     "path": "model_static.onnx",
-                    "shape": [1, int(actual_channels),
+                    # Reserved-batch sentinel: -1 communicates to the
+                    # inference service that batch may vary. C,H,W
+                    # are fixed at training dimensions.
+                    "shape": [-1, int(actual_channels),
                               int(input_size[0]), int(input_size[1])],
                 }
             except Exception as e:
@@ -4440,12 +4452,32 @@ class TrainingService:
             # them to plain BatchNorm at eval time is safe (BRN with
             # rmax/dmax at their converged values collapses to BN) and lets
             # TRT fuse conv+BN+activation into a single quantized op.
+            # E.3 audit fix: skip the fold when training is too short
+            # (BRN running stats haven't converged yet), since the fold
+            # would ship skewed stats and INT8 inference would drift
+            # from the training-time behaviour. 20 epochs is the
+            # heuristic used in docs/TINY_MODEL.md; the threshold is
+            # intentionally conservative -- users with short runs fall
+            # back to model_static.onnx at FP16, which works.
+            _BRN_FOLD_MIN_EPOCHS = 20
             try:
                 import copy
                 from ..utils.batchrenorm import fold_brn_to_bn, BatchRenorm2d
 
                 has_brn = any(isinstance(m, BatchRenorm2d)
                               for m in model.modules())
+                _epochs_trained = len(training_history or [])
+                if has_brn and _epochs_trained < _BRN_FOLD_MIN_EPOCHS:
+                    logger.warning(
+                        "Skipping BN-folded ONNX export: model has "
+                        "BatchRenorm but only %d training epochs "
+                        "(< %d threshold). INT8 + TRT inference will "
+                        "fall back to model_static.onnx at FP16. "
+                        "Re-export after a longer training run for "
+                        "full INT8 speedup.",
+                        _epochs_trained, _BRN_FOLD_MIN_EPOCHS,
+                    )
+                    has_brn = False  # skip the fold block below
                 if has_brn:
                     export_model = copy.deepcopy(model).eval()
                     fold_brn_to_bn(export_model)
@@ -4457,6 +4489,10 @@ class TrainingService:
                         opset_version=14,
                         input_names=["input"],
                         output_names=["output"],
+                        dynamic_axes={
+                            "input": {0: "batch"},
+                            "output": {0: "batch"},
+                        },
                         **_onnx_export_kwargs,
                     )
                     logger.info(
@@ -4464,7 +4500,7 @@ class TrainingService:
                         onnx_bn_path)
                     onnx_variants["static_bn"] = {
                         "path": "model_static_bn.onnx",
-                        "shape": [1, int(actual_channels),
+                        "shape": [-1, int(actual_channels),
                                   int(input_size[0]), int(input_size[1])],
                     }
                     del export_model

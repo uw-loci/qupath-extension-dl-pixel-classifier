@@ -128,12 +128,18 @@ class InferenceService:
     def set_experimental_providers(
         self, use_tensorrt: bool = False, use_int8: bool = False
     ) -> None:
-        """Toggle experimental ORT execution providers for subsequent loads.
+        """Toggle experimental ORT execution providers.
 
-        Called from the Appose task wrappers with values sourced from the
-        Java preference pane. Takes effect on the next ``_load_model``
-        call; already-cached sessions stay on their prior provider to
-        avoid mid-session reloads.
+        Called from the Appose task wrappers with values sourced from
+        the Java preference pane. On a provider change, evicts cached
+        ONNX sessions so the next ``_load_model`` builds a fresh
+        session with the new providers. Without this eviction, a user
+        toggling TRT mid-session would see no change until they
+        restarted the classifier (E.4 audit row).
+
+        PyTorch-loaded models are kept -- provider flags only affect
+        ORT, and rebuilding a PyTorch session is unnecessary (and
+        would trigger a deepcopy of weights to GPU).
         """
         changed = (use_tensorrt != self._use_tensorrt
                    or use_int8 != self._use_int8)
@@ -141,11 +147,20 @@ class InferenceService:
         self._use_int8 = bool(use_int8)
         if changed:
             self._onnx_providers = self._get_onnx_providers()
+            evicted = 0
+            for _k, _v in list(self._model_cache.items()):
+                model_type, _ = _v
+                if model_type == "onnx":
+                    del self._model_cache[_k]
+                    self._onnx_skip_static.discard(_k)
+                    evicted += 1
             logger.info(
-                "Experimental ORT providers updated: trt=%s int8=%s -> %s",
-                self._use_tensorrt, self._use_int8, self._onnx_providers)
+                "Experimental ORT providers updated: trt=%s int8=%s, "
+                "evicted %d cached ONNX session(s). Next inference "
+                "will reload with the new provider chain.",
+                self._use_tensorrt, self._use_int8, evicted)
 
-    def _get_onnx_providers(self) -> List[Any]:
+    def _get_onnx_providers(self, model_path: Optional[str] = None) -> List[Any]:
         """Get available ONNX execution providers based on device and flags.
 
         Phase 4: when ``self._use_tensorrt`` is on and
@@ -181,6 +196,16 @@ class InferenceService:
                     "trt_fp16_enable": True,
                     "trt_max_workspace_size": 2 * 1024 * 1024 * 1024,
                 }
+                # Per-model prefix so retrained classifiers do not
+                # collide in the shared cache dir and engines do not
+                # pile up under a single prefix. The prefix is a short
+                # SHA1 of the model path; stable for the same model
+                # directory but distinct across classifiers.
+                if model_path:
+                    import hashlib
+                    _digest = hashlib.sha1(
+                        model_path.encode("utf-8")).hexdigest()[:12]
+                    trt_opts["trt_engine_cache_prefix"] = _digest
                 if self._use_int8:
                     trt_opts["trt_int8_enable"] = True
                 return [
@@ -817,9 +842,15 @@ class InferenceService:
                 logger.info("Loading %s ONNX model from %s", label, path)
                 import onnxruntime as ort
 
+                # Build providers with a per-model TRT cache prefix so
+                # engines from different classifiers do not collide in
+                # the shared cache dir. Fallback to self._onnx_providers
+                # (no prefix) if model_path is unavailable.
+                per_model_providers = self._get_onnx_providers(
+                    model_path=model_path)
                 session = ort.InferenceSession(
                     str(path),
-                    providers=self._onnx_providers
+                    providers=per_model_providers
                 )
                 # Tag the session so _infer_batch_spatial can tell whether
                 # it is safe to feed an arbitrary-shaped batch.
@@ -1147,10 +1178,31 @@ class InferenceService:
         # Transformers -- NHWC offers no benefit and can hurt.
         if model_type == "muvit":
             return False
-        # TinyUNet with BatchRenorm -- see agent B2.
+        # ANY BatchRenorm module (including SMP UNets that were
+        # BRN-converted at training time by replace_bn_with_batchrenorm)
+        # silently undoes NHWC propagation via internal reshape ops.
+        # Before this check the gate looked only at
+        # model_type == "tiny-unet", so SMP + BRN models slipped
+        # through and paid for the format conversion without the
+        # speedup. See E.5 audit row.
+        try:
+            from ..utils.batchrenorm import BatchRenorm2d
+            if any(isinstance(m, BatchRenorm2d) for m in model.modules()):
+                logger.debug(
+                    "channels_last skipped: model contains BatchRenorm "
+                    "(model_type=%s)", model_type,
+                )
+                return False
+        except ImportError:
+            # If the utility is missing we err on the side of safety
+            # and keep the legacy tiny-unet check below.
+            pass
+        # Fallback to the legacy metadata-based check in case the
+        # state_dict path did not contain rmax/dmax but the norm param
+        # was still set to "brn" (older TinyUNet checkpoints).
         if model_type == "tiny-unet" and str(arch.get("norm", "brn")) == "brn":
             logger.debug(
-                "channels_last skipped: tiny-unet with BRN (norm=%s)",
+                "channels_last skipped: tiny-unet with BRN norm param (%s)",
                 arch.get("norm", "brn"),
             )
             return False
