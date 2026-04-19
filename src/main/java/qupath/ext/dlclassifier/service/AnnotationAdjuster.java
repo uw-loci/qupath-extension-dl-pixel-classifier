@@ -1,6 +1,5 @@
 package qupath.ext.dlclassifier.service;
 
-import org.locationtech.jts.geom.Geometry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.analysis.images.ContourTracing;
@@ -14,8 +13,8 @@ import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.hierarchy.PathObjectHierarchy;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.regions.RegionRequest;
-import qupath.lib.roi.GeometryTools;
 import qupath.lib.roi.ROIs;
+import qupath.lib.roi.RoiTools;
 import qupath.lib.roi.interfaces.ROI;
 
 import javax.imageio.ImageIO;
@@ -141,8 +140,9 @@ public class AnnotationAdjuster {
     /**
      * Applies the annotation adjustment to the QuPath hierarchy.
      * <p>
-     * Uses JTS geometry operations to surgically modify only the portion
-     * of each annotation that falls within the tile boundary.
+     * Uses {@link RoiTools} for all ROI operations (intersection, difference)
+     * and {@link ContourTracing#createTracedROI} for mask-to-ROI conversion,
+     * avoiding direct JTS geometry manipulation.
      *
      * @param viewer   the active QuPath viewer
      * @param tileX    tile top-left X in full-resolution image coordinates
@@ -161,10 +161,9 @@ public class AnnotationAdjuster {
         PathObjectHierarchy hierarchy = imageData.getHierarchy();
         int regionSize = (int) (patchSize * downsample);
 
-        // Tile boundary as a JTS geometry for clipping
+        // Tile boundary ROI for clipping operations
         ROI tileROI = ROIs.createRectangleROI(tileX, tileY, regionSize, regionSize,
                 ImagePlane.getDefaultPlane());
-        Geometry tileGeom = tileROI.getGeometry();
 
         // RegionRequest for ContourTracing (maps pixel coords to image coords)
         RegionRequest region = RegionRequest.createInstance(
@@ -199,27 +198,17 @@ public class AnnotationAdjuster {
             }
             SimpleImage classImage = SimpleImages.createFloatImage(data, w, h);
 
-            Geometry geometry = ContourTracing.createTracedGeometry(
+            // Trace mask directly to ROI (no JTS geometry intermediate)
+            ROI tracedROI = ContourTracing.createTracedROI(
                     classImage, classIdx, classIdx, region);
-            if (geometry == null || geometry.isEmpty()) continue;
+            if (tracedROI == null || tracedROI.isEmpty()) continue;
 
-            for (int i = 0; i < geometry.getNumGeometries(); i++) {
-                Geometry part = geometry.getGeometryN(i);
-                if (part == null || part.isEmpty()) continue;
+            // Clip to tile boundary (safety measure)
+            ROI clippedROI = RoiTools.intersection(tracedROI, tileROI);
+            if (clippedROI == null || clippedROI.isEmpty()) continue;
 
-                // Clip to tile boundary (safety measure)
-                try {
-                    part = part.intersection(tileGeom);
-                } catch (Exception e) {
-                    logger.debug("Clip to tile failed for class {}: {}", className, e.getMessage());
-                    continue;
-                }
-                if (part.isEmpty()) continue;
-
-                ROI roi = GeometryTools.geometryToROI(part, ImagePlane.getDefaultPlane());
-                PathObject annotation = PathObjects.createAnnotationObject(roi, pathClass);
-                newAnnotations.add(annotation);
-            }
+            PathObject annotation = PathObjects.createAnnotationObject(clippedROI, pathClass);
+            newAnnotations.add(annotation);
         }
 
         // --- Step 2: Find existing annotations overlapping the tile ---
@@ -228,59 +217,58 @@ public class AnnotationAdjuster {
             if (ann.getPathClass() == null) continue;
             ROI annROI = ann.getROI();
             if (annROI == null) continue;
-            Geometry annGeom = annROI.getGeometry();
-            if (annGeom == null) continue;
 
+            // Quick bounding-box pre-filter before the full intersection test
+            double ax = annROI.getBoundsX();
+            double ay = annROI.getBoundsY();
+            double ax2 = ax + annROI.getBoundsWidth();
+            double ay2 = ay + annROI.getBoundsHeight();
+            if (ax2 <= tileX || ax >= tileX + regionSize
+                    || ay2 <= tileY || ay >= tileY + regionSize) {
+                continue;
+            }
+
+            // Full intersection check via RoiTools
             try {
-                if (annGeom.intersects(tileGeom)) {
+                if (RoiTools.intersectionArea(annROI, tileROI) > 0) {
                     overlapping.add(ann);
                 }
             } catch (Exception e) {
-                // JTS can throw on degenerate geometries; skip
+                // Degenerate ROI; skip
             }
         }
 
         // --- Step 3: Surgically remove old annotation portions within the tile ---
-        // Track removals and replacements for undo
         List<PathObject> removed = new ArrayList<>();
-        Map<PathObject, PathObject> replaced = new LinkedHashMap<>(); // old -> new (outer part)
+        Map<PathObject, PathObject> replaced = new LinkedHashMap<>();
 
         for (PathObject ann : overlapping) {
-            Geometry annGeom = ann.getROI().getGeometry();
             try {
-                Geometry outerPart = annGeom.difference(tileGeom);
-                if (outerPart == null || outerPart.isEmpty()) {
+                ROI outerROI = RoiTools.difference(ann.getROI(), tileROI);
+                if (outerROI == null || outerROI.isEmpty()) {
                     // Entire annotation is within the tile: remove it
                     removed.add(ann);
                 } else {
                     // Annotation extends beyond tile: keep the outer part
-                    ROI outerROI = GeometryTools.geometryToROI(outerPart,
-                            ImagePlane.getDefaultPlane());
                     PathObject replacement = PathObjects.createAnnotationObject(
                             outerROI, ann.getPathClass());
                     replaced.put(ann, replacement);
                 }
             } catch (Exception e) {
-                logger.warn("Geometry difference failed for annotation {}: {}",
+                logger.warn("ROI difference failed for annotation {}: {}",
                         ann.getPathClass(), e.getMessage());
-                // Don't modify this annotation if geometry ops fail
             }
         }
 
         // --- Step 4: Apply changes to hierarchy ---
-        // Remove old annotations (fully inside tile + overlapping ones to be replaced)
         List<PathObject> toRemove = new ArrayList<>(removed);
         toRemove.addAll(replaced.keySet());
         hierarchy.removeObjects(toRemove, false);
 
-        // Add replacements (outer portions of clipped annotations)
         List<PathObject> outerReplacements = new ArrayList<>(replaced.values());
         hierarchy.addObjects(outerReplacements);
-
-        // Add new annotations from the adjusted mask
         hierarchy.addObjects(newAnnotations);
 
-        // Fire a single change event
         hierarchy.fireHierarchyChangedEvent(this);
 
         // Save undo state
