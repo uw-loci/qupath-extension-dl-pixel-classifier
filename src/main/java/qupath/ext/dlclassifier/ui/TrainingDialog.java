@@ -2952,8 +2952,14 @@ public class TrainingDialog {
                     "  after a CE warmup (or as CE + Lovasz). No hyperparameters.\n" +
                     "  Berman et al., CVPR 2018 (arXiv:1705.08790).\n\n" +
                     "CE + Lovasz-Softmax: CE provides stable early gradient,\n" +
-                    "  Lovasz pushes directly toward IoU. OHEM disabled for\n" +
-                    "  these four new variants (does not compose).",
+                    "  Lovasz pushes directly toward IoU. OHEM is disabled\n" +
+                    "  for the two Lovasz variants (Lovasz is a sorted-\n" +
+                    "  errors surrogate, not a per-pixel loss).\n\n" +
+                    "OHEM composes with boundary-softened CE: the per-pixel\n" +
+                    "CE is weighted by the boundary map FIRST, then OHEM\n" +
+                    "selects the hardest K%% on those weighted losses.\n" +
+                    "Near-boundary pixels drop out of the hard set, so\n" +
+                    "OHEM capacity focuses on interior errors.",
                     "https://smp.readthedocs.io/en/latest/losses.html",
                     lossLabel, lossFunctionCombo);
 

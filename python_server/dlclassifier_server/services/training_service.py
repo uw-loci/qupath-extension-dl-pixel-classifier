@@ -392,6 +392,55 @@ class EarlyStopping:
             logger.info(f"Restored best model weights from epoch {self.best_epoch}")
 
 
+def _compute_boundary_weight_map(
+    targets: torch.Tensor,
+    sigma: float,
+    w_min: float,
+    ignore_index: int,
+) -> torch.Tensor:
+    """Per-pixel boundary-softening weight map.
+
+    Weight at each pixel:
+        w = w_min + (1 - w_min) * (1 - exp(-d / sigma))
+    where d is the Euclidean distance transform (pixels) to the
+    nearest boundary in the ground-truth label (using
+    `skimage.segmentation.find_boundaries(mode='thick')`, which also
+    flags transitions between valid classes and `ignore_index`).
+
+    Computed on CPU via scipy EDT + skimage. For a 16-tile batch of
+    256x256 tiles this runs in ~15-25 ms on a modern CPU. Falls back
+    to a uniform weight map (equivalent to plain CE) if scipy or
+    skimage are missing.
+
+    Shared helper so both `BoundarySoftenedCELoss` (plain averaging)
+    and `BoundarySoftenedOHEMCELoss` (hard-pixel selection after
+    weighting) compute weights identically.
+    """
+    try:
+        from scipy.ndimage import distance_transform_edt
+        from skimage.segmentation import find_boundaries
+    except ImportError:
+        logger.warning(
+            "Boundary softening: scipy or scikit-image not available, "
+            "falling back to uniform weights (equivalent to plain CE)"
+        )
+        return torch.ones_like(targets, dtype=torch.float32)
+
+    t = targets.detach().cpu().numpy()
+    N = t.shape[0]
+    weights = np.empty(t.shape, dtype=np.float32)
+    fallback_dist = sigma * 5.0
+    for i in range(N):
+        tile = t[i]
+        boundary = find_boundaries(tile, mode="thick")
+        if boundary.any():
+            dist = distance_transform_edt(~boundary).astype(np.float32)
+        else:
+            dist = np.full_like(tile, fallback_dist, dtype=np.float32)
+        weights[i] = w_min + (1.0 - w_min) * (1.0 - np.exp(-dist / sigma))
+    return torch.from_numpy(weights).to(targets.device)
+
+
 class DiceLoss(nn.Module):
     """Soft Dice loss for segmentation with ignore_index support.
 
@@ -597,17 +646,32 @@ class OHEMCrossEntropyLoss(nn.Module):
             weight=class_weights, ignore_index=ignore_index, reduction="none"
         )
 
-    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        inputs: torch.Tensor,
+        targets: torch.Tensor,
+        pixel_weights: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """Compute OHEM loss with per-class minimum representation.
 
         Args:
             inputs: Model logits of shape (N, C, H, W)
             targets: Ground truth labels of shape (N, H, W)
+            pixel_weights: Optional per-pixel weight tensor of shape
+                (N, H, W). When provided, each per-pixel CE value is
+                multiplied by the corresponding weight BEFORE the
+                top-K hard-pixel selection. This lets boundary
+                softening and OHEM compose: near-boundary pixels
+                enter the sort with reduced loss, so they are less
+                likely to be selected as "hard" -- OHEM capacity
+                focuses on interior errors instead of edge noise.
 
         Returns:
             Scalar loss averaged over the selected hard pixels
         """
         per_pixel = self.ce(inputs, targets)  # (N, H, W)
+        if pixel_weights is not None:
+            per_pixel = per_pixel * pixel_weights
 
         # Flatten and filter to valid pixels
         valid_mask = targets != self.ignore_index
@@ -904,44 +968,14 @@ class BoundarySoftenedCELoss(nn.Module):
         return weighted[valid].mean()
 
     def _compute_boundary_weight(self, targets: torch.Tensor) -> torch.Tensor:
-        """Compute per-pixel distance-transform weights on CPU.
+        """Delegate to the shared module-level helper.
 
-        Called once per forward pass. At 256x256 with 16-tile batch
-        this runs in ~15-25ms on a modern CPU -- usually smaller than
-        the backward pass for Tiny UNet so it does not bottleneck.
-        Falls back to uniform weights if scipy / skimage are missing
-        (effectively plain CE).
+        Kept as a method so subclasses / tests can override weighting
+        behaviour without replacing forward().
         """
-        try:
-            from scipy.ndimage import distance_transform_edt
-            from skimage.segmentation import find_boundaries
-        except ImportError:
-            logger.warning(
-                "BoundarySoftenedCE: scipy or scikit-image not available, "
-                "falling back to uniform weights (equivalent to plain CE)"
-            )
-            return torch.ones_like(targets, dtype=torch.float32)
-
-        t = targets.detach().cpu().numpy()
-        N = t.shape[0]
-        weights = np.empty(t.shape, dtype=np.float32)
-        fallback_dist = self.sigma * 5.0
-        for i in range(N):
-            tile = t[i]
-            # find_boundaries treats each distinct label as its own
-            # region, so valid/ignore transitions also count as
-            # boundaries -- that's fine, pixels adjacent to
-            # ignore_index are genuinely uncertain and should be
-            # down-weighted along with class-class boundaries.
-            boundary = find_boundaries(tile, mode="thick")
-            if boundary.any():
-                dist = distance_transform_edt(~boundary).astype(np.float32)
-            else:
-                dist = np.full_like(tile, fallback_dist, dtype=np.float32)
-            weights[i] = self.w_min + (1.0 - self.w_min) * (
-                1.0 - np.exp(-dist / self.sigma)
-            )
-        return torch.from_numpy(weights).to(targets.device)
+        return _compute_boundary_weight_map(
+            targets, self.sigma, self.w_min, self.ignore_index
+        )
 
 
 class BoundarySoftenedCEDiceLoss(nn.Module):
@@ -985,6 +1019,57 @@ class BoundarySoftenedCEDiceLoss(nn.Module):
         bce = self.boundary_ce(inputs, targets)
         dice = self.dice_loss(inputs, targets)
         return self.ce_weight * bce + self.dice_weight * dice
+
+
+class BoundarySoftenedOHEMCELoss(OHEMCrossEntropyLoss):
+    """OHEM hard-pixel mining composed with per-pixel boundary softening.
+
+    Each forward pass first computes the distance-transform boundary
+    weight map from the ground-truth labels, then feeds it to
+    ``OHEMCrossEntropyLoss.forward`` via ``pixel_weights``. The parent
+    class multiplies per-pixel CE by the weight map BEFORE the top-K
+    hard-pixel selection, so:
+
+    - Near-boundary pixels enter the sort with reduced loss and are
+      less likely to be picked as "hard" -- edge annotation noise is
+      pushed OUT of OHEM's selected set.
+    - Interior pixels with genuinely confused predictions are
+      comparatively harder after weighting and dominate the gradient.
+
+    Applying OHEM without weighting and then softening the mean
+    afterwards would do the opposite -- edge noise would fill the
+    hard-pixel budget and softening would only shrink the loss scale,
+    not redirect gradient. The order here (weight THEN select) is why
+    the composition is coherent.
+
+    Subclassing `OHEMCrossEntropyLoss` (rather than wrapping) means
+    the training loop's `isinstance(criterion, OHEMCrossEntropyLoss)`
+    anneal check and direct `.hard_ratio` writes continue to work
+    unchanged.
+
+    Args:
+        sigma: EDT falloff length in pixels (default 3.0).
+        w_min: Floor weight at exact boundaries (default 0.1).
+        **kwargs: passed through to ``OHEMCrossEntropyLoss.__init__``
+            (hard_ratio, class_weights, ignore_index, adaptive_floor).
+    """
+
+    def __init__(self, sigma: float = 3.0, w_min: float = 0.1, **kwargs):
+        super().__init__(**kwargs)
+        self.sigma = float(sigma)
+        self.w_min = float(w_min)
+
+    def forward(
+        self,
+        inputs: torch.Tensor,
+        targets: torch.Tensor,
+        pixel_weights: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if pixel_weights is None:
+            pixel_weights = _compute_boundary_weight_map(
+                targets, self.sigma, self.w_min, self.ignore_index
+            )
+        return super().forward(inputs, targets, pixel_weights=pixel_weights)
 
 
 class SegmentationDataset(Dataset):
@@ -2001,20 +2086,53 @@ class TrainingService:
             logger.info("Using CrossEntropy loss")
 
         # Wrap with OHEM if active (applies to pixel-loss component only).
-        # Skip for boundary-softened and Lovasz variants: their per-pixel
-        # contribution is already reweighted (boundary) or built from a
-        # sorted-errors decomposition (Lovasz) that does not compose with
-        # hard-example selection.
-        _ohem_incompatible = loss_function in (
-            "boundary_ce", "boundary_ce_dice", "lovasz", "ce_lovasz",
-        )
+        # Lovasz-based variants remain incompatible: Lovasz is not a
+        # per-pixel loss, it is a Jaccard surrogate over sorted errors,
+        # and hard-example selection has no well-defined meaning on top
+        # of it. Boundary variants, however, DO compose -- see
+        # BoundarySoftenedOHEMCELoss: the boundary weight is applied to
+        # per-pixel CE FIRST, then OHEM picks top-K on the weighted
+        # losses. Near-boundary pixels drop out of the "hardest" set,
+        # so OHEM capacity focuses on interior errors rather than edge
+        # annotation noise.
+        _ohem_incompatible = loss_function in ("lovasz", "ce_lovasz")
+        _ohem_boundary = loss_function in ("boundary_ce", "boundary_ce_dice")
         if ohem_hard_ratio < 1.0 and _ohem_incompatible:
             logger.info(
-                "OHEM disabled: loss_function=%s does not compose with "
-                "hard-pixel selection.", loss_function,
+                "OHEM disabled: loss_function=%s (Lovasz) is a sorted-"
+                "errors surrogate and does not compose with hard-pixel "
+                "selection.", loss_function,
             )
         if ohem_hard_ratio < 1.0 and not _ohem_incompatible:
-            if isinstance(criterion, (_CombinedPixelDiceLoss, CombinedCEDiceLoss)):
+            if _ohem_boundary:
+                # Boundary-softened OHEM: weight-first, then top-K.
+                ohem_pixel = BoundarySoftenedOHEMCELoss(
+                    sigma=boundary_sigma,
+                    w_min=boundary_w_min,
+                    hard_ratio=ohem_hard_ratio,
+                    class_weights=class_weights,
+                    ignore_index=unlabeled_index,
+                    adaptive_floor=ohem_adaptive_floor,
+                )
+                if loss_function == "boundary_ce_dice":
+                    criterion = _CombinedPixelDiceLoss(ohem_pixel, dice)
+                else:
+                    criterion = ohem_pixel
+                sched_note = ""
+                if _ohem_anneals:
+                    sched_note = (f" [anneal: {ohem_hard_ratio_start * 100:.0f}%"
+                                  f" -> {ohem_hard_ratio * 100:.0f}%"
+                                  f" over first 75% of epochs]")
+                    ohem_pixel.hard_ratio = ohem_hard_ratio_start
+                mode_note = " (adaptive per-class floor)" if ohem_adaptive_floor else ""
+                logger.info(
+                    "OHEM + boundary softening active: keeping hardest "
+                    "%.0f%%%% of boundary-weighted losses "
+                    "(sigma=%.2f, w_min=%.2f)%s%s",
+                    ohem_hard_ratio * 100, boundary_sigma, boundary_w_min,
+                    mode_note, sched_note,
+                )
+            elif isinstance(criterion, (_CombinedPixelDiceLoss, CombinedCEDiceLoss)):
                 # Replace the pixel-loss component with OHEM-wrapped version
                 if isinstance(criterion, _CombinedPixelDiceLoss):
                     inner_pixel = criterion.pixel_loss
