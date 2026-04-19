@@ -311,6 +311,11 @@ public final class DLClassifierPreferences {
         // immediate popup instead of wondering why nothing changed.
         javafx.beans.value.ChangeListener<Boolean> providerToggleListener =
                 (obs, oldV, newV) -> {
+                    // Only fire on turn-ON transitions. Turning a
+                    // provider OFF is not a situation that warrants a
+                    // popup about cache invalidation (user knows they
+                    // are giving up the provider).
+                    if (!Boolean.TRUE.equals(newV)) return;
                     try {
                         var list = InteractionWarningService.evaluatePreferences();
                         var visible = InteractionWarningService.filterVisible(list);

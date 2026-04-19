@@ -107,14 +107,6 @@ try:
 except NameError:
     use_int8 = False
 
-# Phase 4: apply experimental ORT provider flags before _load_model caches
-# an InferenceSession. set_experimental_providers is a best-effort helper
-# that only takes effect for models not yet loaded this session; existing
-# cached sessions are unaffected.
-if hasattr(inference_service, "set_experimental_providers"):
-    inference_service.set_experimental_providers(
-        use_tensorrt=use_tensorrt, use_int8=use_int8)
-
 # Zero-copy read from shared memory NDArray.
 # Copy immediately so the shared memory segment can be reused by Java.
 tile_array = tile_nd.ndarray().reshape(tile_height, tile_width, num_channels).copy()
@@ -125,12 +117,19 @@ tile_array = _normalize_tile(tile_array, input_config)
 # Channel selection is handled by Java during tile encoding.
 # Do NOT re-select here -- it would drop context channels for multi-scale models.
 
-# Serialize GPU access. Appose runs each task in its own thread, so
-# without this lock, 10+ overlay threads would race on model loading,
-# CUDA memory, and forward passes simultaneously. The GPU can only run
-# one batch at a time anyway, so serializing here prevents OOM and
-# thread-safety issues (torch.compile is NOT thread-safe).
+# Serialize GPU access AND provider-toggle + model-load + inference
+# under the same lock. Appose runs each task in its own thread; without
+# this lock, a concurrent thread can call set_experimental_providers,
+# evict the _model_cache entry from under us, and then race with the
+# reload. The GPU can only run one batch at a time anyway, so
+# serializing here is correctness-preserving.
 with inference_lock:
+    # Phase 4: apply experimental ORT provider flags. This must run
+    # INSIDE the lock so an eviction cannot race with another thread's
+    # _load_model call on the same session.
+    if hasattr(inference_service, "set_experimental_providers"):
+        inference_service.set_experimental_providers(
+            use_tensorrt=use_tensorrt, use_int8=use_int8)
     model_tuple = inference_service._load_model(model_path)
     prob_maps = inference_service._infer_batch_spatial(
         model_tuple, [tile_array],

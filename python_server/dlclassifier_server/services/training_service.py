@@ -2392,6 +2392,7 @@ class TrainingService:
             epochs=epochs,
             steps_per_epoch=len(train_loader),
             early_stopping_metric=early_stopping_metric,
+            focus_class=focus_class,
         )
 
         # Save scheduler_config back into training_params so it survives in
@@ -3546,6 +3547,7 @@ class TrainingService:
         epochs: int,
         steps_per_epoch: int,
         early_stopping_metric: Optional[str] = None,
+        focus_class: Optional[str] = None,
     ) -> Optional[torch.optim.lr_scheduler.LRScheduler]:
         """Create learning rate scheduler.
 
@@ -3644,11 +3646,20 @@ class TrainingService:
             # user control.
             mode = scheduler_config.get("mode")
             if mode is None:
-                if early_stopping_metric == "val_loss":
+                # Mirror the tri-branch used at step time (see
+                # scheduler.step(plateau_metric) around line 3241):
+                #   focus_class set -> per_class_iou[focus_class] -> "max"
+                #   early_stopping_metric == "val_loss" -> "min"
+                #   else -> mean_iou -> "max"
+                # Before this tri-branch the code only looked at the
+                # ES metric; a focus_class run with val_loss ES picked
+                # mode="min" while the step metric was an IoU, so
+                # plateau cut LR on every real improvement.
+                if focus_class:
+                    mode = "max"
+                elif early_stopping_metric == "val_loss":
                     mode = "min"
                 else:
-                    # mean_iou and focus-class-IoU both increase
-                    # when improving.
                     mode = "max"
             factor = scheduler_config.get("factor", 0.5)
             patience = scheduler_config.get("patience", 10)

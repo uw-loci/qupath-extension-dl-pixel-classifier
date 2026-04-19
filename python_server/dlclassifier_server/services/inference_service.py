@@ -197,15 +197,44 @@ class InferenceService:
                     "trt_max_workspace_size": 2 * 1024 * 1024 * 1024,
                 }
                 # Per-model prefix so retrained classifiers do not
-                # collide in the shared cache dir and engines do not
-                # pile up under a single prefix. The prefix is a short
-                # SHA1 of the model path; stable for the same model
-                # directory but distinct across classifiers.
+                # collide in the shared cache dir. The prefix is a
+                # short SHA1 of the model path AND metadata.json
+                # mtime so a retrain into the same directory
+                # produces a fresh prefix and the stale engine
+                # (especially INT8 calibration cache) is not
+                # silently reused. ORT 1.17+ honours
+                # trt_engine_cache_prefix; on 1.16 this option is
+                # ignored and engines pile up unprefixed -- the
+                # pyproject/pixi pin must be bumped to >= 1.17 to
+                # make this effective everywhere. Probe via
+                # `ort.__version__` to log a warning on old builds.
                 if model_path:
                     import hashlib
-                    _digest = hashlib.sha1(
-                        model_path.encode("utf-8")).hexdigest()[:12]
+                    _h = hashlib.sha1()
+                    _h.update(model_path.encode("utf-8"))
+                    try:
+                        _meta = os.path.join(model_path, "metadata.json")
+                        if os.path.exists(_meta):
+                            _h.update(str(int(
+                                os.path.getmtime(_meta))).encode("utf-8"))
+                    except OSError:
+                        pass
+                    _digest = _h.hexdigest()[:12]
                     trt_opts["trt_engine_cache_prefix"] = _digest
+                    try:
+                        _ort_ver = tuple(int(x) for x in
+                                         ort.__version__.split(".")[:2])
+                        if _ort_ver < (1, 17):
+                            logger.warning(
+                                "onnxruntime %s < 1.17 silently ignores "
+                                "trt_engine_cache_prefix; engines from "
+                                "different models may collide under one "
+                                "prefix in %s. Bump the onnxruntime pin "
+                                "to >= 1.17 for per-model isolation.",
+                                ort.__version__, cache_dir,
+                            )
+                    except (AttributeError, ValueError):
+                        pass
                 if self._use_int8:
                     trt_opts["trt_int8_enable"] = True
                 return [

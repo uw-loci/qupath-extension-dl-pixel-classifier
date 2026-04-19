@@ -108,11 +108,6 @@ try:
 except NameError:
     use_int8 = False
 
-# Phase 4: experimental TensorRT / INT8 provider selection for ORT.
-if hasattr(inference_service, "set_experimental_providers"):
-    inference_service.set_experimental_providers(
-        use_tensorrt=use_tensorrt, use_int8=use_int8)
-
 num_tiles = len(tile_ids)
 os.makedirs(output_dir, exist_ok=True)
 
@@ -125,10 +120,17 @@ for i in range(num_tiles):
     img = _normalize_tile(raw[i], input_config)
     preprocessed.append(img)
 
-# Serialize GPU access. Appose runs each task in its own thread, so
-# without this lock, concurrent tasks would race on model loading,
-# CUDA memory, and forward passes.
+# Serialize GPU access AND provider-toggle + model-load + inference
+# under the same lock. Without this, a concurrent thread can evict
+# the cached session between our provider-toggle and model-load
+# calls and race with our forward pass.
 with inference_lock:
+    # Phase 4: experimental TensorRT / INT8 provider selection.
+    # Must be inside the lock so eviction cannot race with another
+    # thread's _load_model on the same session.
+    if hasattr(inference_service, "set_experimental_providers"):
+        inference_service.set_experimental_providers(
+            use_tensorrt=use_tensorrt, use_int8=use_int8)
     model_tuple = inference_service._load_model(model_path)
     all_prob_maps = inference_service._infer_batch_spatial(
         model_tuple, preprocessed,
