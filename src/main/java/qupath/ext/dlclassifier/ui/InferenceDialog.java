@@ -904,6 +904,8 @@ public class InferenceDialog {
                     .useTTA(useTTACheck.isSelected())
                     .multiPassAveraging(DLClassifierPreferences.isMultiPassAveraging())
                     .overlaySmoothingSigma(DLClassifierPreferences.getOverlaySmoothing())
+                    .useCompactArgmaxOutput(
+                            DLClassifierPreferences.isUseCompactArgmaxOutput())
                     .build();
 
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();
@@ -940,6 +942,8 @@ public class InferenceDialog {
                     .useGPU(useGPUCheck.isSelected())
                     .useTTA(useTTACheck.isSelected())
                     .overlaySmoothingSigma(DLClassifierPreferences.getOverlaySmoothing())
+                    .useCompactArgmaxOutput(
+                            DLClassifierPreferences.isUseCompactArgmaxOutput())
                     .build();
 
             ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();

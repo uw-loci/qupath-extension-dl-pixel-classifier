@@ -1302,6 +1302,14 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     inputs.put("tile_width", tileWidth);
                     inputs.put("num_channels", numChannels);
                     inputs.put("input_config", inputConfig);
+                    // Pass experimental provider flags so the
+                    // measurements path does not silently inherit
+                    // stale provider state from the most recent
+                    // pixel inference. Matches the pixel-path wiring.
+                    inputs.put("use_tensorrt",
+                            DLClassifierPreferences.isExperimentalTensorRT());
+                    inputs.put("use_int8",
+                            DLClassifierPreferences.isExperimentalInt8());
 
                     Task task = appose.runTask("inference_batch", inputs);
 

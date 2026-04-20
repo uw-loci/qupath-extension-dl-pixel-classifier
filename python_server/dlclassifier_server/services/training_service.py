@@ -3234,9 +3234,24 @@ class TrainingService:
             # Step scheduler (for epoch-based schedulers)
             if scheduler is not None and not isinstance(scheduler, OneCycleLR):
                 if isinstance(scheduler, ReduceLROnPlateau):
-                    # ReduceLROnPlateau needs the metric value
+                    # ReduceLROnPlateau needs the metric value.
+                    # The metric direction MUST agree with the mode the
+                    # scheduler was constructed with (see
+                    # _create_scheduler tri-branch). When focus_class
+                    # is set but has not yet appeared in per_class_iou
+                    # (rare class, early training), fall back to
+                    # mean_iou rather than val_loss -- both use "max"
+                    # semantics, matching the mode derived from the
+                    # focus_class branch. Falling back to val_loss
+                    # would feed a decreasing metric into a "max"
+                    # scheduler and cut LR on every improvement.
                     if focus_class and focus_class in per_class_iou:
                         plateau_metric = per_class_iou[focus_class]
+                    elif focus_class:
+                        # Focus class configured but not yet present:
+                        # keep "max" semantics via mean_iou so the
+                        # scheduler stays consistent with its mode.
+                        plateau_metric = mean_iou
                     else:
                         plateau_metric = mean_iou if early_stopping_metric == "mean_iou" else val_loss
                     scheduler.step(plateau_metric)
