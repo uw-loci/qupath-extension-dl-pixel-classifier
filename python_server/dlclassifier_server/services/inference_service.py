@@ -671,7 +671,50 @@ class InferenceService:
                                 model_type, model = model_tuple
                                 break
                 input_name = model.get_inputs()[0].name
-                outputs = model.run(None, {input_name: batch_np})
+                try:
+                    outputs = model.run(None, {input_name: batch_np})
+                except Exception as ort_err:
+                    # Safety net: if the static ONNX model rejects the
+                    # input (shape mismatch from dynamic axes the
+                    # session didn't expect), fall back to dynamic
+                    # model.onnx. Limited to static / static_bn
+                    # variants AND to errors whose message indicates a
+                    # shape/rank/type problem so legitimate failures
+                    # (CUDA OOM, missing input, malformed graph) still
+                    # propagate. Catching plain Exception would trigger
+                    # a wasteful reload on OOM, worsening GPU pressure.
+                    variant = getattr(
+                        model, "_dlclassifier_onnx_variant", "")
+                    msg = str(ort_err).lower()
+                    shape_err = any(k in msg for k in (
+                        "shape", "rank", "invalid argument",
+                        "got: ", "expected: ",
+                    ))
+                    if variant in ("static", "static-BN INT8") and shape_err:
+                        logger.warning(
+                            "Static ONNX model.run() failed with shape "
+                            "error (%s), falling back to dynamic "
+                            "model.onnx", ort_err)
+                        for key, val in list(
+                                self._model_cache.items()):
+                            if val is model_tuple:
+                                del self._model_cache[key]
+                                self._onnx_skip_static.add(key)
+                                model_tuple = self._load_model(key)
+                                model_type, model = model_tuple
+                                break
+                        input_name = model.get_inputs()[0].name
+                        outputs = model.run(
+                            None, {input_name: batch_np})
+                    else:
+                        # Log the full error with traceback so OOM /
+                        # infra failures are not silently retried.
+                        logger.error(
+                            "ONNX model.run() failed (%s variant, "
+                            "shape_err=%s): %s",
+                            variant, shape_err, ort_err,
+                            exc_info=True)
+                        raise
                 batch_logits = outputs[0]  # (N, C, H, W)
             else:
                 # PyTorch inference with optional AMP
@@ -884,6 +927,29 @@ class InferenceService:
                 # Tag the session so _infer_batch_spatial can tell whether
                 # it is safe to feed an arbitrary-shaped batch.
                 session._dlclassifier_onnx_variant = label
+                # If metadata didn't carry a static shape (older models
+                # or the static_bn variant that skipped the metadata
+                # lookup), try to read it from the ONNX model's input
+                # spec. Done here in the shared loader so BOTH static
+                # and static_bn variants benefit -- without this, an
+                # older static_bn model would miss the runtime shape
+                # check and rely only on the exception safety-net.
+                if static_shape is None:
+                    try:
+                        inp = session.get_inputs()[0]
+                        dims = inp.shape  # e.g. ['batch', 3, 512, 512]
+                        # Only set if C/H/W are fixed ints (dim 0 may
+                        # be the string "batch" after the E.1 dynamic-
+                        # batch export).
+                        if (len(dims) == 4
+                                and all(isinstance(d, int)
+                                        for d in dims[1:])):
+                            static_shape = dims
+                            logger.info(
+                                "Inferred ONNX static shape from model "
+                                "inputs for %s: %s", label, dims)
+                    except Exception:
+                        pass
                 session._dlclassifier_onnx_static_shape = static_shape
                 self._model_cache[model_path] = ("onnx", session)
                 return ("onnx", session)

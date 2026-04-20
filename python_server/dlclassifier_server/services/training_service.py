@@ -3260,9 +3260,19 @@ class TrainingService:
                 else:
                     scheduler.step()
 
-            # Save best model checkpoint (independent of early stopping)
+            # Save best model checkpoint (independent of early stopping).
+            # Tri-branch matches _create_scheduler plateau-mode derivation
+            # and the scheduler step metric at ~line 3245: focus_class ->
+            # its IoU; focus_class set but missing from per_class_iou
+            # (rare class not yet present) -> mean_iou (same "max"
+            # semantics); else -> ES-metric-based. Falling back to
+            # val_loss when best_score_mode="max" (set by focus_class
+            # or mean_iou ES) would feed a decreasing metric into a
+            # max comparator and the best-model would never update.
             if focus_class and focus_class in per_class_iou:
                 current_metric = per_class_iou[focus_class]
+            elif focus_class:
+                current_metric = mean_iou
             else:
                 current_metric = mean_iou if early_stopping_metric == "mean_iou" else val_loss
             if _is_best(current_metric, best_score):
@@ -3307,10 +3317,15 @@ class TrainingService:
                 logger.info(f"  Focus class '{focus_class}' IoU={fc_iou:.4f}"
                            f" (min threshold={focus_class_min_iou:.2f})")
 
-            # Check early stopping
+            # Check early stopping. Same tri-branch as best-model
+            # tracking so the ES mode (set by best_score_mode) agrees
+            # with the value fed in during the "focus class missing
+            # early" window.
             if early_stopping is not None:
                 if focus_class and focus_class in per_class_iou:
                     es_value = per_class_iou[focus_class]
+                elif focus_class:
+                    es_value = mean_iou
                 else:
                     es_value = mean_iou if early_stopping_metric == "mean_iou" else val_loss
 
