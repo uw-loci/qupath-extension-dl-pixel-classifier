@@ -2042,7 +2042,7 @@ class TrainingService:
         )
         fused_kwargs = {"fused": True} if use_fused else {}
 
-        if param_groups and len(param_groups) > 1:
+        if param_groups:
             optimizer = torch.optim.AdamW(
                 param_groups,
                 betas=(0.9, 0.99), eps=1e-5,
@@ -3759,10 +3759,12 @@ class TrainingService:
                 "group_name": "head"
             })
 
-        if len(groups) > 1:
-            return groups
-        # Fall back to flat list if only one group
-        return encoder_params + decoder_params + head_params
+        # Return groups only when there are at least two kinds (encoder vs
+        # decoder/head), so a discriminative LR actually does something.
+        # For architectures like Tiny UNet whose parameters don't split along
+        # "encoder"/"decoder" names, all params land in one bucket and we
+        # return None so the caller uses a single flat AdamW with a single LR.
+        return groups if len(groups) > 1 else None
 
     @staticmethod
     def _format_loss_desc(
