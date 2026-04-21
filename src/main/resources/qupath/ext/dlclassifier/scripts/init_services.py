@@ -32,7 +32,7 @@ logger = logging.getLogger("dlclassifier.appose")
 # Both sides MUST be in sync. This version MUST match pyproject.toml and
 # __init__.py exactly. When EITHER side is updated, ALL THREE version
 # locations must be bumped together (see memory/feedback_version_sync.md).
-_REQUIRED_PYTHON_VERSION = "0.6.2"
+_REQUIRED_PYTHON_VERSION = "0.6.3-dev"
 
 
 def _parse_version(v):
