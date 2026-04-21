@@ -94,6 +94,52 @@ These are saved when you click "Apply" and restored next time you open the dialo
 | Application Scope | `dlclassifier.applicationScope` | `ALL_ANNOTATIONS` | Last used scope |
 | Create Backup | `dlclassifier.createBackup` | `false` | Back up measurements before overwriting |
 
+## Loss function parameters
+
+Only used when the corresponding Loss Function option is picked in
+the training dialog; not exposed in the top-level preference pane.
+
+| Setting | Key | Default | Notes |
+|---------|-----|---------|-------|
+| Default Loss Function | `dlclassifier.defaultLossFunction` | `ce_dice` | Preset for new dialogs. Values: `ce_dice`, `cross_entropy`, `focal_dice`, `focal`, `boundary_ce`, `boundary_ce_dice`, `lovasz`, `ce_lovasz`. |
+| Default Focal Gamma | `dlclassifier.defaultFocalGamma` | `2.0` | Only used with focal variants. Preserved through OHEM (see `OHEMFocalLoss`). |
+| Default Boundary Sigma | `dlclassifier.defaultBoundarySigma` | `3.0` | Distance-transform falloff length in pixels. Only used with `boundary_ce` / `boundary_ce_dice`. |
+| Default Boundary w_min | `dlclassifier.defaultBoundaryWMin` | `0.1` | Floor weight applied at the exact class boundary. |
+
+## Experimental inference providers
+
+These flags route ONNX inference through different ORT execution
+providers. Changing either toggles a runtime popup the first time
+the flag is turned ON (explains that cached models are auto-
+reloaded so the change takes effect immediately).
+
+| Setting | Key | Default | Notes |
+|---------|-----|---------|-------|
+| Experimental: TensorRT Inference | `dlclassifier.experimentalTensorRT` | `false` | Routes CUDA inference through `TensorrtExecutionProvider`. Silently falls back to `CUDAExecutionProvider` when TRT is not installed. Per-model engine cache under `~/.dlclassifier/tensorrt_cache` keyed by SHA1(model_path + metadata.json mtime). |
+| Experimental: INT8 Quantization | `dlclassifier.experimentalInt8` | `false` | Only takes effect when TensorRT is also on. Training must have run for >= 20 epochs for the BN-folded INT8 variant to be emitted. |
+| Use Compact Argmax Output | `dlclassifier.useCompactArgmaxOutput` | `false` | Returns `uint8` argmax instead of float32 probabilities. 20x smaller wire payload; disables overlay smoothing, multi-pass averaging, and tile blending. Honoured by both the overlay and Apply Classifier paths. |
+
+## Option-interaction warnings (per-watcher suppression)
+
+The runtime `InteractionWarningService` pops a GUI dialog when a
+risky option combination is detected (see `TRAINING_GUIDE.md`).
+Each watcher has a "Don't show again" checkbox in the popup; the
+state is persisted per-watcher.
+
+| Watcher | Key (boolean) | Default | Fires when... |
+|---------|---------------|---------|----------------|
+| TileOverlapSplit (BLOCKING) | `dlclassifier.warning.overlap-split-leakage.suppressed` | `false` | tile overlap > 0 AND no image has an explicit TRAIN_ONLY/VAL_ONLY role (pixel leakage across stratified split). Cannot be suppressed. |
+| InMemoryCacheWorkers | `dlclassifier.warning.cache-workers-downgrade.suppressed` | `false` | in-memory cache active AND data_loader_workers > 0 (auto-downgraded to 0). |
+| ChannelsLastBrn | `dlclassifier.warning.channels-last-brn.suppressed` | `false` | Loaded model uses BatchRenorm (channels_last inference layout auto-skipped). |
+| BrnFoldConvergence | `dlclassifier.warning.int8-brn-fold-convergence.suppressed` | `false` | INT8 preference enabled (reminder that BRN must be trained >= 20 epochs). |
+| ExperimentalProvidersToggle | `dlclassifier.warning.experimental-providers-toggle.suppressed` | `false` | TRT or INT8 toggled ON (reminder that ORT sessions are auto-reloaded). |
+| OhemFocal | `dlclassifier.warning.ohem-focal-gamma.suppressed` | `true` (default-suppressed) | Tripwire; fires when OHEM + Focal are selected together to confirm OHEMFocalLoss composition is active. |
+| PlateauValLoss | `dlclassifier.warning.plateau-val-loss-mode.suppressed` | `true` (default-suppressed) | Tripwire; fires when plateau scheduler + `val_loss` ES are selected to confirm the auto-derived plateau mode is active. |
+
+To re-enable a default-suppressed tripwire, set the corresponding
+key to `false` in QuPath's preference file or via a preference
+UI binding.
+
 ## Resetting Preferences
 
 To reset all DL Pixel Classifier preferences to defaults:

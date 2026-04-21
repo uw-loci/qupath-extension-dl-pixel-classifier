@@ -213,7 +213,7 @@ When **Use pretrained backbone weights** is selected, a layer freeze panel appea
 | Parameter | Default | Guidance |
 |-----------|---------|----------|
 | **LR Scheduler** | One Cycle | Best default. "Reduce on Plateau" is a good alternative when training is noisy. |
-| **Loss Function** | Cross Entropy + Dice | Recommended. Dice optimizes IoU directly. |
+| **Loss Function** | Cross Entropy + Dice | Recommended. Dice optimizes IoU directly. See "Loss function options" below for alternatives including Focal, Boundary-softened CE, and Lovasz-Softmax. |
 | **Early Stop Metric** | Mean IoU | More reliable than validation loss. |
 | **Early Stop Patience** | 15 | Epochs without improvement before stopping. |
 | **Focus Class** | (none) | Select a class whose IoU overrides mean IoU for best-model selection. |
@@ -221,6 +221,31 @@ When **Use pretrained backbone weights** is selected, a layer freeze panel appea
 | **Mixed Precision** | Enabled | FP16/BF16 mixed precision. ~2x speedup on NVIDIA GPUs. |
 | **Gradient Accumulation** | 1 | Accumulate over N batches. Set 2-4 to simulate larger batches on limited VRAM. |
 | **Progressive Resizing** | Off | Train at half resolution first (40% of epochs), then full resolution. |
+
+### Loss function options
+
+The Loss Function combo exposes eight variants. OHEM composes with
+most of them (focal modulation and boundary weighting applied
+BEFORE the top-K hard-pixel sort); the two Lovasz variants are
+the only exceptions (OHEM silently disabled -- Lovasz is a
+sorted-errors Jaccard surrogate, not a per-pixel loss).
+
+| Option | When to pick it |
+|---|---|
+| Cross Entropy + Dice | Default. Safe starting point for any task. |
+| Cross Entropy | Per-pixel only. Use when Dice is undesirable (e.g. rare class + mostly-correct background where Dice washes out). |
+| Focal + Dice | Down-weights easy pixels via `(1-p_t)^gamma`. Use when classes have very different difficulty. With OHEM, `focal_gamma` is preserved inside the hard set via `OHEMFocalLoss`. |
+| Focal | Focal alone, no Dice. |
+| Boundary-softened CE | CE weighted by Euclidean distance to the nearest annotation boundary. Down-weights noisy edge pixels. Use when manual annotations have imprecise boundaries. Parameters: sigma (falloff, default 3px), w_min (floor at exact boundary, default 0.1). |
+| Boundary-softened CE + Dice | The recommended pairing for edge-noisy annotations -- boundary CE handles the edges, Dice optimizes region overlap. With OHEM, boundary weight is applied before top-K so OHEM capacity focuses on interior errors. |
+| Lovasz-Softmax | Directly optimizes mean IoU. Best after a CE warmup or combined with CE (see next row). No hyperparameters. Per-class weights apply. |
+| CE + Lovasz-Softmax | CE provides stable early gradient, Lovasz pushes directly toward IoU. Safer than bare Lovasz from init. |
+
+Per-class weights (from the class multipliers in the class list)
+apply to CE, Focal, Boundary-softened CE, and every Lovasz
+variant. See also the "Option interaction" runtime watcher that
+shows a popup when a known-risky composition is detected (e.g.
+tile overlap > 0 combined with no per-image split role).
 
 ### Automatic Optimizations
 
