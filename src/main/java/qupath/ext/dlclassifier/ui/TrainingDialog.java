@@ -892,7 +892,10 @@ public class TrainingDialog {
                             "No trained classifiers found in the project or user directory.");
                     return;
                 }
-                Optional<ClassifierMetadata> selected = ModelPickerDialog.show(dialog, classifiers);
+                String currentArch = (architectureCombo != null)
+                        ? architectureCombo.getValue() : null;
+                Optional<ClassifierMetadata> selected =
+                        ModelPickerDialog.show(dialog, classifiers, currentArch);
                 selected.ifPresent(this::loadSettingsFromModel);
             });
             TooltipHelper.install(selectModelButton,
@@ -5996,14 +5999,49 @@ public class TrainingDialog {
 
         static Optional<ClassifierMetadata> show(Window owner,
                                                    List<ClassifierMetadata> classifiers) {
+            return show(owner, classifiers, null);
+        }
+
+        /**
+         * Shows the picker. When {@code currentArchitecture} is non-null,
+         * the list is filtered to classifiers whose modelType matches --
+         * Continue Training locks architecture/backbone/tile to the saved
+         * model, so showing mismatched rows would silently switch the
+         * user's selected architecture. A footer label summarises any
+         * hidden rows by their architecture so the user can see what was
+         * filtered and change the combo if they want a different one.
+         */
+        static Optional<ClassifierMetadata> show(Window owner,
+                                                   List<ClassifierMetadata> classifiers,
+                                                   String currentArchitecture) {
             Dialog<ClassifierMetadata> dialog = new Dialog<>();
             dialog.initOwner(owner);
             dialog.setTitle("Select Model");
-            dialog.setHeaderText("Choose a previously trained model to load settings from");
+            String header = "Choose a previously trained model to load settings from";
+            if (currentArchitecture != null && !currentArchitecture.isBlank()) {
+                header += " (filtered to architecture: " + currentArchitecture + ")";
+            }
+            dialog.setHeaderText(header);
             dialog.setResizable(true);
 
             ButtonType okType = new ButtonType("OK", ButtonBar.ButtonData.OK_DONE);
             dialog.getDialogPane().getButtonTypes().addAll(okType, ButtonType.CANCEL);
+
+            List<ClassifierMetadata> visible;
+            Map<String, Long> hiddenByArch = new LinkedHashMap<>();
+            if (currentArchitecture != null && !currentArchitecture.isBlank()) {
+                visible = new ArrayList<>();
+                for (ClassifierMetadata m : classifiers) {
+                    String mt = m.getModelType();
+                    if (currentArchitecture.equals(mt)) {
+                        visible.add(m);
+                    } else {
+                        hiddenByArch.merge(mt == null ? "?" : mt, 1L, Long::sum);
+                    }
+                }
+            } else {
+                visible = new ArrayList<>(classifiers);
+            }
 
             TableView<ClassifierMetadata> table = new TableView<>();
             table.setPrefHeight(300);
@@ -6037,7 +6075,7 @@ public class TrainingDialog {
             dateCol.setPrefWidth(90);
 
             table.getColumns().addAll(List.of(nameCol, archCol, classesCol, dateCol));
-            table.getItems().addAll(classifiers);
+            table.getItems().addAll(visible);
 
             // Sort by date descending (newest first)
             table.getItems().sort((a, b) -> {
@@ -6064,7 +6102,26 @@ public class TrainingDialog {
                 }
             });
 
-            dialog.getDialogPane().setContent(table);
+            VBox root = new VBox(6, table);
+            if (!hiddenByArch.isEmpty()) {
+                long hiddenTotal = hiddenByArch.values().stream().mapToLong(Long::longValue).sum();
+                String breakdown = hiddenByArch.entrySet().stream()
+                        .map(en -> en.getValue() + " " + en.getKey())
+                        .collect(Collectors.joining(", "));
+                Label note = new Label(hiddenTotal + " other model(s) hidden (" + breakdown
+                        + "). Change the architecture combo to see them.");
+                note.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+                note.setWrapText(true);
+                root.getChildren().add(note);
+            } else if (visible.isEmpty() && currentArchitecture != null) {
+                Label note = new Label("No saved models match architecture '"
+                        + currentArchitecture + "'. Change the architecture combo to load "
+                        + "a model from a different architecture.");
+                note.setStyle("-fx-text-fill: #cc6600; -fx-font-size: 11px;");
+                note.setWrapText(true);
+                root.getChildren().add(note);
+            }
+            dialog.getDialogPane().setContent(root);
 
             dialog.setResultConverter(button -> {
                 if (button == okType) {
