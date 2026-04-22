@@ -1406,6 +1406,20 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             return;
         }
 
+        // Project mode: make sure a temp tile dir can be created before opening progress
+        final Path projectTempTileDir;
+        if (config.sourceMode() == MAEPretrainingDialog.SourceMode.PROJECT_IMAGES) {
+            try {
+                projectTempTileDir = Files.createTempDirectory("mae-patches-");
+            } catch (IOException e) {
+                Dialogs.showErrorNotification(EXTENSION_NAME,
+                        "Cannot create temp tile directory: " + e.getMessage());
+                return;
+            }
+        } else {
+            projectTempTileDir = null;
+        }
+
         // Get Appose backend (MAE pretraining is Appose-only)
         ClassifierBackend backend = BackendFactory.getBackend();
         if (!(backend instanceof ApposeClassifierBackend apposeBackend)) {
@@ -1423,10 +1437,33 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         Thread pretrainThread = new Thread(() -> {
             try {
+                // In project mode, extract tiles into the temp dir first, then use
+                // that as dataPath. In folder mode, use dataPath as the user gave it.
+                Path effectiveDataPath = config.dataPath();
+                if (config.sourceMode() == MAEPretrainingDialog.SourceMode.PROJECT_IMAGES) {
+                    progress.log("Extracting MAE tiles from " + config.projectImages().size()
+                            + " project image(s) into " + projectTempTileDir);
+                    progress.setStatus("Extracting MAE tiles...");
+                    try {
+                        extractMAETilesFromProject(config, projectTempTileDir, progress);
+                    } catch (IOException ex) {
+                        throw ex;
+                    }
+                    effectiveDataPath = projectTempTileDir.resolve("train").resolve("images");
+                    if (!Files.isDirectory(effectiveDataPath)) {
+                        throw new IOException(
+                                "MAE tile extraction produced no tiles under "
+                                        + effectiveDataPath + ". Ensure selected images have "
+                                        + "Tissue-classed annotations.");
+                    }
+                    progress.log("MAE tile extraction complete; using tiles from "
+                            + effectiveDataPath);
+                }
+
                 logger.info("Starting MAE pretraining: model={}, epochs={}, data={}",
                         config.config().get("model_config"),
                         config.config().get("epochs"),
-                        config.dataPath());
+                        effectiveDataPath);
                 progress.log("MAE pretraining starting...");
                 progress.log("Model: " + config.config().get("model_config")
                         + ", patch=" + config.config().get("patch_size")
@@ -1435,12 +1472,13 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         + " epochs, batch=" + config.config().get("batch_size")
                         + ", lr=" + config.config().get("learning_rate")
                         + ", mask=" + config.config().get("mask_ratio"));
-                progress.log("Data: " + config.dataPath());
+                progress.log("Data: " + effectiveDataPath);
                 progress.log("Output: " + config.outputDir());
+                final Path dataPathForRun = effectiveDataPath;
 
                 ClassifierClient.TrainingResult result = apposeBackend.startPretraining(
                         config.config(),
-                        config.dataPath(),
+                        dataPathForRun,
                         config.outputDir(),
                         maeProgress -> {
                             // Setup phase updates (before training loop)
@@ -1527,10 +1565,137 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             Dialogs.showErrorNotification(EXTENSION_NAME,
                                     "MAE pretraining failed: " + e.getMessage()));
                 }
+            } finally {
+                if (projectTempTileDir != null) {
+                    try {
+                        deleteRecursive(projectTempTileDir);
+                        logger.info("Deleted MAE temp tile dir {}", projectTempTileDir);
+                    } catch (IOException ex) {
+                        logger.warn("Failed to delete MAE temp tile dir {}: {}",
+                                projectTempTileDir, ex.toString());
+                    }
+                }
             }
         }, "DLClassifier-MAEPretrain");
         pretrainThread.setDaemon(true);
         pretrainThread.start();
+    }
+
+    /**
+     * Runs AnnotationExtractor on the MAE config's project images, writing
+     * tiles gated by the "Tissue" class to {@code tempDir/train/images}.
+     * Then enforces the per-run total tile cap by shuffling and deleting
+     * surplus tiles.
+     */
+    private static void extractMAETilesFromProject(
+            MAEPretrainingDialog.MAEPretrainingConfig config,
+            Path tempDir,
+            ProgressMonitorController progress) throws IOException {
+
+        List<qupath.lib.projects.ProjectImageEntry<java.awt.image.BufferedImage>> entries =
+                config.projectImages();
+        if (entries == null || entries.isEmpty()) {
+            throw new IOException("No project images selected for MAE extraction");
+        }
+
+        // Derive a ChannelConfiguration from the first image. MAE doesn't care
+        // about channel names; we just need a shape + bit depth consistent with
+        // what the extractor will write.
+        qupath.ext.dlclassifier.model.ChannelConfiguration channelConfig;
+        try (var imageData = entries.get(0).readImageData().getServer()) {
+            int bitDepth = imageData.getPixelType().getBitsPerPixel();
+            int nCh = imageData.nChannels();
+            java.util.List<Integer> idx = new java.util.ArrayList<>();
+            java.util.List<String> names = new java.util.ArrayList<>();
+            for (int i = 0; i < nCh; i++) {
+                idx.add(i);
+                names.add(imageData.getChannel(i).getName());
+            }
+            channelConfig = qupath.ext.dlclassifier.model.ChannelConfiguration.builder()
+                    .selectedChannels(idx)
+                    .channelNames(names)
+                    .bitDepth(bitDepth)
+                    .normalizationStrategy(
+                            qupath.ext.dlclassifier.model.ChannelConfiguration
+                                    .NormalizationStrategy.PERCENTILE_99)
+                    .build();
+        } catch (Exception ex) {
+            throw new IOException("Failed to derive channel config: " + ex.getMessage(), ex);
+        }
+
+        // Delegate to AnnotationExtractor using "Tissue" as the only class. The
+        // existing extractor already handles context padding, uint8/raw split,
+        // and manifest writing. MAE will ignore masks.
+        qupath.ext.dlclassifier.utilities.AnnotationExtractor.ExportResult result =
+                qupath.ext.dlclassifier.utilities.AnnotationExtractor.exportFromProject(
+                        entries,
+                        config.extractionTileSize(),
+                        channelConfig,
+                        java.util.List.of(
+                                qupath.ext.dlclassifier.utilities.TissueDetectionUtility.TISSUE_CLASS_NAME),
+                        tempDir,
+                        0.0, // validation split -- all to train/
+                        3,   // line stroke width (irrelevant for polygon tissue annotations)
+                        java.util.Collections.emptyMap(),
+                        config.extractionDownsample(),
+                        1, 0,
+                        java.util.Collections.emptySet(),
+                        java.util.Collections.emptySet());
+
+        int totalTiles = result.totalPatches();
+        progress.log("Extracted " + totalTiles + " tiles total");
+
+        int cap = config.maxTilesTotal();
+        if (cap > 0 && totalTiles > cap) {
+            capTilesTotal(tempDir, cap, progress);
+        }
+    }
+
+    /**
+     * Keeps {@code cap} randomly chosen tiles in {@code tempDir/train/images}
+     * (with their corresponding masks and context tiles, if present), deleting
+     * the rest.
+     */
+    private static void capTilesTotal(Path tempDir, int cap,
+                                      ProgressMonitorController progress) throws IOException {
+        Path imagesDir = tempDir.resolve("train").resolve("images");
+        Path masksDir = tempDir.resolve("train").resolve("masks");
+        Path contextDir = tempDir.resolve("train").resolve("context");
+        if (!Files.isDirectory(imagesDir)) return;
+
+        java.util.List<Path> imageFiles = new java.util.ArrayList<>();
+        try (var stream = Files.list(imagesDir)) {
+            stream.filter(Files::isRegularFile).forEach(imageFiles::add);
+        }
+        if (imageFiles.size() <= cap) return;
+
+        java.util.Collections.shuffle(imageFiles, new java.util.Random(0xC0FFEE));
+        int removed = 0;
+        for (int i = cap; i < imageFiles.size(); i++) {
+            Path img = imageFiles.get(i);
+            try { Files.deleteIfExists(img); } catch (IOException ignored) {}
+            String base = img.getFileName().toString().replaceFirst("\\.(tiff?|raw)$", "");
+            Path mask = masksDir.resolve(base + ".png");
+            try { Files.deleteIfExists(mask); } catch (IOException ignored) {}
+            if (Files.isDirectory(contextDir)) {
+                for (String ext : new String[]{".tiff", ".tif", ".raw"}) {
+                    try { Files.deleteIfExists(contextDir.resolve(base + ext)); }
+                    catch (IOException ignored) {}
+                }
+            }
+            removed++;
+        }
+        progress.log("Capped MAE tiles to " + cap + " (removed " + removed + ")");
+    }
+
+    private static void deleteRecursive(Path root) throws IOException {
+        if (!Files.exists(root)) return;
+        try (var stream = Files.walk(root)) {
+            stream.sorted(java.util.Comparator.reverseOrder())
+                    .forEach(p -> {
+                        try { Files.deleteIfExists(p); } catch (IOException ignored) {}
+                    });
+        }
     }
 
     /**
