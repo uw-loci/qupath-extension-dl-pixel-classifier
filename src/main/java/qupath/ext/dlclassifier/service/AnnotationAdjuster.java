@@ -87,6 +87,23 @@ public class AnnotationAdjuster {
         int[][] confMap = loadGrayscaleMap(confidenceMapPath, "confidence");
         int[][] gtMask = loadGrayscaleMap(groundTruthMaskPath, "ground truth");
 
+        // Crop padded maps to the center patchSize x patchSize region.
+        // Training tiles exported with context padding are larger than patchSize
+        // (e.g. 552x552 for 512 + 2*20 padding). The padding border is UNLABELED
+        // in the GT mask. If not cropped, ContourTracing in applyAdjustment()
+        // maps pixel coordinates into the wrong image region (shifted by the
+        // padding offset).
+        int rawH = predMap.length;
+        int rawW = predMap[0].length;
+        predMap = cropToCenter(predMap, patchSize);
+        confMap = cropToCenter(confMap, patchSize);
+        gtMask = cropToCenter(gtMask, patchSize);
+        if (predMap.length != rawH || predMap[0].length != rawW) {
+            int padding = (rawW - patchSize) / 2;
+            logger.info("Cropped padded maps from {}x{} to {}x{} (contextPadding={})",
+                    rawW, rawH, patchSize, patchSize, padding);
+        }
+
         int h = predMap.length;
         int w = predMap[0].length;
 
@@ -393,5 +410,27 @@ public class AnnotationAdjuster {
             }
         }
         return count;
+    }
+
+    /**
+     * Crops a 2D array to a centered region of the given target size.
+     * If the array is already at or smaller than the target size, returns
+     * it unchanged.
+     */
+    private static int[][] cropToCenter(int[][] map, int targetSize) {
+        int h = map.length;
+        int w = map[0].length;
+        if (h <= targetSize && w <= targetSize) {
+            return map;
+        }
+        int cropH = Math.min(h, targetSize);
+        int cropW = Math.min(w, targetSize);
+        int offY = (h - cropH) / 2;
+        int offX = (w - cropW) / 2;
+        int[][] cropped = new int[cropH][cropW];
+        for (int y = 0; y < cropH; y++) {
+            System.arraycopy(map[y + offY], offX, cropped[y], 0, cropW);
+        }
+        return cropped;
     }
 }

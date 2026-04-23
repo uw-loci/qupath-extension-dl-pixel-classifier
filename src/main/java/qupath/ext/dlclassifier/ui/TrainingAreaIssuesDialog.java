@@ -94,6 +94,7 @@ public class TrainingAreaIssuesDialog {
     // Annotation adjustment
     private AnnotationAdjuster annotationAdjuster;
     private Button adjustButton;
+    private Button cancelPreviewButton;
     private Button undoButton;
     private Label adjustStatusLabel;
     private CheckBox previewCheckBox;
@@ -934,8 +935,7 @@ public class TrainingAreaIssuesDialog {
                 + "0.80 is a good starting point."));
         confidenceSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
             confLabel.setText(String.format("Confidence: %.0f%%", newVal.doubleValue() * 100));
-            // Invalidate any cached preview when threshold changes
-            pendingPreview = null;
+            cancelPendingPreview();
         });
 
         // Preview checkbox
@@ -957,6 +957,17 @@ public class TrainingAreaIssuesDialog {
                 + "Annotations OUTSIDE the tile boundary are not touched."));
         adjustButton.setOnAction(e -> handleAdjustAction());
 
+        // Cancel preview button -- only visible when a preview is pending
+        cancelPreviewButton = new Button("Cancel preview");
+        cancelPreviewButton.setMaxWidth(Double.MAX_VALUE);
+        cancelPreviewButton.setStyle("-fx-font-size: 11px;");
+        cancelPreviewButton.setVisible(false);
+        cancelPreviewButton.setManaged(false);
+        cancelPreviewButton.setTooltip(TooltipHelper.create(
+                "Cancel the current adjustment preview\n"
+                + "and return to normal view."));
+        cancelPreviewButton.setOnAction(e -> cancelPendingPreview());
+
         // Undo button
         undoButton = new Button("Undo last adjustment");
         undoButton.setMaxWidth(Double.MAX_VALUE);
@@ -975,7 +986,7 @@ public class TrainingAreaIssuesDialog {
         VBox content = new VBox(6,
                 confLabel, confidenceSlider,
                 previewCheckBox,
-                adjustButton, undoButton,
+                adjustButton, cancelPreviewButton, undoButton,
                 adjustStatusLabel);
         content.setPadding(new Insets(8));
 
@@ -990,7 +1001,7 @@ public class TrainingAreaIssuesDialog {
      * Called when the selected tile changes. Updates the adjustment panel state.
      */
     private void updateAdjustmentPanelState(TileRow row) {
-        pendingPreview = null;
+        cancelPendingPreview();
         if (row == null || !row.hasPredictionData()) {
             adjustButton.setDisable(true);
             if (row == null) {
@@ -1004,6 +1015,28 @@ public class TrainingAreaIssuesDialog {
         }
         adjustButton.setDisable(false);
         adjustStatusLabel.setText("Ready to adjust annotations in this tile");
+    }
+
+    /**
+     * Cancels any pending preview, resetting button text, cancel button visibility,
+     * and viewer overlay back to the normal loss/disagreement display.
+     * No-op if no preview is pending.
+     */
+    private void cancelPendingPreview() {
+        if (pendingPreview == null) {
+            return;
+        }
+        pendingPreview = null;
+        adjustButton.setText("Adjust annotations in current tile");
+        cancelPreviewButton.setVisible(false);
+        cancelPreviewButton.setManaged(false);
+        adjustStatusLabel.setText("Preview cancelled");
+        TileRow currentRow = table.getSelectionModel().getSelectedItem();
+        if (currentRow != null) {
+            showViewerOverlay(currentRow);
+        } else {
+            overlayController.clear();
+        }
     }
 
     /**
@@ -1032,10 +1065,7 @@ public class TrainingAreaIssuesDialog {
                             + "Use 'Undo last adjustment' to reverse.\n\n"
                             + "Apply?", pendingPreview.totalChangedPixels()));
             if (!confirmed) {
-                pendingPreview = null;
-                adjustButton.setText("Adjust annotations in current tile");
-                adjustStatusLabel.setText("Adjustment cancelled");
-                showViewerOverlay(row);
+                cancelPendingPreview();
                 return;
             }
             applyAdjustmentFromPreview(viewer, row, pendingPreview);
@@ -1089,10 +1119,10 @@ public class TrainingAreaIssuesDialog {
                 pendingPreview = preview;
                 showAdjustmentPreviewOverlay(viewer, row, preview.previewImage());
                 adjustStatusLabel.setText(changeSummary
-                        + "\nPreview shown on viewer. Click 'Adjust' again to apply,\n"
-                        + "or change threshold/tile to cancel.");
-                // Change button text to indicate "apply" mode
+                        + "\nPreview shown on viewer.");
                 adjustButton.setText("Apply previewed adjustment");
+                cancelPreviewButton.setVisible(true);
+                cancelPreviewButton.setManaged(true);
                 return;
             }
 
@@ -1133,6 +1163,8 @@ public class TrainingAreaIssuesDialog {
         undoButton.setDisable(false);
         pendingPreview = null;
         adjustButton.setText("Adjust annotations in current tile");
+        cancelPreviewButton.setVisible(false);
+        cancelPreviewButton.setManaged(false);
 
         // Re-install the loss/disagreement overlay
         showViewerOverlay(row);
