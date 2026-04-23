@@ -1737,6 +1737,20 @@ class TrainingService:
                             "applied to the encoder. Check that architecture "
                             "configs match. Training will proceed from "
                             "random initialization.")
+                    elif not architecture.get("use_pretrained", False):
+                        # Defense in depth: if any pretrained encoder weights
+                        # were successfully loaded, make sure the downstream
+                        # optimizer setup applies discriminative LRs. Without
+                        # this, AdamW would train every parameter at the same
+                        # LR -- which silently destroys MAE/continue-training
+                        # features within a handful of epochs. The Java-side
+                        # flag is authoritative when correct, but this fallback
+                        # catches the case where it wasn't set.
+                        logger.info(
+                            "Pretrained weights loaded successfully; "
+                            "forcing use_pretrained=True so discriminative "
+                            "LRs are applied during optimizer setup.")
+                        architecture["use_pretrained"] = True
             except Exception as e:
                 logger.warning("Failed to load pretrained weights: %s -- "
                                "training from scratch", e)

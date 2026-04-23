@@ -2177,6 +2177,13 @@ public class TrainingDialog {
                     if (maePath != null && !maePath.isEmpty()) {
                         pretrainedPath = maePath;
                     }
+                    // Treat an MAE-pretrained encoder as "pretrained" so the Python
+                    // optimizer setup applies discriminative LRs (encoder gets
+                    // 0.1x lr, head gets full lr). Without this, AdamW trains every
+                    // parameter at the same aggressive supervised LR and the MAE
+                    // features are destroyed in a handful of epochs -- the classic
+                    // "fine-tuning catastrophic forgetting" failure.
+                    usePretrained = true;
                     break;
                 case CONTINUE_TRAINING:
                     pretrainedPath = pretrainedModelPtPath;

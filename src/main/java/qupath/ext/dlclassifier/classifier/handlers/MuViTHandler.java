@@ -195,8 +195,12 @@ public class MuViTHandler implements ClassifierHandler {
 
         if (config != null) {
             modelConfig = config.getBackbone() != null ? config.getBackbone() : modelConfig;
-            params.put("use_pretrained", false);
             params.put("freeze_encoder_layers", 0);
+            // Do NOT set use_pretrained here. ApposeClassifierBackend.startTraining
+            // sets use_pretrained from TrainingConfig before merging handler params;
+            // forcing false here would silently strip the MAE/Continue-Training
+            // flag whenever the merge policy changed. Leave it unset and let the
+            // top-level architecture map carry the authoritative value.
         }
 
         params.put("backbone", modelConfig);

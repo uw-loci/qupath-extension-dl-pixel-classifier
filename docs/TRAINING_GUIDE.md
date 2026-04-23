@@ -433,6 +433,26 @@ After pretraining completes, load the encoder weights when training a MuViT clas
 4. Click **"Browse..."** and select the pretrained .pt file
 5. Architecture settings will auto-lock to match the encoder's metadata
 
+#### What happens under the hood
+
+Selecting "Use MAE pretrained encoder" (or "Continue training from saved
+model") does three things automatically:
+
+1. Loads the saved weights into the model.
+2. Flags the run as `use_pretrained=true` so the optimizer setup splits
+   parameters into **encoder** and **head** groups.
+3. Applies a **discriminative learning rate**: the encoder group trains at
+   `learning_rate x discriminative_lr_ratio` (default 0.1x) while the head
+   trains at the full learning rate. This preserves the MAE features
+   instead of letting the aggressive supervised LR dismantle them.
+
+If you see an epoch-by-epoch loss that decreases for ~20-30 epochs and then
+*suddenly* spikes back up with `acc` near 1% and per-class IoUs collapsing
+to ~0, that's the classic "discriminative LRs weren't applied, MAE features
+got wrecked" signature. Verify the training-config log line on the next run
+includes `discriminative LRs (ratio=0.1, ...)` rather than just
+`AdamW (lr=0.0001, ...)`.
+
 ### Dataset size guidance
 
 The dialog auto-suggests epoch counts based on your dataset:
