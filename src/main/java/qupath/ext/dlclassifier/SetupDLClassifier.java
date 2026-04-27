@@ -1419,7 +1419,16 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         final Path projectTempTileDir;
         if (config.sourceMode() == MAEPretrainingDialog.SourceMode.PROJECT_IMAGES) {
             try {
-                projectTempTileDir = Files.createTempDirectory("mae-patches-");
+                // Use the configured training data export directory if set,
+                // otherwise fall back to system temp
+                String exportDirPref = DLClassifierPreferences.getTrainingExportDir();
+                if (exportDirPref != null && !exportDirPref.isEmpty()) {
+                    Path exportBase = Path.of(exportDirPref);
+                    Files.createDirectories(exportBase);
+                    projectTempTileDir = Files.createTempDirectory(exportBase, "mae-patches-");
+                } else {
+                    projectTempTileDir = Files.createTempDirectory("mae-patches-");
+                }
             } catch (IOException e) {
                 Dialogs.showErrorNotification(EXTENSION_NAME,
                         "Cannot create temp tile directory: " + e.getMessage());
@@ -1741,7 +1750,16 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         final Path projectTempTileDir;
         if (config.sourceMode() == SSLPretrainingDialog.SourceMode.PROJECT_IMAGES) {
             try {
-                projectTempTileDir = Files.createTempDirectory("ssl-patches-");
+                // Use the configured training data export directory if set,
+                // otherwise fall back to system temp
+                String exportDirPref = DLClassifierPreferences.getTrainingExportDir();
+                if (exportDirPref != null && !exportDirPref.isEmpty()) {
+                    Path exportBase = Path.of(exportDirPref);
+                    Files.createDirectories(exportBase);
+                    projectTempTileDir = Files.createTempDirectory(exportBase, "ssl-patches-");
+                } else {
+                    projectTempTileDir = Files.createTempDirectory("ssl-patches-");
+                }
             } catch (IOException e) {
                 Dialogs.showErrorNotification(EXTENSION_NAME,
                         "Cannot create temp tile directory: " + e.getMessage());

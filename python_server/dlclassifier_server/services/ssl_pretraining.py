@@ -813,6 +813,35 @@ class SSLPretrainingService:
         use_grad_scaler = use_amp and amp_dtype == torch.float16
         scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
 
+        # --- Pre-flight VRAM estimate ---
+        try:
+            if self._device_str == "cuda":
+                mem_info = self.gpu_manager.get_memory_info()
+                total_mb = mem_info.get("total_mb", 0)
+                allocated_mb = mem_info.get("allocated_mb", 0)
+                free_mb = total_mb - allocated_mb
+                model_mb = self.gpu_manager.estimate_model_memory(model)
+                # BYOL has ~2x encoder memory (online + target)
+                model_factor = 2.0 if method == "byol" else 1.0
+                # SSL: model + optimizer (3x) + activations (~4x CNN)
+                act_multiplier = 4.0
+                if use_amp:
+                    act_multiplier *= 0.6
+                area_scale = (tile_size * tile_size) / (256 * 256)
+                estimated_mb = (model_mb * model_factor
+                                * (1 + 3 + act_multiplier * area_scale * batch_size))
+                if estimated_mb > free_mb * 0.9:
+                    logger.warning(
+                        "VRAM estimate: %.0f MB needed vs %.0f MB free -- "
+                        "OOM likely. Reduce batch size or tile size.",
+                        estimated_mb, free_mb)
+                else:
+                    logger.info(
+                        "VRAM estimate: %.0f MB needed, %.0f MB free -- OK",
+                        estimated_mb, free_mb)
+        except Exception:
+            pass  # Never let estimation break training
+
         # --- Training loop ---
         _report("starting_training")
         logger.info(
@@ -836,6 +865,10 @@ class SSLPretrainingService:
             if cancel_flag and cancel_flag.is_set():
                 logger.info("Pretraining cancelled at epoch %d", epoch)
                 break
+
+            # Clear GPU cache at epoch start to prevent memory accumulation
+            if self._device_str == "cuda":
+                self.gpu_manager.clear_cache()
 
             model.train()
             epoch_loss = 0.0
@@ -877,6 +910,11 @@ class SSLPretrainingService:
                     logger.info(
                         "First forward+backward pass complete, loss=%.6f",
                         loss.item() * grad_accum_steps)
+                    # Log peak GPU memory after first batch
+                    if self._device_str == "cuda":
+                        peak_mb = self.gpu_manager.get_peak_allocated_mb()
+                        logger.info("Peak GPU memory after first batch: %.0f MB",
+                                    peak_mb)
                     first_batch_done = True
 
                 # Optimizer step
