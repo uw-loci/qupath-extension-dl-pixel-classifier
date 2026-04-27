@@ -36,7 +36,7 @@ allprojects {
     }
 }
 
-val javafxVersion = "17.0.2"
+val javafxVersion = "25.0.2"
 
 dependencies {
     // Main dependencies for QuPath extensions
