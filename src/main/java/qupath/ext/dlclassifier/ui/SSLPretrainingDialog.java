@@ -147,10 +147,11 @@ public class SSLPretrainingDialog {
         temperatureSpinner.setEditable(true);
         temperatureSpinner.setPrefWidth(100);
         temperatureLabel = new Label("Temperature:");
-        TooltipHelper.install(temperatureLabel,
+        TooltipHelper.install(
                 "SimCLR temperature parameter.\n" +
                 "Lower values make the contrastive loss sharper.\n" +
-                "0.5 is a common default; try 0.1-0.2 for small datasets.");
+                "0.5 is a common default; try 0.1-0.2 for small datasets.",
+                temperatureLabel, temperatureSpinner);
 
         // Show/hide temperature based on method
         methodCombo.valueProperty().addListener((obs, old, newVal) -> {
@@ -175,6 +176,12 @@ public class SSLPretrainingDialog {
         sourceModelField.setEditable(false);
         sourceModelField.setPromptText("(Optional) Select trained model for domain adaptation...");
         sourceModelField.setMaxWidth(Double.MAX_VALUE);
+        TooltipHelper.install(sourceModelField,
+                "Optional: load encoder weights from a previously trained\n" +
+                "classifier model (.pt file). The encoder will start with\n" +
+                "those learned features and adapt them to the new images\n" +
+                "during SSL pretraining.\n\n" +
+                "Leave empty to train the encoder from scratch.");
 
         sourceModelInfoLabel = new Label();
         sourceModelInfoLabel.setWrapText(true);
@@ -213,10 +220,17 @@ public class SSLPretrainingDialog {
         learningRateSpinner = new Spinner<>(lrFactory);
         learningRateSpinner.setEditable(true);
         learningRateSpinner.setPrefWidth(120);
+        TooltipHelper.install(learningRateSpinner,
+                "Step size for the optimizer.\n" +
+                "3e-4 (0.00030) is a good default for SSL pretraining.\n" +
+                "Cosine annealing with warmup is applied automatically.");
 
         warmupEpochsSpinner = new Spinner<>(0, 50, 10, 1);
         warmupEpochsSpinner.setEditable(true);
         warmupEpochsSpinner.setPrefWidth(100);
+        TooltipHelper.install(warmupEpochsSpinner,
+                "Number of epochs to linearly ramp up the learning rate.\n" +
+                "Prevents early instability. 10 is typical for SSL.");
 
         // --- Source mode radios ---
         projectModeRadio = new RadioButton("Project images (extract tiles from annotations)");
@@ -238,10 +252,19 @@ public class SSLPretrainingDialog {
         // --- Project-mode controls ---
         projectImagesList.setCellFactory(lv -> new SSLImageCell());
         projectImagesList.setPrefHeight(130);
+        TooltipHelper.install(projectImagesList,
+                "Select which project images to extract tiles from.\n" +
+                "Check the images you want to include in pretraining.\n" +
+                "The number of classified annotations is shown per image.");
 
         annotationClassList.setCellFactory(lv -> new SSLClassCell());
         annotationClassList.setPrefHeight(80);
         annotationClassList.setPlaceholder(new Label("Select images to see available classes"));
+        TooltipHelper.install(annotationClassList,
+                "Select which annotation classes define regions of interest.\n" +
+                "Tiles are only extracted from areas covered by annotations\n" +
+                "of the checked classes. Uncheck classes you want to exclude\n" +
+                "(e.g., Background).");
 
         extractionTileSpinner = new Spinner<>(128, 1024, 256, 64);
         extractionTileSpinner.setEditable(true);
@@ -253,6 +276,10 @@ public class SSLPretrainingDialog {
         extractionDownsampleCombo = new ComboBox<>(FXCollections.observableArrayList(1.0, 2.0, 4.0, 8.0));
         extractionDownsampleCombo.setValue(1.0);
         extractionDownsampleCombo.setPrefWidth(100);
+        TooltipHelper.install(extractionDownsampleCombo,
+                "Downsample factor applied when reading tiles.\n" +
+                "1 = full resolution, 2 = half, 4 = quarter.\n" +
+                "Match the downsample you use for supervised training.");
 
         maxTilesSpinner = new Spinner<>(100, 200000, 5000, 500);
         maxTilesSpinner.setEditable(true);
@@ -268,6 +295,10 @@ public class SSLPretrainingDialog {
         dataPathField = new TextField();
         dataPathField.setPromptText("Directory of unlabeled image tiles...");
         dataPathField.setPrefWidth(250);
+        TooltipHelper.install(dataPathField,
+                "Path to a directory of unlabeled image tiles.\n" +
+                "Supported: PNG, TIFF, JPEG, BMP, RAW.\n" +
+                "Subdirectories are scanned recursively.");
 
         datasetInfoLabel = new Label();
         datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
@@ -277,6 +308,10 @@ public class SSLPretrainingDialog {
         outputDirField = new TextField();
         outputDirField.setPromptText("Output directory for encoder weights...");
         outputDirField.setPrefWidth(250);
+        TooltipHelper.install(outputDirField,
+                "Directory where the pretrained encoder weights (model.pt)\n" +
+                "and metadata.json will be saved.\n" +
+                "Defaults to a timestamped folder in the project directory.");
 
         var qupath = QuPathGUI.getInstance();
         if (qupath != null && qupath.getProject() != null) {
@@ -357,10 +392,20 @@ public class SSLPretrainingDialog {
         grid.setHgap(10); grid.setVgap(8);
 
         Label methodLabel = new Label("SSL Method:");
+        TooltipHelper.install(
+                "Self-supervised pretraining method.\n\n" +
+                "SimCLR: Contrastive learning. Benefits from larger batches.\n" +
+                "BYOL: Self-distillation. Works well with smaller datasets.",
+                methodLabel, methodCombo);
         grid.add(methodLabel, 0, 0);
         grid.add(methodCombo, 1, 0);
 
         Label backboneLabel = new Label("Backbone:");
+        TooltipHelper.install(
+                "CNN encoder backbone to pretrain.\n" +
+                "Must match the backbone you plan to use for supervised training.\n" +
+                "ResNet-34 is a good default for medium-sized datasets.",
+                backboneLabel, backboneCombo);
         grid.add(backboneLabel, 0, 1);
         grid.add(backboneCombo, 1, 1);
 
@@ -368,9 +413,10 @@ public class SSLPretrainingDialog {
         grid.add(temperatureSpinner, 1, 2);
 
         Label projDimLabel = new Label("Projection dim:");
-        TooltipHelper.install(projDimLabel,
+        TooltipHelper.install(
                 "Dimension of the projection head output.\n" +
-                "256 is the standard default.");
+                "256 is the standard default for both SimCLR and BYOL.",
+                projDimLabel, projectionDimSpinner);
         grid.add(projDimLabel, 0, 3);
         grid.add(projectionDimSpinner, 1, 3);
 
@@ -387,8 +433,13 @@ public class SSLPretrainingDialog {
 
         Button sourceModelBrowse = new Button("Browse...");
         sourceModelBrowse.setOnAction(e -> browseSourceModel());
+        TooltipHelper.install(sourceModelBrowse,
+                "Browse for a trained classifier model (.pt file)\n" +
+                "to use as the starting point for domain adaptation.");
 
         Button sourceModelClear = new Button("Clear");
+        TooltipHelper.install(sourceModelClear,
+                "Remove the source model and train from scratch.");
         sourceModelClear.setOnAction(e -> {
             sourceModelField.setText("");
             sourceModelInfoLabel.setText("");
@@ -474,26 +525,38 @@ public class SSLPretrainingDialog {
         grid.setHgap(10); grid.setVgap(8); grid.setPadding(new Insets(10));
 
         Label epochsLabel = new Label("Epochs:");
-        TooltipHelper.install(epochsLabel,
+        TooltipHelper.install(
                 "Number of complete passes through the training data.\n" +
-                "More epochs help, but diminishing returns past 200.");
+                "More epochs help, but diminishing returns past 200.\n" +
+                "Typical: 50-200 depending on dataset size.",
+                epochsLabel, epochsSpinner);
         grid.add(epochsLabel, 0, 0);
         grid.add(epochsSpinner, 1, 0);
 
         Label batchSizeLabel = new Label("Batch size:");
+        TooltipHelper.install(
+                "Number of images per training step.\n" +
+                "SimCLR benefits from larger batches (64+).\n" +
+                "BYOL works well with smaller batches (16-32).\n" +
+                "Gradient accumulation is auto-applied if needed.",
+                batchSizeLabel, batchSizeSpinner);
         grid.add(batchSizeLabel, 0, 1);
         grid.add(batchSizeSpinner, 1, 1);
 
         Label learningRateLabel = new Label("Learning rate:");
-        TooltipHelper.install(learningRateLabel,
-                "Step size for optimizer. 3e-4 is a good default.");
+        TooltipHelper.install(
+                "Step size for the optimizer.\n" +
+                "3e-4 (0.00030) is a good default for SSL pretraining.\n" +
+                "Cosine annealing with warmup is applied automatically.",
+                learningRateLabel, learningRateSpinner);
         grid.add(learningRateLabel, 0, 2);
         grid.add(learningRateSpinner, 1, 2);
 
         Label warmupLabel = new Label("Warmup epochs:");
-        TooltipHelper.install(warmupLabel,
-                "Epochs to linearly ramp up learning rate.\n" +
-                "Prevents early instability. 10 is typical.");
+        TooltipHelper.install(
+                "Number of epochs to linearly ramp up the learning rate.\n" +
+                "Prevents early instability. 10 is typical for SSL.",
+                warmupLabel, warmupEpochsSpinner);
         grid.add(warmupLabel, 0, 3);
         grid.add(warmupEpochsSpinner, 1, 3);
 
@@ -515,18 +578,23 @@ public class SSLPretrainingDialog {
         // Image selection
         Label imagesLabel = new Label("Images:");
         imagesLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 11px;");
+        TooltipHelper.install(imagesLabel,
+                "Select which project images to use for pretraining.\n" +
+                "Tiles are extracted from annotated regions of these images.");
         Button selectAllBtn = new Button("Select All");
         selectAllBtn.setOnAction(e -> {
             for (SSLImageItem item : projectImagesList.getItems()) item.selected = true;
             projectImagesList.refresh();
             updateAnnotationClasses();
         });
+        TooltipHelper.install(selectAllBtn, "Select all images for pretraining.");
         Button selectNoneBtn = new Button("Select None");
         selectNoneBtn.setOnAction(e -> {
             for (SSLImageItem item : projectImagesList.getItems()) item.selected = false;
             projectImagesList.refresh();
             updateAnnotationClasses();
         });
+        TooltipHelper.install(selectNoneBtn, "Deselect all images.");
         HBox imageButtonRow = new HBox(8, selectAllBtn, selectNoneBtn);
         projectPanel.getChildren().addAll(imagesLabel, projectImagesList, imageButtonRow);
 
@@ -543,12 +611,14 @@ public class SSLPretrainingDialog {
             annotationClassList.refresh();
             updateProjectSummary();
         });
+        TooltipHelper.install(selectAllClassesBtn, "Select all annotation classes.");
         Button selectNoClassesBtn = new Button("None");
         selectNoClassesBtn.setOnAction(e -> {
             for (SSLClassItem item : annotationClassList.getItems()) item.selected = false;
             annotationClassList.refresh();
             updateProjectSummary();
         });
+        TooltipHelper.install(selectNoClassesBtn, "Deselect all annotation classes.");
         HBox classButtonRow = new HBox(8, selectAllClassesBtn, selectNoClassesBtn);
         projectPanel.getChildren().addAll(classesLabel, annotationClassList, classButtonRow);
 
@@ -557,12 +627,27 @@ public class SSLPretrainingDialog {
         extractionGrid.setHgap(10); extractionGrid.setVgap(8);
         extractionGrid.setPadding(new Insets(6, 0, 0, 0));
         Label extTileSizeLabel = new Label("Tile size:");
+        TooltipHelper.install(
+                "Size of the image tiles extracted from each slide.\n" +
+                "256 is a common default for SSL pretraining.\n" +
+                "Should match or be close to the tile size used in training.",
+                extTileSizeLabel, extractionTileSpinner);
         extractionGrid.add(extTileSizeLabel, 0, 0);
         extractionGrid.add(extractionTileSpinner, 1, 0);
         Label extDownsampleLabel = new Label("Downsample:");
+        TooltipHelper.install(
+                "Downsample factor applied when reading tiles.\n" +
+                "1 = full resolution, 2 = half, 4 = quarter.\n" +
+                "Match the downsample you use for supervised training.",
+                extDownsampleLabel, extractionDownsampleCombo);
         extractionGrid.add(extDownsampleLabel, 0, 1);
         extractionGrid.add(extractionDownsampleCombo, 1, 1);
         Label extMaxTilesLabel = new Label("Max tiles (total):");
+        TooltipHelper.install(
+                "Maximum tiles to keep across all selected images.\n" +
+                "If more tiles are extracted, the surplus is randomly\n" +
+                "discarded. Prevents one large WSI from dominating.",
+                extMaxTilesLabel, maxTilesSpinner);
         extractionGrid.add(extMaxTilesLabel, 0, 2);
         extractionGrid.add(maxTilesSpinner, 1, 2);
         projectPanel.getChildren().addAll(extractionGrid, projectSummaryLabel);
@@ -584,7 +669,13 @@ public class SSLPretrainingDialog {
                 scanDatasetAndUpdateInfo(dir);
             }
         });
+        TooltipHelper.install(browseBtn, "Browse for a directory of image tiles.");
         Label imageDirLabel = new Label("Image directory:");
+        TooltipHelper.install(
+                "Path to a directory of unlabeled image tiles.\n" +
+                "Supported: PNG, TIFF, JPEG, BMP, RAW.\n" +
+                "Subdirectories are scanned recursively.",
+                imageDirLabel, dataPathField);
         folderGrid.add(imageDirLabel, 0, 0);
         folderGrid.add(dataPathField, 1, 0);
         GridPane.setHgrow(dataPathField, Priority.ALWAYS);
@@ -617,7 +708,13 @@ public class SSLPretrainingDialog {
             File dir = dc.showDialog(dialog.getDialogPane().getScene().getWindow());
             if (dir != null) outputDirField.setText(dir.getAbsolutePath());
         });
+        TooltipHelper.install(browseBtn, "Browse for an output directory.");
         Label outputDirLabel = new Label("Output directory:");
+        TooltipHelper.install(
+                "Directory where the pretrained encoder weights (model.pt)\n" +
+                "and metadata.json will be saved.\n" +
+                "Defaults to a timestamped folder in the project directory.",
+                outputDirLabel, outputDirField);
         grid.add(outputDirLabel, 0, 0);
         grid.add(outputDirField, 1, 0);
         GridPane.setHgrow(outputDirField, Priority.ALWAYS);

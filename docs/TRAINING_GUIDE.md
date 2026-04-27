@@ -177,13 +177,14 @@ When MuViT (Transformer) is selected, the encoder combo is hidden and model-spec
 
 ## Step 5: Configure Weight Initialization
 
-The **WEIGHT INITIALIZATION** section controls how model weights are initialized. Choose one of four strategies:
+The **WEIGHT INITIALIZATION** section controls how model weights are initialized. Choose one of five strategies:
 
 | Strategy | When to use |
 |----------|-------------|
 | **Train from scratch** | Very large datasets or custom architectures. Rarely needed. |
 | **Use pretrained backbone weights** | **Recommended for most cases.** Uses ImageNet or histology-pretrained encoder weights. Shows a layer freeze panel for fine-grained control. |
 | **Use MAE pretrained encoder** | MuViT only. Load encoder weights from a self-supervised MAE pretrained .pt file. Click "Browse..." to select. Architecture locks to match the encoder. |
+| **Use SSL pretrained encoder** | UNet only. Load encoder weights from a SimCLR/BYOL self-supervised pretrained .pt file. Use when you have domain-specific unlabeled images (different microscope, staining, tissue type) and want the encoder to recognize those visual patterns before supervised training. Run **Utilities > SSL Pretrain Encoder** first. See [Domain Adaptation Guide](DOMAIN_ADAPTATION_GUIDE.md). |
 | **Continue training from saved model** | Resume from a previously trained classifier. Click "Select model..." to pick the model. All settings populate from the saved model. |
 
 When **Use pretrained backbone weights** is selected, a layer freeze panel appears:

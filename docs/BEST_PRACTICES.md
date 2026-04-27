@@ -385,6 +385,55 @@ Masked Autoencoder (MAE) pretraining teaches a MuViT encoder to understand tissu
 4. **Pretraining on CPU is extremely slow**: GPU (CUDA) is strongly recommended. A typical pretraining run takes 1-6 hours on GPU depending on dataset size and epochs
 5. **Save encoder weights**: The output directory contains the encoder weights file that can be loaded during classifier training
 
+## SSL Pretraining (SimCLR / BYOL)
+
+SSL (Self-Supervised Learning) pretraining teaches a CNN encoder backbone (ResNet, EfficientNet, MobileNet) to understand your images without labels. Unlike MAE which works with the MuViT transformer, SSL pretraining works with the standard UNet backbones.
+
+### When SSL pretraining helps
+
+- **Domain shift**: Your classifier works on your images but fails on images from a different microscope, staining protocol, or compression. SSL pretraining adapts the encoder to the new domain's visual characteristics. See the [Domain Adaptation Guide](DOMAIN_ADAPTATION_GUIDE.md) for a step-by-step walkthrough.
+- **New tissue types or sample preparation**: You are working with a tissue or specimen type that looks very different from ImageNet natural images (the default pretraining). SSL lets the encoder learn the visual vocabulary of your specific data.
+- **Small labeled datasets**: You have a large collection of unannotated images and a limited annotation budget. Pretrain on the unannotated images, then fine-tune with few labels.
+- **Multi-site studies**: Images from different sites or scanners have systematic appearance differences. SSL pretraining on the pooled unlabeled data creates an encoder that generalizes across sites.
+- **Rare classes**: When the class of interest is rare and hard to annotate, SSL pretraining on the broader tissue context helps the encoder understand the background and surrounding structures, which improves detection of the rare class during supervised training.
+
+### When to skip SSL pretraining
+
+- **Standard H&E histopathology at 20x**: The built-in histology-pretrained backbones (Lunit SwAV, Barlow Twins) are already trained on millions of H&E patches at 20x. They are likely better than a small SSL pretraining run.
+- **Very few tiles (< 30)**: The encoder needs enough diversity to learn meaningful patterns. With fewer than ~30 tiles, SSL pretraining may not improve over ImageNet weights.
+- **Quick experiments**: If you are still iterating on annotation strategy, skip pretraining until you have a stable workflow.
+
+### SimCLR vs. BYOL
+
+| Criterion | SimCLR | BYOL |
+|-----------|--------|------|
+| Batch size sensitivity | Needs large effective batch (64+) | Works with small batches (16-32) |
+| Small datasets | May underperform | **Better choice** |
+| Large datasets | **Better choice** | Good |
+| Training speed | Faster per epoch | Slightly slower (two networks) |
+| Typical use | General pretraining | Domain adaptation with limited data |
+
+**Recommendation:** Use **BYOL** for domain adaptation (you typically have tens to hundreds of images, not thousands). Use **SimCLR** when you have a large pool of unlabeled images (500+).
+
+### Domain-adaptive pretraining
+
+The most powerful use of SSL pretraining is **domain adaptation** -- taking an encoder that already works well on one set of images and adapting it to a different set:
+
+1. Train a supervised classifier on your original images (the "source domain")
+2. Collect unlabeled images from the new domain (different microscope, different staining, etc.)
+3. Run **SSL Pretrain Encoder** with the original model as the "source model"
+4. The encoder preserves its learned features while adapting to the new image characteristics
+5. Fine-tune with a few annotations from the new domain
+
+This approach requires far fewer annotations than training from scratch because the encoder already knows what biological structures look like -- it just needs to learn how they appear in the new imaging conditions.
+
+### Tips
+
+1. **Match the backbone**: Use the same backbone for SSL pretraining and supervised training (e.g., both ResNet-34)
+2. **100-200 epochs is usually sufficient**: The loss should decrease steadily. Diminishing returns past 200 epochs for most datasets.
+3. **Use representative tiles**: Include tiles from various regions and staining intensities
+4. **Check metadata.json**: After pretraining, open `metadata.json` next to the model.pt to verify the method, backbone, and epoch count
+
 ## Interpreting Tile Evaluation Results
 
 After training, the **Review Training Areas** feature evaluates every training tile and ranks them by loss. This section explains how to use those results to improve your classifier.

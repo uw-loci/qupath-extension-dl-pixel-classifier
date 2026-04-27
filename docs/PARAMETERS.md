@@ -174,6 +174,48 @@ These parameters are available in the **MAE Pretrain Encoder** dialog (**Extensi
 
 ---
 
+## SSL Pretraining Parameters
+
+These parameters are available in the **SSL Pretrain Encoder** dialog (**Extensions > DL Pixel Classifier > Utilities > SSL Pretrain Encoder...**). SSL pretraining trains CNN encoder backbones (ResNet, EfficientNet, MobileNet) using self-supervised learning on unlabeled image tiles.
+
+### Method & Architecture
+
+| Parameter | Options | Description |
+|-----------|---------|-------------|
+| **SSL Method** | SimCLR, BYOL | Self-supervised method. SimCLR uses contrastive learning (benefits from larger batches). BYOL uses self-distillation (works better with small datasets). |
+| **Backbone** | resnet18, resnet34, resnet50, efficientnet-b0/b1/b2, mobilenet_v2, histology-pretrained variants | CNN encoder backbone to pretrain. Must match the backbone you will use for supervised training. Foundation/ViT encoders are excluded (not compatible with SMP SSL). |
+| **Temperature** | 0.05-1.0 (default 0.5) | SimCLR only. Temperature scaling for contrastive loss. Lower = sharper similarity distribution. Try 0.1-0.2 for small datasets. |
+| **Projection dim** | 64-512 (default 256) | Output dimension of the projection head MLP. 256 is the standard for both methods. |
+| **Initialize from trained model** | File path (optional) | For domain-adaptive pretraining: select an existing trained model (.pt file) to initialize the encoder. The encoder starts with the learned weights and adapts them during SSL pretraining. Leave empty to train from scratch. |
+
+### Training Hyperparameters
+
+| Parameter | Default | Range | Description |
+|-----------|---------|-------|-------------|
+| **Epochs** | 100 | 10-2000 | Number of pretraining epochs. Auto-suggested based on dataset size in folder mode. |
+| **Batch Size** | 64 (SimCLR) / 32 (BYOL) | 2-256 | Tiles per training step. SimCLR benefits from larger batches. Gradient accumulation auto-applied for SimCLR when effective batch < 256. |
+| **Learning Rate** | 0.0003 | 0.00001-0.01 | AdamW learning rate with cosine annealing and linear warmup. |
+| **Warmup Epochs** | 10 | 0-50 | Linear learning rate warmup. Prevents early instability. |
+
+### Data
+
+| Parameter | Description |
+|-----------|-------------|
+| **Source mode** | **Project images**: extract tiles from annotated regions of selected QuPath project images. **Pre-extracted folder**: use existing image tiles from a directory. |
+| **Images** | (Project mode) Select which project images to include. Shows annotation count per image. |
+| **Annotation classes** | (Project mode) Multi-select: choose which annotation classes define tile extraction regions. Only areas covered by checked classes contribute tiles. |
+| **Tile size** | 128-1024 (default 256). Size of extracted tiles. Should be close to the tile size used for supervised training. |
+| **Downsample** | 1x, 2x, 4x, 8x. Resolution factor when reading tiles. Match the downsample used in supervised training. |
+| **Max tiles (total)** | 100-200000 (default 5000). Cap on total tiles after extraction. Prevents one large image from dominating. |
+
+### Output
+
+| Parameter | Description |
+|-----------|-------------|
+| **Output directory** | Where to save `model.pt` (encoder weights) and `metadata.json`. Defaults to `{project}/ssl_pretrained/{backbone}_{method}_{timestamp}/`. |
+
+---
+
 ## Inference Parameters
 
 The inference dialog is accessed via **Extensions > DL Pixel Classifier > Apply Classifier...**

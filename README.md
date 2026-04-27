@@ -40,6 +40,7 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 - **Foundation model encoders** (h-optimus-0, virchow, hibou-l, hibou-b, midnight, dinov2-large) -- large-scale pretrained vision transformers for rich tissue representations, downloaded on-demand from HuggingFace. All commercially-permissive licenses (Apache 2.0, MIT). Integration inspired by LazySlide (Zheng et al. 2026, Nature Methods).
 - **MuViT (Multi-scale Vision Transformer)** architecture with multi-resolution feature fusion
 - **MAE self-supervised pretraining** for MuViT encoders using unlabeled image tiles (standalone workflow via Utilities menu)
+- **SSL self-supervised pretraining** (SimCLR / BYOL) for CNN encoder backbones (ResNet, EfficientNet, MobileNet). Extract tiles from user-selected annotation classes. Supports **domain-adaptive pretraining** -- initialize from an existing trained model's encoder and adapt to new unlabeled data from a different microscope, staining, or compression. See [Domain Adaptation Guide](docs/DOMAIN_ADAPTATION_GUIDE.md).
 - **Pluggable architecture** supporting UNet, MuViT, and custom ONNX models
 - **Appose shared-memory IPC** for embedded Python inference with zero-copy tile transfer
 - **Groovy scripting API** for batch processing
