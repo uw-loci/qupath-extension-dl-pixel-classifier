@@ -90,7 +90,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
     /**
      * Observable property tracking whether the DL environment is ready for use.
-     * When true, workflow menu items are visible. When false, only the setup item is shown.
+     * When true, workflow menu items are enabled. When false, they are disabled
+     * and the Setup item is shown at the top of the menu.
      */
     private final BooleanProperty environmentReady = new SimpleBooleanProperty(false);
 
@@ -379,10 +380,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 Bindings.createBooleanBinding(
                         () -> qupath.getProject() == null,
                         qupath.projectProperty()
-                )
+                ).or(environmentReady.not())
         );
         trainOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("training"));
-        trainOption.visibleProperty().bind(environmentReady);
 
         // 2) Apply Classifier - run inference on current image
         MenuItem inferenceOption = new MenuItem(res.getString("menu.inference"));
@@ -394,14 +394,12 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 Bindings.createBooleanBinding(
                         () -> qupath.getImageData() == null,
                         qupath.imageDataProperty()
-                )
+                ).or(environmentReady.not())
         );
         inferenceOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("inference"));
-        inferenceOption.visibleProperty().bind(environmentReady);
 
         // Separator between train/inference and overlay controls
         SeparatorMenuItem sep1 = new SeparatorMenuItem();
-        sep1.visibleProperty().bind(environmentReady);
 
         OverlayService overlayService = OverlayService.getInstance();
         BooleanBinding noImage = Bindings.createBooleanBinding(
@@ -425,8 +423,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 "Choose a trained classifier for the prediction overlay.\n" +
                         "The selected model is used when toggling the overlay on/off.");
         selectModelOption.setOnAction(e -> selectOverlayModel(qupath, overlayService));
-        selectModelOption.disableProperty().bind(noImage);
-        selectModelOption.visibleProperty().bind(environmentReady);
+        selectModelOption.disableProperty().bind(noImage.or(environmentReady.not()));
 
         // 4) Toggle Prediction Overlay - simple on/off toggle
         CheckMenuItem livePredictionOption = new CheckMenuItem(res.getString("menu.toggleOverlay"));
@@ -463,12 +460,10 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             }
         });
         livePredictionOption.disableProperty().bind(
-                noImage.or(overlayService.trainingActiveProperty()));
-        livePredictionOption.visibleProperty().bind(environmentReady);
+                noImage.or(overlayService.trainingActiveProperty()).or(environmentReady.not()));
 
         // Separator before models
         SeparatorMenuItem sep2 = new SeparatorMenuItem();
-        sep2.visibleProperty().bind(environmentReady);
 
         // 5) Manage Models - browse and manage saved classifiers
         MenuItem modelsOption = new MenuItem(res.getString("menu.manageModels"));
@@ -476,29 +471,30 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 "Browse, import, export, and delete saved classifiers.\n" +
                         "View model metadata, training configuration, and class mappings.");
         modelsOption.setOnAction(e -> DLClassifierController.getInstance().startWorkflow("modelManagement"));
-        modelsOption.visibleProperty().bind(environmentReady);
+        modelsOption.disableProperty().bind(environmentReady.not());
 
         // Separator before utilities
         SeparatorMenuItem sep3 = new SeparatorMenuItem();
-        sep3.visibleProperty().bind(environmentReady);
 
         // === UTILITIES SUBMENU ===
         Menu utilitiesMenu = new Menu("Utilities");
 
-        // Free GPU Memory - visible when environment ready
+        // Free GPU Memory - disabled when environment not ready
         MenuItem freeGpuOption = new MenuItem("Free GPU Memory");
         TooltipHelper.installOnMenuItem(freeGpuOption,
                 "Force-clear all GPU memory held by the classification server.\n" +
                         "Cancels running training jobs, clears cached models, and\n" +
                         "frees GPU VRAM. Use after a crash or failed training.");
+        BooleanProperty freeGpuRunning = new SimpleBooleanProperty(false);
+        freeGpuOption.disableProperty().bind(freeGpuRunning.or(environmentReady.not()));
         freeGpuOption.setOnAction(e -> {
-            freeGpuOption.setDisable(true);
+            freeGpuRunning.set(true);
             Thread clearThread = new Thread(() -> {
                 try {
                     ClassifierBackend backend = BackendFactory.getBackend();
                     String result = backend.clearGPUMemory();
                     Platform.runLater(() -> {
-                        freeGpuOption.setDisable(false);
+                        freeGpuRunning.set(false);
                         if (result != null) {
                             Dialogs.showInfoNotification(EXTENSION_NAME, result);
                         } else {
@@ -509,7 +505,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 } catch (Exception ex) {
                     logger.error("GPU memory clear failed", ex);
                     Platform.runLater(() -> {
-                        freeGpuOption.setDisable(false);
+                        freeGpuRunning.set(false);
                         Dialogs.showErrorNotification(EXTENSION_NAME,
                                 "Error clearing GPU memory: " + ex.getMessage());
                     });
@@ -518,7 +514,6 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             clearThread.setDaemon(true);
             clearThread.start();
         });
-        freeGpuOption.visibleProperty().bind(environmentReady);
 
         // MAE Pretrain Encoder - visible when environment ready
         MenuItem maePretrainOption = new MenuItem("MAE Pretrain Encoder...");
@@ -527,7 +522,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 "Train on unlabeled image tiles using masked autoencoder.\n" +
                 "The resulting encoder can be loaded via 'Continue from model'.");
         maePretrainOption.setOnAction(e -> startMAEPretraining());
-        maePretrainOption.visibleProperty().bind(environmentReady);
+        maePretrainOption.disableProperty().bind(environmentReady.not());
 
         MenuItem sslPretrainOption = new MenuItem("SSL Pretrain Encoder...");
         TooltipHelper.installOnMenuItem(sslPretrainOption,
@@ -535,7 +530,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 "Uses SimCLR or BYOL on tiles from annotated regions.\n" +
                 "The resulting encoder can be loaded via 'Use SSL pretrained encoder'.");
         sslPretrainOption.setOnAction(e -> startSSLPretraining());
-        sslPretrainOption.visibleProperty().bind(environmentReady);
+        sslPretrainOption.disableProperty().bind(environmentReady.not());
 
         // Rebuild DL Environment - always visible so users can fix broken environments
         MenuItem rebuildItem = new MenuItem(res.getString("menu.rebuildEnvironment"));
@@ -551,7 +546,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         "Python package versions, and platform details.\n" +
                         "All information is copyable for bug reports.");
         systemInfoOption.setOnAction(e -> showSystemInfo());
-        systemInfoOption.visibleProperty().bind(environmentReady);
+        systemInfoOption.disableProperty().bind(environmentReady.not());
 
         // Python Console - visible when environment ready
         MenuItem pythonConsoleOption = new MenuItem(res.getString("menu.pythonConsole"));
@@ -559,7 +554,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 "Show a live console window displaying Python process output.\n" +
                 "Useful for monitoring model loading, inference, and debugging.");
         pythonConsoleOption.setOnAction(e -> PythonConsoleWindow.getInstance().show());
-        pythonConsoleOption.visibleProperty().bind(environmentReady);
+        pythonConsoleOption.disableProperty().bind(environmentReady.not());
 
         // Where Are My Files? - always visible
         MenuItem whereFilesOption = new MenuItem("Where Are My Files?");
@@ -583,7 +578,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 "Reopen a previously saved Training Area Issues session\n"
                         + "for a specific classifier, without re-running evaluation.");
         loadIssuesOption.setOnAction(e -> openSavedTrainingIssuesDialog());
-        loadIssuesOption.visibleProperty().bind(environmentReady);
+        loadIssuesOption.disableProperty().bind(environmentReady.not());
 
         utilitiesMenu.getItems().addAll(pythonConsoleOption, whereFilesOption,
                 systemInfoOption, new SeparatorMenuItem(),
