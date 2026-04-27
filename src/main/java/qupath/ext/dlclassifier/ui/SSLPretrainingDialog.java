@@ -406,6 +406,11 @@ public class SSLPretrainingDialog {
 
         GridPane grid = new GridPane();
         grid.setHgap(10); grid.setVgap(8);
+        // Ensure the control column stretches to fill available width
+        javafx.scene.layout.ColumnConstraints labelCol = new javafx.scene.layout.ColumnConstraints();
+        javafx.scene.layout.ColumnConstraints controlCol = new javafx.scene.layout.ColumnConstraints();
+        controlCol.setHgrow(Priority.ALWAYS);
+        grid.getColumnConstraints().addAll(labelCol, controlCol);
 
         Label methodLabel = new Label("SSL Method:");
         TooltipHelper.install(
