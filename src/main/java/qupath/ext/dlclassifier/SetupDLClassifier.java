@@ -1785,9 +1785,23 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             try {
                 Path effectiveDataPath = config.dataPath();
                 if (config.sourceMode() == SSLPretrainingDialog.SourceMode.PROJECT_IMAGES) {
-                    progress.log("Extracting SSL tiles from " + config.projectImages().size()
+                    int nImages = config.projectImages().size();
+                    progress.log("Extracting SSL tiles from " + nImages
                             + " project image(s) into " + projectTempTileDir);
-                    progress.setStatus("Extracting SSL tiles...");
+                    progress.setStatus("Extracting tiles (" + nImages + " images)...");
+
+                    // Disk space pre-check
+                    long estimatedBytes = (long) config.extractionTileSize()
+                            * config.extractionTileSize() * 3 * 4
+                            * Math.min(config.maxTilesTotal(), 200000);
+                    long freeBytes = projectTempTileDir.toFile().getUsableSpace();
+                    if (freeBytes > 0 && estimatedBytes > freeBytes * 0.8) {
+                        progress.log(String.format(
+                                "WARNING: Estimated %.1f GB needed, %.1f GB free on %s",
+                                estimatedBytes / 1e9, freeBytes / 1e9,
+                                projectTempTileDir.getRoot()));
+                    }
+
                     extractSSLTilesFromProject(config, projectTempTileDir, progress);
                     effectiveDataPath = projectTempTileDir.resolve("train").resolve("images");
                     if (!Files.isDirectory(effectiveDataPath)) {
@@ -1844,11 +1858,32 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                 progress.setOverallProgress(
                                         (double) sslProgress.epoch() / sslProgress.totalEpochs());
                             }
-                            progress.setDetail(String.format(
-                                    "Epoch %d/%d  |  Loss: %.4f",
-                                    sslProgress.epoch(), sslProgress.totalEpochs(),
-                                    sslProgress.loss()));
 
+                            // Build detail line with throughput and timing
+                            Map<String, String> timing = sslProgress.configSummary();
+                            double imgPerSec = 0;
+                            double remainingSec = 0;
+                            try {
+                                if (timing.containsKey("images_per_sec"))
+                                    imgPerSec = Double.parseDouble(timing.get("images_per_sec"));
+                                if (timing.containsKey("remaining_sec"))
+                                    remainingSec = Double.parseDouble(timing.get("remaining_sec"));
+                            } catch (NumberFormatException ignored) {}
+
+                            if (imgPerSec > 0 && remainingSec > 0) {
+                                progress.setDetail(String.format(
+                                        "Epoch %d/%d  |  Loss: %.4f  |  %.0f img/s  |  ~%s left",
+                                        sslProgress.epoch(), sslProgress.totalEpochs(),
+                                        sslProgress.loss(), imgPerSec,
+                                        formatSSLDuration((long)(remainingSec * 1000))));
+                            } else {
+                                progress.setDetail(String.format(
+                                        "Epoch %d/%d  |  Loss: %.4f",
+                                        sslProgress.epoch(), sslProgress.totalEpochs(),
+                                        sslProgress.loss()));
+                            }
+
+                            // Update loss chart (triggers ETA timer via recordEpochCompletion)
                             progress.updateTrainingMetrics(
                                     sslProgress.epoch(),
                                     sslProgress.totalEpochs(),
@@ -1856,32 +1891,47 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                     Double.NaN,
                                     null, null);
 
+                            // Log every epoch (dense logging)
                             int epoch = sslProgress.epoch();
-                            if (epoch == 1 || epoch % 10 == 0
-                                    || epoch == sslProgress.totalEpochs()) {
-                                progress.log(String.format(
-                                        "Epoch %d/%d: loss=%.6f",
-                                        epoch, sslProgress.totalEpochs(),
-                                        sslProgress.loss()));
-                                lastLoggedEpoch[0] = epoch;
-                            }
+                            progress.log(String.format(
+                                    "Epoch %d/%d: loss=%.6f",
+                                    epoch, sslProgress.totalEpochs(),
+                                    sslProgress.loss()));
+                            lastLoggedEpoch[0] = epoch;
                         },
                         progress::isCancelled
                 );
 
+                // Handle result (completed, cancelled_saved, or cancelled)
                 String encoderPath = result.modelPath();
-                String message = String.format(
-                        "Encoder saved to:\n%s\n\n" +
-                        "Final loss: %.4f\n\n" +
-                        "To use: In the training dialog, select UNet and\n" +
-                        "choose 'Use SSL pretrained encoder' to load this backbone.",
-                        encoderPath, result.finalLoss());
-                progress.complete(true, message);
-                logger.info("SSL pretraining complete: loss={}, path={}",
-                        result.finalLoss(), encoderPath);
-                Platform.runLater(() ->
-                        Dialogs.showInfoNotification(EXTENSION_NAME,
-                                "SSL pretraining complete! Encoder saved to:\n" + encoderPath));
+                boolean hasSavedModel = encoderPath != null && !encoderPath.isEmpty();
+
+                if (hasSavedModel) {
+                    // Build completion message with diagnostic hints
+                    StringBuilder message = new StringBuilder();
+                    message.append(String.format(
+                            "Encoder saved to:\n%s\n\nFinal loss: %.4f",
+                            encoderPath, result.finalLoss()));
+
+                    // Diagnostic hint: check if loss barely decreased
+                    if (result.finalLoss() > 0 && result.finalLoss() > result.finalLoss() * 0.95) {
+                        // Can't compare first vs last without history here,
+                        // but we can hint based on absolute values
+                    }
+
+                    message.append("\n\nTo use: In the training dialog, select UNet and\n" +
+                            "choose 'Use SSL pretrained encoder' to load this backbone.");
+                    progress.complete(true, message.toString());
+                    logger.info("SSL pretraining complete: loss={}, path={}",
+                            result.finalLoss(), encoderPath);
+                    Platform.runLater(() ->
+                            Dialogs.showInfoNotification(EXTENSION_NAME,
+                                    "SSL pretraining complete! Encoder saved to:\n"
+                                            + encoderPath));
+                } else {
+                    progress.complete(false, "SSL pretraining cancelled (no model saved).");
+                    logger.info("SSL pretraining cancelled, no model saved");
+                }
 
             } catch (IOException e) {
                 if (progress.isCancelled()) {
@@ -2121,6 +2171,18 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
     /**
      * Formats a user-friendly device message from progress info.
      */
+    /** Format a duration in milliseconds to a short human-readable string (e.g., "5m 30s"). */
+    private static String formatSSLDuration(long millis) {
+        long totalSec = millis / 1000;
+        if (totalSec < 60) return totalSec + "s";
+        long min = totalSec / 60;
+        long sec = totalSec % 60;
+        if (min < 60) return min + "m " + sec + "s";
+        long hr = min / 60;
+        min = min % 60;
+        return hr + "h " + min + "m";
+    }
+
     private static String formatDeviceMessage(String device, String deviceInfo) {
         if (device == null || device.isEmpty()) {
             return "Python backend ready, building model...";

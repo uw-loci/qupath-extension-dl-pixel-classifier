@@ -534,11 +534,22 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
         Task task = appose.createTask("pretrain_ssl", inputs);
 
-        // Wire up progress reporting (same format as MAE pretraining)
+        // Wire up progress reporting with timing data
         task.listen(event -> {
             if (event.responseType == ResponseType.UPDATE && event.message != null) {
                 try {
                     JsonObject json = JsonParser.parseString(event.message).getAsJsonObject();
+                    // Extract timing data into configSummary for the orchestration layer
+                    Map<String, String> timingData = new HashMap<>();
+                    if (json.has("elapsed_sec"))
+                        timingData.put("elapsed_sec", json.get("elapsed_sec").getAsString());
+                    if (json.has("remaining_sec"))
+                        timingData.put("remaining_sec", json.get("remaining_sec").getAsString());
+                    if (json.has("epoch_sec"))
+                        timingData.put("epoch_sec", json.get("epoch_sec").getAsString());
+                    if (json.has("images_per_sec"))
+                        timingData.put("images_per_sec", json.get("images_per_sec").getAsString());
+
                     ClassifierClient.TrainingProgress progress =
                             new ClassifierClient.TrainingProgress(
                                     json.has("epoch") ? json.get("epoch").getAsInt() : 0,
@@ -552,7 +563,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                                     json.has("device_info") ? json.get("device_info").getAsString() : "",
                                     json.has("status") ? json.get("status").getAsString() : "",
                                     json.has("setup_phase") ? json.get("setup_phase").getAsString() : "",
-                                    Map.of()
+                                    timingData
                             );
                     if (progressCallback != null) {
                         progressCallback.accept(progress);

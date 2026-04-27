@@ -4,4 +4,4 @@ try:
     from importlib.metadata import version as _get_version
     __version__ = _get_version("dlclassifier-server")
 except Exception:
-    __version__ = "0.7.1"  # fallback when running from JAR-bundled scripts
+    __version__ = "0.7.2"  # fallback when running from JAR-bundled scripts

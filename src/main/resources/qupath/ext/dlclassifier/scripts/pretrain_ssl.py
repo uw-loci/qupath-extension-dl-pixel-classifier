@@ -84,7 +84,9 @@ def setup_callback(phase, data=None):
     task.update(message=json.dumps(msg), current=0, maximum=total_epochs)
 
 
-def progress_callback(epoch, total, loss, lr):
+def progress_callback(epoch, total, loss, lr,
+                      elapsed_sec=0, remaining_sec=0,
+                      epoch_sec=0, images_per_sec=0):
     """Forward training progress to Appose."""
     import math
     # Guard against NaN/Inf which produce invalid JSON that Gson cannot parse
@@ -103,6 +105,10 @@ def progress_callback(epoch, total, loss, lr):
                 "ssl_method": ssl_method,
                 "device": ssl_service._device_str,
                 "device_info": device_info,
+                "elapsed_sec": round(elapsed_sec, 1),
+                "remaining_sec": round(remaining_sec, 1),
+                "epoch_sec": round(epoch_sec, 1),
+                "images_per_sec": round(images_per_sec, 1),
             }),
             current=epoch,
             maximum=total

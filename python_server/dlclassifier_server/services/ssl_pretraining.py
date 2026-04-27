@@ -206,8 +206,13 @@ class SSLImageDataset(Dataset):
 
     def _preload_images(self):
         """Load all images into memory."""
-        import psutil
-        available_mb = psutil.virtual_memory().available / (1024 * 1024)
+        try:
+            import psutil
+            available_mb = psutil.virtual_memory().available / (1024 * 1024)
+        except ImportError:
+            logger.info("psutil not available -- skipping memory check, "
+                        "preloading all images")
+            available_mb = float('inf')
 
         # Estimate dataset size: assume ~1MB per tile (conservative)
         estimated_mb = len(self.image_paths) * 1.0
@@ -842,8 +847,25 @@ class SSLPretrainingService:
         except Exception:
             pass  # Never let estimation break training
 
+        # --- Optional torch.compile ---
+        use_compile = config.get("torch_compile", False)
+        if use_compile and self._device_str == "cuda":
+            try:
+                import platform
+                if platform.system() == "Linux":
+                    model = torch.compile(model)
+                    logger.info("torch.compile enabled")
+                else:
+                    logger.info("torch.compile skipped (requires Linux)")
+            except Exception as e:
+                logger.warning("torch.compile failed, continuing without: %s", e)
+
+        # --- Pause signal path ---
+        pause_signal_path = config.get("pause_signal_path", None)
+
         # --- Training loop ---
         _report("starting_training")
+        import time as _time
         logger.info(
             "%s pretraining: %d epochs, batch=%d (effective %d, accum=%d), "
             "lr=%.2e, encoder=%s",
@@ -858,137 +880,291 @@ class SSLPretrainingService:
 
         best_loss = float('inf')
         best_state = None
+        best_epoch = 0
         history = []
+        training_start_time = _time.monotonic()
 
         first_batch_done = False
-        for epoch in range(1, epochs + 1):
-            if cancel_flag and cancel_flag.is_set():
-                logger.info("Pretraining cancelled at epoch %d", epoch)
-                break
-
-            # Clear GPU cache at epoch start to prevent memory accumulation
-            if self._device_str == "cuda":
-                self.gpu_manager.clear_cache()
-
-            model.train()
-            epoch_loss = 0.0
-            n_batches = 0
-
-            optimizer.zero_grad(set_to_none=True)
-
-            for batch_idx, (view1, view2) in enumerate(dataloader):
+        try:
+            for epoch in range(1, epochs + 1):
                 if cancel_flag and cancel_flag.is_set():
+                    logger.info("Pretraining cancelled at epoch %d", epoch)
                     break
 
-                view1 = view1.to(self.device, non_blocking=True)
-                view2 = view2.to(self.device, non_blocking=True)
+                # Check pause signal
+                if pause_signal_path and Path(pause_signal_path).exists():
+                    logger.info("Pause signal detected at epoch %d", epoch)
+                    ckpt = {
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "scheduler_state_dict": scheduler.state_dict(),
+                        "epoch": epoch,
+                        "best_loss": best_loss,
+                        "best_state": best_state,
+                        "history": history,
+                        "config": config,
+                    }
+                    torch.save(ckpt, str(output_dir / "pause_checkpoint.pt"))
+                    logger.info("Saved pause checkpoint to %s",
+                                output_dir / "pause_checkpoint.pt")
+                    self._cleanup_training_memory()
+                    return {
+                        "status": "paused",
+                        "encoder_path": "",
+                        "epochs_completed": epoch - 1,
+                        "final_loss": history[-1]["loss"] if history else 0.0,
+                        "best_loss": best_loss,
+                    }
 
-                if not first_batch_done:
-                    logger.info(
-                        "First batch: shape=%s, dtype=%s, device=%s",
-                        list(view1.shape), view1.dtype, view1.device)
+                epoch_start = _time.monotonic()
 
-                # Forward + loss
-                if use_amp:
-                    with torch.amp.autocast("cuda", dtype=amp_dtype):
+                # Clear GPU cache at epoch start
+                if self._device_str == "cuda":
+                    self.gpu_manager.clear_cache()
+
+                model.train()
+                epoch_loss = 0.0
+                n_batches = 0
+
+                optimizer.zero_grad(set_to_none=True)
+
+                for batch_idx, (view1, view2) in enumerate(dataloader):
+                    if cancel_flag and cancel_flag.is_set():
+                        break
+
+                    view1 = view1.to(self.device, non_blocking=True)
+                    view2 = view2.to(self.device, non_blocking=True)
+
+                    if not first_batch_done:
+                        logger.info(
+                            "First batch: shape=%s, dtype=%s, device=%s",
+                            list(view1.shape), view1.dtype, view1.device)
+
+                    # Forward + loss
+                    if use_amp:
+                        with torch.amp.autocast("cuda", dtype=amp_dtype):
+                            loss = self._compute_loss(
+                                model, view1, view2, method,
+                                temperature, ema_decay)
+                        loss = loss / grad_accum_steps
+                        if use_grad_scaler:
+                            scaler.scale(loss).backward()
+                        else:
+                            loss.backward()
+                    else:
                         loss = self._compute_loss(
                             model, view1, view2, method,
                             temperature, ema_decay)
-                    loss = loss / grad_accum_steps
-                    if use_grad_scaler:
-                        scaler.scale(loss).backward()
-                    else:
+                        loss = loss / grad_accum_steps
                         loss.backward()
-                else:
-                    loss = self._compute_loss(
-                        model, view1, view2, method,
-                        temperature, ema_decay)
-                    loss = loss / grad_accum_steps
-                    loss.backward()
 
-                if not first_batch_done:
-                    logger.info(
-                        "First forward+backward pass complete, loss=%.6f",
-                        loss.item() * grad_accum_steps)
-                    # Log peak GPU memory after first batch
-                    if self._device_str == "cuda":
-                        peak_mb = self.gpu_manager.get_peak_allocated_mb()
-                        logger.info("Peak GPU memory after first batch: %.0f MB",
-                                    peak_mb)
-                    first_batch_done = True
+                    if not first_batch_done:
+                        logger.info(
+                            "First forward+backward pass complete, loss=%.6f",
+                            loss.item() * grad_accum_steps)
+                        if self._device_str == "cuda":
+                            peak_mb = self.gpu_manager.get_peak_allocated_mb()
+                            logger.info(
+                                "Peak GPU memory after first batch: %.0f MB",
+                                peak_mb)
+                        first_batch_done = True
 
-                # Optimizer step
-                if (batch_idx + 1) % grad_accum_steps == 0 or \
-                        (batch_idx + 1) == len(dataloader):
-                    if use_amp and use_grad_scaler:
-                        scaler.unscale_(optimizer)
-                        torch.nn.utils.clip_grad_norm_(
-                            model.parameters(), 1.0)
-                        scaler.step(optimizer)
-                        scaler.update()
-                    else:
-                        torch.nn.utils.clip_grad_norm_(
-                            model.parameters(), 1.0)
-                        optimizer.step()
-                    optimizer.zero_grad(set_to_none=True)
+                    # Optimizer step
+                    if (batch_idx + 1) % grad_accum_steps == 0 or \
+                            (batch_idx + 1) == len(dataloader):
+                        if use_amp and use_grad_scaler:
+                            scaler.unscale_(optimizer)
+                            torch.nn.utils.clip_grad_norm_(
+                                model.parameters(), 1.0)
+                            scaler.step(optimizer)
+                            scaler.update()
+                        else:
+                            torch.nn.utils.clip_grad_norm_(
+                                model.parameters(), 1.0)
+                            optimizer.step()
+                        optimizer.zero_grad(set_to_none=True)
 
-                    # BYOL: EMA update after each optimizer step
-                    if method == "byol":
-                        model.update_target(ema_decay)
+                        # BYOL: EMA update after each optimizer step
+                        if method == "byol":
+                            model.update_target(ema_decay)
 
-                epoch_loss += loss.item() * grad_accum_steps
-                n_batches += 1
+                    epoch_loss += loss.item() * grad_accum_steps
+                    n_batches += 1
 
-            scheduler.step()
+                scheduler.step()
 
-            avg_loss = epoch_loss / max(1, n_batches)
-            current_lr = optimizer.param_groups[0]['lr']
+                # --- Epoch metrics ---
+                epoch_end = _time.monotonic()
+                epoch_duration = epoch_end - epoch_start
+                elapsed = epoch_end - training_start_time
+                avg_epoch_sec = elapsed / epoch
+                remaining_sec = avg_epoch_sec * (epochs - epoch)
+                images_per_sec = (n_batches * batch_size) / max(
+                    epoch_duration, 0.001)
 
-            history.append({
-                "epoch": epoch,
-                "loss": avg_loss,
-                "lr": current_lr,
-            })
+                avg_loss = epoch_loss / max(1, n_batches)
+                current_lr = optimizer.param_groups[0]['lr']
 
-            if avg_loss < best_loss:
-                best_loss = avg_loss
-                # Save only encoder weights for the best model
-                best_state = self._extract_encoder_state(model, method)
+                history.append({
+                    "epoch": epoch,
+                    "loss": avg_loss,
+                    "lr": current_lr,
+                    "epoch_sec": round(epoch_duration, 2),
+                })
 
-            if progress_callback:
-                try:
-                    progress_callback(epoch, epochs, avg_loss, current_lr)
-                except Exception:
-                    pass
+                # Best model tracking with disk persistence
+                if avg_loss < best_loss:
+                    best_loss = avg_loss
+                    best_epoch = epoch
+                    best_state = self._extract_encoder_state(model, method)
+                    # Persist to disk for crash recovery
+                    best_ckpt_path = output_dir / "best_in_progress.pt"
+                    torch.save({
+                        "model_state_dict": best_state,
+                        "epoch": epoch,
+                        "loss": best_loss,
+                    }, str(best_ckpt_path))
 
-            if epoch % 10 == 0 or epoch == 1:
-                logger.info("Epoch %d/%d: loss=%.6f, lr=%.2e",
-                            epoch, epochs, avg_loss, current_lr)
+                # Progress callback with timing data
+                if progress_callback:
+                    try:
+                        progress_callback(
+                            epoch, epochs, avg_loss, current_lr,
+                            elapsed_sec=elapsed,
+                            remaining_sec=remaining_sec,
+                            epoch_sec=epoch_duration,
+                            images_per_sec=images_per_sec)
+                    except Exception:
+                        pass
 
-            # Periodic checkpoint
-            if checkpoint_interval > 0 and epoch % checkpoint_interval == 0:
-                ckpt_path = output_dir / ("checkpoint_epoch_%d.pt" % epoch)
-                ckpt_state = self._extract_encoder_state(model, method)
-                torch.save({"model_state_dict": ckpt_state}, str(ckpt_path))
-                logger.info("Saved checkpoint: %s", ckpt_path)
+                # Dense epoch logging with timing
+                logger.info(
+                    "Epoch %d/%d: loss=%.6f, lr=%.2e "
+                    "(%.1fs, %.1f img/s, ~%.0fs remaining)",
+                    epoch, epochs, avg_loss, current_lr,
+                    epoch_duration, images_per_sec, remaining_sec)
+
+                # Periodic checkpoint
+                if checkpoint_interval > 0 and \
+                        epoch % checkpoint_interval == 0:
+                    ckpt_path = output_dir / (
+                        "checkpoint_epoch_%d.pt" % epoch)
+                    ckpt_state = self._extract_encoder_state(model, method)
+                    torch.save(
+                        {"model_state_dict": ckpt_state}, str(ckpt_path))
+                    logger.info("Saved checkpoint: %s", ckpt_path)
+
+        except Exception as exc:
+            # OOM-specific handling: strip traceback to release GPU memory
+            if "OutOfMemory" in type(exc).__name__:
+                import traceback as _tb
+                error_text = _tb.format_exc()
+                exc.__traceback__ = None
+                self._cleanup_training_memory()
+                raise RuntimeError(
+                    "GPU out of memory during SSL pretraining. "
+                    "Try reducing batch size or tile size.\n\n"
+                    + error_text) from None
+            raise
+        finally:
+            self._cleanup_training_memory()
+
+        # --- Handle cancellation with save ---
+        was_cancelled = cancel_flag and cancel_flag.is_set()
+        if was_cancelled:
+            if best_state is not None:
+                # Save best model even on cancellation
+                encoder_path = str(output_dir / "model.pt")
+                torch.save({"model_state_dict": best_state}, encoder_path)
+                self._save_metadata(
+                    output_dir, method, encoder_name, num_channels,
+                    tile_size, history, best_loss, best_epoch,
+                    batch_size, effective_batch, learning_rate,
+                    len(dataset), temperature, ema_decay,
+                    projection_dim, pretrained_model_path, norm_stats)
+                logger.info(
+                    "Cancelled at epoch %d but saved best model "
+                    "(epoch %d, loss=%.6f) to %s",
+                    len(history), best_epoch, best_loss, encoder_path)
+                return {
+                    "status": "cancelled_saved",
+                    "encoder_path": encoder_path,
+                    "epochs_completed": len(history),
+                    "final_loss": history[-1]["loss"] if history else 0.0,
+                    "best_loss": best_loss,
+                }
+            else:
+                logger.info("Cancelled with no completed epochs")
+                return {
+                    "status": "cancelled",
+                    "encoder_path": "",
+                    "epochs_completed": 0,
+                    "final_loss": 0.0,
+                    "best_loss": 0.0,
+                }
 
         # --- Save best model ---
         _report("saving_model")
 
         if best_state is None:
-            # No improvement recorded -- save current
             best_state = self._extract_encoder_state(model, method)
+            best_epoch = len(history)
 
         encoder_path = str(output_dir / "model.pt")
         torch.save({"model_state_dict": best_state}, encoder_path)
 
-        # Verify key format
         n_encoder_keys = sum(
             1 for k in best_state if k.startswith("encoder."))
         logger.info("Saved %d encoder.* keys to %s",
                      n_encoder_keys, encoder_path)
 
         # Save metadata
+        self._save_metadata(
+            output_dir, method, encoder_name, num_channels,
+            tile_size, history, best_loss, best_epoch,
+            batch_size, effective_batch, learning_rate,
+            len(dataset), temperature, ema_decay,
+            projection_dim, pretrained_model_path, norm_stats)
+
+        # Clean up crash-recovery checkpoint
+        best_ckpt = output_dir / "best_in_progress.pt"
+        if best_ckpt.exists():
+            best_ckpt.unlink()
+
+        elapsed_total = _time.monotonic() - training_start_time
+        logger.info(
+            "%s pretraining complete: %d epochs (best at %d), "
+            "best_loss=%.6f, %.1f min total -> %s",
+            method.upper(), len(history), best_epoch,
+            best_loss, elapsed_total / 60, output_dir)
+
+        self.gpu_manager.clear_cache()
+
+        return {
+            "status": "completed",
+            "encoder_path": encoder_path,
+            "epochs_completed": len(history),
+            "final_loss": history[-1]["loss"] if history else 0.0,
+            "best_loss": best_loss,
+            "best_epoch": best_epoch,
+            "elapsed_sec": round(elapsed_total, 1),
+        }
+
+    def _cleanup_training_memory(self):
+        """Free GPU memory after training completes or fails."""
+        import gc
+        gc.collect()
+        self.gpu_manager.clear_cache()
+        self.gpu_manager.log_memory_status(prefix="SSL cleanup: ")
+
+    @staticmethod
+    def _save_metadata(
+        output_dir, method, encoder_name, num_channels, tile_size,
+        history, best_loss, best_epoch, batch_size, effective_batch,
+        learning_rate, num_images, temperature, ema_decay,
+        projection_dim, pretrained_model_path, norm_stats,
+    ):
+        """Save metadata.json alongside model.pt."""
         metadata = {
             "model_type": "ssl_pretrained",
             "ssl_method": method,
@@ -1001,36 +1177,24 @@ class SSLPretrainingService:
             "pretraining": {
                 "method": method,
                 "epochs": len(history),
+                "best_epoch": best_epoch,
                 "final_loss": history[-1]["loss"] if history else 0.0,
                 "best_loss": best_loss,
                 "batch_size": batch_size,
                 "effective_batch_size": effective_batch,
                 "learning_rate": learning_rate,
-                "num_images": len(dataset),
+                "num_images": num_images,
                 "temperature": temperature if method == "simclr" else None,
                 "ema_decay": ema_decay if method == "byol" else None,
                 "projection_dim": projection_dim,
                 "domain_adaptive": pretrained_model_path is not None,
-                "source_model": pretrained_model_path if pretrained_model_path else None,
+                "source_model": (pretrained_model_path
+                                 if pretrained_model_path else None),
             },
             "normalization_stats": norm_stats,
         }
-        with open(str(output_dir / "metadata.json"), 'w') as f:
+        with open(str(Path(output_dir) / "metadata.json"), 'w') as f:
             json.dump(metadata, f, indent=2)
-
-        logger.info(
-            "%s pretraining complete: %d epochs, best_loss=%.6f -> %s",
-            method.upper(), len(history), best_loss, output_dir)
-
-        self.gpu_manager.clear_cache()
-
-        return {
-            "status": "completed",
-            "encoder_path": encoder_path,
-            "epochs_completed": len(history),
-            "final_loss": history[-1]["loss"] if history else 0.0,
-            "best_loss": best_loss,
-        }
 
     @staticmethod
     def _compute_loss(model, view1, view2, method, temperature, ema_decay):
