@@ -825,7 +825,7 @@ public class ApposeService {
      * </ol>
      */
     /** Extension version. Used for pip URL construction and script generation. */
-    public static final String DL_SERVER_VERSION = "0.7.0";
+    public static final String DL_SERVER_VERSION = "0.7.1";
     private static final boolean IS_DEV_BUILD = DL_SERVER_VERSION.contains("-dev");
     private static final String DL_SERVER_PIP_URL;
     static {
