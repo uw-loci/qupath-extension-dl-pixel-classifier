@@ -104,6 +104,7 @@ public class SSLPretrainingDialog {
     private final Label emaDecayLabel;
     private final Label emaDecayFinalLabel;
     private final CheckBox stainAugCheckBox;
+    private final CheckBox scaleLrByBatchCheckBox;
 
     // Live VRAM estimation
     private Label vramEstimateLabel;
@@ -311,6 +312,18 @@ public class SSLPretrainingDialog {
                 "Apply stain-aware augmentation in HED color space for H&E.\n" +
                 "Models realistic stain variation without breaking morphology.\n" +
                 "Disable for non-H&E brightfield (e.g. IHC, special stains).");
+
+        scaleLrByBatchCheckBox = new CheckBox("Scale LR by batch size");
+        scaleLrByBatchCheckBox.setSelected(false);
+        TooltipHelper.install(scaleLrByBatchCheckBox,
+                "Apply the BYOL/SimCLR linear LR scaling rule:\n" +
+                "    actual_lr = learning_rate * batch_size / 256\n\n" +
+                "The papers train at batch sizes much larger than 32, and\n" +
+                "their reported LRs assume this scaling. The unscaled value\n" +
+                "(e.g. 3e-4) is closer to a batch=256 setting and can be\n" +
+                "too aggressive at small batch, causing loss instability.\n\n" +
+                "Recommended for small batches (<= 64). Disable to use the\n" +
+                "learning rate exactly as entered.");
 
         // --- Source mode radios ---
         projectModeRadio = new RadioButton("Project images (extract tiles from annotations)");
@@ -680,12 +693,13 @@ public class SSLPretrainingDialog {
         grid.add(emaDecayFinalSpinner, 1, 6);
 
         grid.add(stainAugCheckBox, 0, 7, 2, 1);
+        grid.add(scaleLrByBatchCheckBox, 0, 8, 2, 1);
 
         // Live VRAM estimate
         vramEstimateLabel = new Label();
         vramEstimateLabel.setWrapText(true);
         vramEstimateLabel.setStyle("-fx-font-size: 11px;");
-        grid.add(vramEstimateLabel, 0, 8, 2, 1);
+        grid.add(vramEstimateLabel, 0, 9, 2, 1);
 
         // Wire VRAM estimation listeners
         backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
@@ -886,6 +900,7 @@ public class SSLPretrainingDialog {
         config.put("ema_decay", emaDecaySpinner.getValue());
         config.put("ema_decay_final", emaDecayFinalSpinner.getValue());
         config.put("stain_aug", stainAugCheckBox.isSelected());
+        config.put("scale_lr_by_batch", scaleLrByBatchCheckBox.isSelected());
         String runName = runNameField.getText() == null ? "" : runNameField.getText().trim();
         if (runName.isEmpty()) runName = buildDefaultRunName();
         config.put("run_name", runName);
@@ -1021,14 +1036,22 @@ public class SSLPretrainingDialog {
             int batchSize = batchSizeSpinner.getValue();
             String method = getSelectedMethod();
 
-            double modelMb = estimateModelSizeMb(backbone);
-            // BYOL has ~2x encoder memory (online + target networks)
+            // Component-wise estimate matching the Python pre-flight formula.
+            // estimateModelSizeMb returns the single-encoder size; BYOL has
+            // online + target weights but only the online half has grads/optim.
+            double encoderMb = estimateModelSizeMb(backbone);
             double modelFactor = "byol".equals(method) ? 2.0 : 1.0;
-            // SSL: model + optimizer (3x) + activations (~4x CNN, halved for AMP)
-            double actMultiplier = 4.0 * 0.6; // assume mixed precision
+            double modelMb = encoderMb * modelFactor;
+            double trainableMb = encoderMb;            // online half only
+            double optimizerMb = 2.0 * trainableMb;    // AdamW: 2 fp32 momenta
+            double gradMb = trainableMb;
             double areaScale = (double)(tileSize * tileSize) / (256.0 * 256.0);
-            double estimatedMb = modelMb * modelFactor
-                    * (1 + 3 + actMultiplier * areaScale * batchSize);
+            // Activation coefficient calibrated against observed peak
+            // (resnet34 BYOL batch=32 256x256 AMP -> ~1.8 GB peak).
+            double actPerTileMb = 0.3 * trainableMb * areaScale * 0.5; // assume AMP
+            double actMb = actPerTileMb * batchSize * 2.0;             // 2 SSL views
+            double workspaceMb = 250.0;
+            double estimatedMb = modelMb + optimizerMb + gradMb + actMb + workspaceMb;
 
             double budgetMb = gpuTotalMb * 0.85;
             double pct = (estimatedMb / gpuTotalMb) * 100;

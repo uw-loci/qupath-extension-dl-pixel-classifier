@@ -672,6 +672,17 @@ class SSLPretrainingService:
         batch_size = int(config.get("batch_size", 64 if method == "simclr" else 32))
         grad_accum_steps = int(config.get("grad_accum_steps", 1))
         learning_rate = float(config.get("learning_rate", 3e-4))
+        # Optional BYOL/SimCLR-paper LR scaling: lr = base_lr * batch_size / 256.
+        # Both papers train at batch sizes much larger than 32, and the scaled
+        # LR is what they actually use; the unscaled value is closer to a
+        # batch=256 setting and can be too aggressive at small batch.
+        scale_lr_by_batch = bool(config.get("scale_lr_by_batch", False))
+        if scale_lr_by_batch:
+            base_lr = learning_rate
+            learning_rate = base_lr * batch_size / 256.0
+            logger.info(
+                "LR scaled by batch ratio: base=%.2e * (%d/256) = %.2e",
+                base_lr, batch_size, learning_rate)
         # Default WD: 1e-6 for BYOL (per the BYOL paper), 1e-4 for SimCLR.
         # Overweight WD on BN/bias is one of the main BYOL collapse triggers
         # on small datasets; param-group split below excludes BN/bias from WD.
@@ -925,6 +936,11 @@ class SSLPretrainingService:
         scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
 
         # --- Pre-flight VRAM estimate ---
+        # Component-wise estimate calibrated against the empirical peak we
+        # observe after the first batch (resnet34 BYOL batch=32 256x256 AMP
+        # peaks at ~1.8 GB). The previous formula multiplied a per-batch
+        # activation multiplier through the whole model+optimizer budget,
+        # producing ~16x overestimates.
         vram_msg = None
         try:
             if self._device_str == "cuda":
@@ -933,15 +949,27 @@ class SSLPretrainingService:
                 allocated_mb = mem_info.get("allocated_mb", 0)
                 free_mb = total_mb - allocated_mb
                 model_mb = self.gpu_manager.estimate_model_memory(model)
-                # BYOL has ~2x encoder memory (online + target)
+                # BYOL has online + target weights (target = no grads/optim)
                 model_factor = 2.0 if method == "byol" else 1.0
-                # SSL: model + optimizer (3x) + activations (~4x CNN)
-                act_multiplier = 4.0
-                if use_amp:
-                    act_multiplier *= 0.6
+                # Trainable subset gets gradients + optimizer state. For BYOL
+                # the target half is frozen, so only ~half of the weights have
+                # backward state.
+                trainable_mb = model_mb / model_factor
+                # AdamW: 2 fp32 momentum buffers per trainable param.
+                optimizer_mb = 2.0 * trainable_mb
+                grad_mb = trainable_mb
+                # Activations scale with encoder size, batch, and tile area.
+                # Calibrated coefficient 0.3 from observed resnet34 peak.
                 area_scale = (tile_size * tile_size) / (256 * 256)
-                estimated_mb = (model_mb * model_factor
-                                * (1 + 3 + act_multiplier * area_scale * batch_size))
+                act_per_tile_mb = 0.3 * trainable_mb * area_scale
+                if use_amp:
+                    act_per_tile_mb *= 0.5
+                # SSL forwards two augmented views per sample.
+                act_mb = act_per_tile_mb * batch_size * 2.0
+                # cuDNN scratch + allocator fragmentation
+                workspace_mb = 250.0
+                estimated_mb = (model_mb + optimizer_mb + grad_mb
+                                + act_mb + workspace_mb)
                 if estimated_mb > free_mb * 0.9:
                     vram_msg = (
                         "WARNING: VRAM estimate %.0f MB needed vs %.0f MB free "
@@ -1074,7 +1102,11 @@ class SSLPretrainingService:
                 model.train()
                 epoch_loss = 0.0
                 n_batches = 0
-                last_view1 = None
+                # Ring buffer of recent view1 batches for the collapse probe.
+                # 8 batches at batch=32 gives 256 samples in 256-d, which is
+                # enough to make per-dim std a stable estimator.
+                proj_probe_size = 8
+                last_view1_batches = []
 
                 optimizer.zero_grad(set_to_none=True)
 
@@ -1152,37 +1184,47 @@ class SSLPretrainingService:
 
                     epoch_loss += loss.item() * grad_accum_steps
                     n_batches += 1
-                    last_view1 = view1
+                    last_view1_batches.append(view1.detach())
+                    if len(last_view1_batches) > proj_probe_size:
+                        last_view1_batches.pop(0)
 
                 scheduler.step()
 
                 # --- Collapse guard ---
-                # Measure per-feature std-dev of L2-normalized projections
-                # on the last batch. A healthy SSL model spreads samples
-                # across the unit sphere -> std around 1/sqrt(D).
-                # Collapsed model maps everything to one point -> std ~ 0.
+                # Measure per-feature std-dev of L2-normalized projections.
+                # A healthy SSL model spreads samples across the unit sphere
+                # -> std around 1/sqrt(D). A collapsed model maps everything
+                # to one point -> std ~ 0.
+                #
+                # We sample multiple batches in train-mode BN so the metric
+                # matches the regime we just trained in. Eval-mode BN with a
+                # single batch was producing huge epoch-to-epoch swings that
+                # looked like collapse but were just BN running-stats noise
+                # (BYOL with batch=32 has very noisy running estimates).
                 proj_std = None
-                if last_view1 is not None:
+                if last_view1_batches:
                     try:
-                        was_training = model.training
-                        model.eval()
+                        # Stay in train() so BN uses batch stats, matching
+                        # the regime the projector was just optimized in.
+                        # The probe is no_grad so no parameter updates occur.
+                        # BN running stats receive a few extra updates here,
+                        # which is benign relative to ~1500 training steps/epoch.
+                        zs = []
                         with torch.no_grad():
                             inner = model
-                            # Unwrap torch.compile if present
                             if hasattr(inner, "_orig_mod"):
                                 inner = inner._orig_mod
-                            if method == "byol":
-                                feat = inner.pool(
-                                    inner.online_encoder(last_view1)[-1]
-                                ).flatten(1)
-                                z = inner.online_projector(feat)
-                            else:
-                                # SimCLRModel.forward returns z directly
-                                z = inner(last_view1)
-                            z = F.normalize(z, dim=1)
-                            proj_std = float(z.std(dim=0).mean().item())
-                        if was_training:
-                            model.train()
+                            for v in last_view1_batches:
+                                if method == "byol":
+                                    feat = inner.pool(
+                                        inner.online_encoder(v)[-1]
+                                    ).flatten(1)
+                                    z = inner.online_projector(feat)
+                                else:
+                                    z = inner(v)
+                                zs.append(F.normalize(z, dim=1))
+                            z_all = torch.cat(zs, dim=0)
+                            proj_std = float(z_all.std(dim=0).mean().item())
                     except Exception as e:
                         logger.debug("Projection-std probe failed: %s", e)
                         proj_std = None
