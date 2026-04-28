@@ -246,6 +246,8 @@ public class TrainingDialog {
         private Label ohemScheduleLabel;
         private ComboBox<String> earlyStoppingMetricCombo;
         private Spinner<Integer> earlyStoppingPatienceSpinner;
+        private Button autoDistributeBtn;
+        private boolean inAutoDistribute = false;
         private CheckBox mixedPrecisionCheck;
         private Spinner<Integer> gradientAccumulationSpinner;
         private CheckBox progressiveResizeCheck;
@@ -277,6 +279,8 @@ public class TrainingDialog {
         private TextField sslEncoderPathField;
         private Label sslEncoderInfoLabel;
         private LayerFreezePanel layerFreezePanel;
+        private VBox layerFreezeContainer;
+        private Label layerFreezeInfoLabel;
         private ClassifierBackend backend;
 
         // Image source selection
@@ -780,6 +784,16 @@ public class TrainingDialog {
             layerFreezePanel = new LayerFreezePanel();
             layerFreezePanel.setBackend(backend);
 
+            // Mode-aware info/warning label that sits above the freeze panel.
+            // Text is updated by updateLayerFreezeInfoLabel() depending on whether
+            // the user is starting from a backbone or continuing from a saved model.
+            layerFreezeInfoLabel = new Label();
+            layerFreezeInfoLabel.setWrapText(true);
+            layerFreezeInfoLabel.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
+
+            layerFreezeContainer = new VBox(5, layerFreezeInfoLabel, layerFreezePanel);
+            layerFreezeContainer.setPadding(new Insets(0, 0, 0, 20));
+
             // Backbone-image type compatibility warning (non-blocking)
             backboneCompatWarning = new Label();
             backboneCompatWarning.setWrapText(true);
@@ -788,7 +802,7 @@ public class TrainingDialog {
             backboneCompatWarning.setVisible(false);
             backboneCompatWarning.setManaged(false);
 
-            backbonePretrainedContent = new VBox(5, backboneInfo, backboneCompatWarning, layerFreezePanel);
+            backbonePretrainedContent = new VBox(5, backboneInfo, backboneCompatWarning);
             backbonePretrainedContent.setPadding(new Insets(0, 0, 0, 20));
 
             // --- MAE pretrained encoder (MuViT) ---
@@ -1020,17 +1034,22 @@ public class TrainingDialog {
             sslEncoderRadio.managedProperty().bind(advancedMode);
             sslEncoderContent.visibleProperty().bind(advancedMode);
             sslEncoderContent.managedProperty().bind(advancedMode);
-            // In basic mode, hide the layer freeze panel within backbone content
-            layerFreezePanel.visibleProperty().bind(advancedMode);
-            layerFreezePanel.managedProperty().bind(advancedMode);
+            // The layer freeze panel is advanced-mode-only AND only relevant for
+            // strategies that load pretrained weights (backbone pretrained or
+            // continue training). updateWeightInitSubContent() ANDs both conditions.
+            // Re-run the visibility check whenever advanced mode toggles.
+            advancedMode.addListener((obs, wasAdvanced, isAdvanced) -> updateWeightInitSubContent());
 
-            // Assemble all options
+            // Assemble all options. The freeze container sits at the bottom and is
+            // shared by BACKBONE_PRETRAINED and CONTINUE_TRAINING -- it stays hidden
+            // for SCRATCH/MAE/SSL via updateWeightInitSubContent().
             content.getChildren().addAll(
                     scratchRadio, scratchInfo,
                     backbonePretrainedRadio, backbonePretrainedContent,
                     maeEncoderRadio, maeEncoderContent,
                     sslEncoderRadio, sslEncoderContent,
-                    continueTrainingRadio, continueTrainingContent
+                    continueTrainingRadio, continueTrainingContent,
+                    layerFreezeContainer
             );
 
             // Set initial selection based on handler + preferences
@@ -1074,8 +1093,18 @@ public class TrainingDialog {
             setVisibleIfUnbound(continueTrainingContent,
                     selected == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
 
-            // Refresh layer freeze panel when backbone pretrained is selected
-            if (selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED) {
+            // The freeze panel applies to strategies that load pretrained weights
+            // (backbone pretrained AND continue-training). Hide it for SCRATCH/MAE/SSL,
+            // and also hide it entirely in basic mode.
+            boolean freezeApplicable =
+                    selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED
+                    || selected == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING;
+            boolean showFreeze = freezeApplicable && advancedMode.get();
+            setVisibleIfUnbound(layerFreezeContainer, showFreeze);
+            updateLayerFreezeInfoLabel(selected);
+
+            // Refresh the layer list whenever a transfer-learning path is selected.
+            if (freezeApplicable) {
                 updateLayerFreezePanel();
             }
 
@@ -1935,8 +1964,15 @@ public class TrainingDialog {
                                 updateWholeImageInfoLabel();
                                 updateValidationSplitSpinnerState();
                             });
-                            item.splitRole.addListener(
-                                    (obs, old, newVal) -> updateValidationSplitSpinnerState());
+                            item.splitRole.addListener((obs, old, newVal) -> {
+                                updateValidationSplitSpinnerState();
+                                // Any manual override clears the auto-distribute
+                                // highlight; auto-distribute itself runs inside
+                                // its own guard so it doesn't trip this.
+                                if (!inAutoDistribute) {
+                                    applyAutoDistributeHighlight(false);
+                                }
+                            });
                             imageSelectionList.getItems().add(item);
                         }
                     } catch (Exception e) {
@@ -1957,17 +1993,24 @@ public class TrainingDialog {
             selectNoneImagesBtn.setOnAction(e ->
                     imageSelectionList.getItems().forEach(item -> item.selected.set(false)));
 
-            Button autoDistributeBtn = new Button("Auto-Distribute");
+            autoDistributeBtn = new Button("Auto-Distribute");
             TooltipHelper.install(autoDistributeBtn,
                     "Assign selected images to Training or Validation using the current\n" +
                     "split percentage. Similar images -- same dimensions, channel count,\n" +
                     "and filename prefix -- are bucketed together so related images\n" +
-                    "aren't clumped on one side of the split.");
+                    "aren't clumped on one side of the split.\n\n" +
+                    "Auto-distribute runs once when the dialog opens (highlighted while\n" +
+                    "active). Click again to reshuffle with a new random seed, or use the\n" +
+                    "per-image Train/Val dropdowns to override individual assignments.");
             autoDistributeBtn.setOnAction(e -> autoDistributeSelectedImages());
             // Per-image Train/Val dropdowns are only rendered in advanced mode,
             // so the button that manipulates them follows the same visibility.
             autoDistributeBtn.visibleProperty().bind(advancedMode);
             autoDistributeBtn.managedProperty().bind(advancedMode);
+            // Apply highlight style now -- the initial auto-distribute happens
+            // shortly after image-list population, so showing the highlight
+            // from the start matches the active state the user will see.
+            applyAutoDistributeHighlight(true);
 
             // Load Classes button
             loadClassesButton = new Button("Load Classes from Selected Images");
@@ -1999,6 +2042,18 @@ public class TrainingDialog {
 
             // Initialize button state
             updateLoadClassesButtonState();
+
+            // Run Auto-Distribute once on open so a sensible per-image train/val
+            // split is in place before the user touches anything. New items
+            // default to selected=true and splitRole=BOTH, so this never
+            // overwrites a user choice -- it only seeds the initial state.
+            // Deferred to runLater so listeners and validation-split spinner
+            // are fully wired before splitRole writes fire their callbacks.
+            Platform.runLater(() -> {
+                if (imageSelectionList.getItems().size() >= 2) {
+                    autoDistributeSelectedImages();
+                }
+            });
 
             TitledPane pane = new TitledPane("TRAINING DATA SOURCE", content);
             pane.setExpanded(true);
@@ -2041,6 +2096,10 @@ public class TrainingDialog {
                         "Select at least two images before auto-distributing.");
                 return;
             }
+            // Guard against the splitRole listener clearing the highlight
+            // while we're mid-distribution.
+            inAutoDistribute = true;
+            try {
 
             long fixedCount = selected.stream()
                     .filter(item -> item.splitRole.get() != SplitRole.BOTH)
@@ -2110,6 +2169,33 @@ public class TrainingDialog {
                     seed, nTrain, nVal, buckets.size(), summary);
             // The splitRole listeners installed when items were added will
             // fire updateValidationSplitSpinnerState() for us.
+
+            // Highlight the button so the user can see the assignment came
+            // from auto-distribute (vs. a manual or saved choice).
+            applyAutoDistributeHighlight(true);
+            } finally {
+                inAutoDistribute = false;
+            }
+        }
+
+        /**
+         * Toggle the visual highlight on the Auto-Distribute button. Highlighted
+         * = "this distribution is from auto-distribute, click to reshuffle".
+         * Cleared once the user makes any manual per-image role change.
+         */
+        private void applyAutoDistributeHighlight(boolean active) {
+            if (autoDistributeBtn == null) return;
+            if (active) {
+                autoDistributeBtn.setStyle(
+                        "-fx-background-color: #fff3cd; "
+                        + "-fx-border-color: #d39e00; "
+                        + "-fx-border-width: 2; "
+                        + "-fx-border-radius: 3; "
+                        + "-fx-background-radius: 3; "
+                        + "-fx-font-weight: bold;");
+            } else {
+                autoDistributeBtn.setStyle("");
+            }
         }
 
         /**
@@ -2594,9 +2680,46 @@ public class TrainingDialog {
                     "Early stopping enabled (patience: %d, metric: %s)", patience, metricDisplay));
         }
 
+        private void updateLayerFreezeInfoLabel(ClassifierHandler.WeightInitStrategy selected) {
+            if (layerFreezeInfoLabel == null) return;
+            if (selected == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING) {
+                // Strong warning: changing freeze settings here can either help the
+                // model adapt to a new data distribution or destroy features that
+                // took the original training run to learn. Spell out both directions.
+                layerFreezeInfoLabel.setStyle("-fx-text-fill: #856404; "
+                        + "-fx-background-color: #fff3cd; -fx-padding: 6 8; "
+                        + "-fx-background-radius: 3; -fx-font-size: 11px;");
+                layerFreezeInfoLabel.setText(
+                        "Continuing training inherits the freeze list from the loaded "
+                        + "model. Changing it has real consequences:\n"
+                        + "  - UNFREEZING early encoder layers (conv1, layer1, layer2) "
+                        + "lets the model adapt low-level features (color, scale, "
+                        + "texture) to a new data distribution, but with too high a "
+                        + "learning rate it can wash out features the original run "
+                        + "learned. Pair with a low encoder LR (discriminative LRs).\n"
+                        + "  - FREEZING more layers preserves the existing model but "
+                        + "prevents it from learning anything new in those layers -- "
+                        + "useful only if your new data is very similar to the "
+                        + "original training set.\n"
+                        + "If your new data comes from a different microscope, "
+                        + "stain, or downsample, prefer unfreezing the encoder.");
+            } else if (selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED) {
+                layerFreezeInfoLabel.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
+                layerFreezeInfoLabel.setText(
+                        "Freezing early encoder layers preserves ImageNet/MAE features "
+                        + "and trains faster, but limits how much the model can adapt "
+                        + "to your data. Unfreeze more layers if your images differ "
+                        + "strongly from the pretrained domain.");
+            } else {
+                layerFreezeInfoLabel.setText("");
+            }
+        }
+
         private void updateLayerFreezePanel() {
-            if (layerFreezePanel == null
-                    || getSelectedWeightInitStrategy() != ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED) {
+            if (layerFreezePanel == null) return;
+            ClassifierHandler.WeightInitStrategy strat = getSelectedWeightInitStrategy();
+            if (strat != ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED
+                    && strat != ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING) {
                 return;
             }
 
@@ -3529,10 +3652,13 @@ public class TrainingDialog {
                 boundaryWMinSpinner.setManaged(showBoundary);
             });
 
-            // OHEM hard pixel % (END / target value)
+            // OHEM hard pixel % (END / target value).
+            // Minimum is 5% to match the tooltip's "5% = very aggressive"
+            // guidance; the previous 10% floor blocked the tooltip's own
+            // recommendation.
             ohemSpinner = new Spinner<>(
                     new SpinnerValueFactory.IntegerSpinnerValueFactory(
-                            10, 100, DLClassifierPreferences.getDefaultOhemHardPixelPct(), 5));
+                            5, 100, DLClassifierPreferences.getDefaultOhemHardPixelPct(), 5));
             ohemSpinner.setEditable(true);
             Label ohemLabel = new Label("Hard Pixel End %:");
             TooltipHelper.install(
@@ -3572,7 +3698,7 @@ public class TrainingDialog {
             }
             ohemStartSpinner = new Spinner<>(
                     new SpinnerValueFactory.IntegerSpinnerValueFactory(
-                            10, 100, defaultStartPct, 5));
+                            5, 100, defaultStartPct, 5));
             ohemStartSpinner.setEditable(true);
             Label ohemStartLabel = new Label("Hard Pixel Start %:");
             TooltipHelper.install(
@@ -3665,18 +3791,18 @@ public class TrainingDialog {
                     mapEarlyStoppingMetricToDisplay(DLClassifierPreferences.getDefaultEarlyStoppingMetric()));
             Label esMetricLabel = new Label("Early Stop Metric:");
             TooltipHelper.install(
-                    "Which metric decides the 'best' model checkpoint.\n\n" +
-                    "The best model weights are saved whenever this metric improves,\n" +
-                    "and training stops if it hasn't improved for 'patience' epochs.\n" +
-                    "The final saved model is always from the best epoch, not the last.\n\n" +
-                    "Mean IoU (recommended): Intersection-over-union averaged across\n" +
-                    "  all classes. Directly measures segmentation quality.\n\n" +
+                    "Which metric decides WHEN TO STOP training.\n" +
+                    "Independent of Focus Class: Focus Class drives 'best\n" +
+                    "model' checkpoint selection, while this metric drives\n" +
+                    "early stopping and the plateau LR scheduler.\n\n" +
+                    "Mean IoU (recommended): Intersection-over-union averaged\n" +
+                    "  across all classes. Directly measures segmentation\n" +
+                    "  quality. Stops when overall accuracy plateaus.\n\n" +
                     "Validation Loss: Combined loss on held-out data.\n" +
-                    "  Can oscillate while IoU still improves, so Mean IoU is\n" +
-                    "  generally more reliable.\n\n" +
+                    "  Can oscillate while IoU still improves, so Mean IoU\n" +
+                    "  is generally more reliable.\n\n" +
                     "Disabled: Train for the full epoch count regardless of\n" +
-                    "  metric progress. Best-model selection still tracks Mean IoU\n" +
-                    "  internally so the saved model is still from the best epoch.",
+                    "  metric progress. Best-model selection still applies.",
                     esMetricLabel, earlyStoppingMetricCombo);
 
             grid.add(esMetricLabel, 0, row);
@@ -3710,14 +3836,21 @@ public class TrainingDialog {
             focusClassCombo.setValue("None (use Mean IoU)");
             Label focusClassLabel = new Label("Focus Class:");
             TooltipHelper.install(
-                    "Optionally select a class to focus on for best model selection.\n\n" +
-                    "When set, the focus class's per-class IoU is used instead of\n" +
-                    "the Early Stop Metric for determining the best model and\n" +
-                    "triggering early stopping.\n\n" +
-                    "Use this when you care more about one class than the others.\n" +
-                    "For example, if detecting 'Hinge' is critical, set it as the\n" +
-                    "focus class so the best model is the one with the best Hinge IoU,\n" +
-                    "not the best average across all classes.",
+                    "Optionally select a class to focus on for BEST-MODEL\n" +
+                    "checkpoint selection.\n\n" +
+                    "When set, the focus class's per-class IoU decides which\n" +
+                    "epoch's weights are saved as the final model. The Early\n" +
+                    "Stop Metric (above) is INDEPENDENT -- it controls when\n" +
+                    "training stops based on its own metric (Mean IoU or\n" +
+                    "Validation Loss).\n\n" +
+                    "Combine them: e.g., Focus Class = 'vein' + Early Stop\n" +
+                    "Metric = 'Mean IoU' saves the best vein model but lets\n" +
+                    "training run until overall mean IoU plateaus.\n\n" +
+                    "Use this when you care more about one class than the\n" +
+                    "others. For example, if detecting 'Hinge' is critical,\n" +
+                    "set it as the focus class so the best model is the one\n" +
+                    "with the best Hinge IoU, not the best average across\n" +
+                    "all classes.",
                     focusClassLabel, focusClassCombo);
 
             focusClassCombo.valueProperty().addListener((obs, old, newVal) -> {
@@ -3727,22 +3860,9 @@ public class TrainingDialog {
                 focusClassMinIoUSpinner.setManaged(hasFocusClass);
                 focusClassMinIoULabel.setVisible(hasFocusClass);
                 focusClassMinIoULabel.setManaged(hasFocusClass);
-                // Visually disable early stopping metric combo when focus class overrides it
-                earlyStoppingMetricCombo.setDisable(hasFocusClass);
-                if (hasFocusClass) {
-                    TooltipHelper.install(
-                            "Overridden by Focus Class selection.\n" +
-                            "The focus class's IoU will be used for best model\n" +
-                            "selection and early stopping instead.",
-                            esMetricLabel, earlyStoppingMetricCombo);
-                } else {
-                    TooltipHelper.install(
-                            "Which metric decides the 'best' model checkpoint.\n\n" +
-                            "Mean IoU (recommended): Intersection-over-union averaged across\n" +
-                            "  all classes. Directly measures segmentation quality.\n\n" +
-                            "Validation Loss: Combined loss on held-out data.",
-                            esMetricLabel, earlyStoppingMetricCombo);
-                }
+                // Focus Class and Early Stop Metric are independent: focus
+                // class drives best-model selection; ES metric drives when
+                // training stops. Both can be set without conflict.
             });
 
             grid.add(focusClassLabel, 0, row);

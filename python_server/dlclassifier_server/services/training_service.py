@@ -2086,19 +2086,23 @@ class TrainingService:
         early_stopping = None
         early_stopping_metric = training_params.get("early_stopping_metric", "mean_iou")
 
-        # Focus class: override metric behavior for best model selection and early stopping
+        # Focus class drives BEST-MODEL CHECKPOINT selection only. Early
+        # stopping uses early_stopping_metric independently so users can,
+        # e.g., save the best model by 'vein' IoU but stop training when
+        # mean_iou plateaus.
         focus_class = training_params.get("focus_class", None)
         focus_class_min_iou = training_params.get("focus_class_min_iou", 0.0)
         if focus_class:
             logger.info(f"Focus class '{focus_class}' IoU will be used for "
-                       f"best model selection and early stopping")
+                       f"best-model checkpoint selection")
             if focus_class_min_iou > 0:
                 logger.info(f"  Min IoU threshold: {focus_class_min_iou:.2f} "
                            f"-- early stopping suppressed until reached")
 
         if training_params.get("early_stopping", True):
-            # When focus class is set, always use "max" mode (higher IoU is better)
-            es_mode = "max" if (focus_class or early_stopping_metric == "mean_iou") else "min"
+            # Early-stopping mode follows the ES metric, NOT focus_class.
+            # mean_iou is "max" (higher better); val_loss is "min".
+            es_mode = "max" if early_stopping_metric == "mean_iou" else "min"
             early_stopping = EarlyStopping(
                 patience=training_params.get("early_stopping_patience", 15),
                 min_delta=training_params.get("early_stopping_min_delta", 0.001),
@@ -2406,7 +2410,6 @@ class TrainingService:
             epochs=epochs,
             steps_per_epoch=len(train_loader),
             early_stopping_metric=early_stopping_metric,
-            focus_class=focus_class,
         )
 
         # Save scheduler_config back into training_params so it survives in
@@ -3248,26 +3251,11 @@ class TrainingService:
             # Step scheduler (for epoch-based schedulers)
             if scheduler is not None and not isinstance(scheduler, OneCycleLR):
                 if isinstance(scheduler, ReduceLROnPlateau):
-                    # ReduceLROnPlateau needs the metric value.
-                    # The metric direction MUST agree with the mode the
-                    # scheduler was constructed with (see
-                    # _create_scheduler tri-branch). When focus_class
-                    # is set but has not yet appeared in per_class_iou
-                    # (rare class, early training), fall back to
-                    # mean_iou rather than val_loss -- both use "max"
-                    # semantics, matching the mode derived from the
-                    # focus_class branch. Falling back to val_loss
-                    # would feed a decreasing metric into a "max"
-                    # scheduler and cut LR on every improvement.
-                    if focus_class and focus_class in per_class_iou:
-                        plateau_metric = per_class_iou[focus_class]
-                    elif focus_class:
-                        # Focus class configured but not yet present:
-                        # keep "max" semantics via mean_iou so the
-                        # scheduler stays consistent with its mode.
-                        plateau_metric = mean_iou
-                    else:
-                        plateau_metric = mean_iou if early_stopping_metric == "mean_iou" else val_loss
+                    # ReduceLROnPlateau follows the early-stopping metric so
+                    # the scheduler reduces LR exactly when ES would consider
+                    # the run "not improving". Decoupled from focus_class --
+                    # focus_class only drives best-model selection now.
+                    plateau_metric = mean_iou if early_stopping_metric == "mean_iou" else val_loss
                     scheduler.step(plateau_metric)
                 elif isinstance(scheduler, CosineAnnealingWarmRestarts):
                     scheduler.step(epoch + 1)
@@ -3331,19 +3319,15 @@ class TrainingService:
                 logger.info(f"  Focus class '{focus_class}' IoU={fc_iou:.4f}"
                            f" (min threshold={focus_class_min_iou:.2f})")
 
-            # Check early stopping. Same tri-branch as best-model
-            # tracking so the ES mode (set by best_score_mode) agrees
-            # with the value fed in during the "focus class missing
-            # early" window.
+            # Check early stopping. The ES metric is independent of
+            # focus_class -- focus_class only drives best-model selection.
             if early_stopping is not None:
-                if focus_class and focus_class in per_class_iou:
-                    es_value = per_class_iou[focus_class]
-                elif focus_class:
-                    es_value = mean_iou
-                else:
-                    es_value = mean_iou if early_stopping_metric == "mean_iou" else val_loss
+                es_value = mean_iou if early_stopping_metric == "mean_iou" else val_loss
 
-                # Suppress early stopping if focus class hasn't reached minimum IoU
+                # Suppress early stopping if focus class hasn't reached minimum IoU.
+                # This is a separate gate: the ES metric may be plateauing on
+                # mean_iou or val_loss while the focus class is still ramping up,
+                # in which case we don't want to stop.
                 if (focus_class and focus_class_min_iou > 0
                         and focus_class in per_class_iou
                         and per_class_iou[focus_class] < focus_class_min_iou):
@@ -3591,7 +3575,6 @@ class TrainingService:
         epochs: int,
         steps_per_epoch: int,
         early_stopping_metric: Optional[str] = None,
-        focus_class: Optional[str] = None,
     ) -> Optional[torch.optim.lr_scheduler.LRScheduler]:
         """Create learning rate scheduler.
 
@@ -3690,18 +3673,12 @@ class TrainingService:
             # user control.
             mode = scheduler_config.get("mode")
             if mode is None:
-                # Mirror the tri-branch used at step time (see
-                # scheduler.step(plateau_metric) around line 3241):
-                #   focus_class set -> per_class_iou[focus_class] -> "max"
+                # Plateau scheduler now follows the ES metric directly
+                # (decoupled from focus_class):
                 #   early_stopping_metric == "val_loss" -> "min"
-                #   else -> mean_iou -> "max"
-                # Before this tri-branch the code only looked at the
-                # ES metric; a focus_class run with val_loss ES picked
-                # mode="min" while the step metric was an IoU, so
-                # plateau cut LR on every real improvement.
-                if focus_class:
-                    mode = "max"
-                elif early_stopping_metric == "val_loss":
+                #   else (mean_iou)                     -> "max"
+                # The step metric in the training loop matches.
+                if early_stopping_metric == "val_loss":
                     mode = "min"
                 else:
                     mode = "max"
