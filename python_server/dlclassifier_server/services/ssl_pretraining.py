@@ -983,6 +983,15 @@ class SSLPretrainingService:
         # activation multiplier through the whole model+optimizer budget,
         # producing ~16x overestimates.
         vram_msg = None
+        # Threshold for refusing the run pre-flight. The previous "warn at
+        # 90% of free" was too lenient: the estimator under-counts SimCLR
+        # at large tiles (a tile=512 batch=128 run estimated 14 GB but
+        # measured 22.6 GB peak, peg-thrashed VRAM at 92%, dropped to
+        # 1.9 img/s, and would have taken 12 days). Hard-stop at 85% of
+        # total instead so the user reconfigures before burning hours.
+        vram_estimate_pct_limit = float(
+            config.get("vram_estimate_pct_limit", 85.0))
+        abort_on_vram_risk = bool(config.get("abort_on_vram_risk", True))
         try:
             if self._device_str == "cuda":
                 mem_info = self.gpu_manager.get_memory_info()
@@ -1000,33 +1009,62 @@ class SSLPretrainingService:
                 optimizer_mb = 2.0 * trainable_mb
                 grad_mb = trainable_mb
                 # Activations scale with encoder size, batch, and tile area.
-                # Calibrated coefficient 0.3 from observed resnet34 peak.
+                # Coefficient 0.5 is calibrated from a tile=512 batch=128
+                # SimCLR run that peaked at 22.6 GB (the previous 0.3
+                # value undershot by ~60%). Slight overshoot at small tiles
+                # is fine -- the goal is to stop catastrophic configs early.
                 area_scale = (tile_size * tile_size) / (256 * 256)
-                act_per_tile_mb = 0.3 * trainable_mb * area_scale
+                act_per_tile_mb = 0.5 * trainable_mb * area_scale
                 if use_amp:
                     act_per_tile_mb *= 0.5
                 # SSL forwards two augmented views per sample.
                 act_mb = act_per_tile_mb * batch_size * 2.0
-                # cuDNN scratch + allocator fragmentation
-                workspace_mb = 250.0
+                # cuDNN autotune workspace + allocator fragmentation. The
+                # 250 MB figure was too low; cuDNN can hold 1+ GB during
+                # benchmark search at large tile sizes.
+                workspace_mb = 800.0
                 estimated_mb = (model_mb + optimizer_mb + grad_mb
                                 + act_mb + workspace_mb)
-                if estimated_mb > free_mb * 0.9:
+                # Express as percentage of TOTAL VRAM (not free) so the
+                # threshold is interpretable independent of what other
+                # processes happen to be holding right now.
+                pct_of_total = (estimated_mb / total_mb * 100.0
+                                if total_mb > 0 else 0.0)
+                vram_msg = (
+                    "VRAM: ~%.0f MB needed, %.0f MB free (%.0f MB total, "
+                    "%.0f%% of total)"
+                    % (estimated_mb, free_mb, total_mb, pct_of_total))
+                if pct_of_total > vram_estimate_pct_limit:
                     vram_msg = (
-                        "WARNING: VRAM estimate %.0f MB needed vs %.0f MB free "
-                        "(%.0f MB total) -- OOM likely. "
-                        "Reduce batch size or tile size."
-                        % (estimated_mb, free_mb, total_mb))
-                    logger.warning(vram_msg)
+                        "Estimated VRAM ~%.0f MB is %.0f%% of total %.0f MB "
+                        "(limit %.0f%%). At this fill the GPU driver will page "
+                        "activations through PCIe shared memory, dropping "
+                        "throughput to ~1-2 img/s and stretching a 100-epoch "
+                        "run to days. Reduce batch size or tile size, "
+                        "or switch to a smaller backbone."
+                        % (estimated_mb, pct_of_total, total_mb,
+                           vram_estimate_pct_limit))
+                    logger.error(vram_msg)
+                    _report("vram_estimate", {"message": vram_msg,
+                                              "estimated_mb": estimated_mb,
+                                              "free_mb": free_mb,
+                                              "total_mb": total_mb,
+                                              "pct_of_total": pct_of_total,
+                                              "limit_pct": vram_estimate_pct_limit,
+                                              "blocked": True})
+                    if abort_on_vram_risk:
+                        raise RuntimeError(vram_msg)
                 else:
-                    vram_msg = (
-                        "VRAM: ~%.0f MB needed, %.0f MB free (%.0f MB total)"
-                        % (estimated_mb, free_mb, total_mb))
                     logger.info(vram_msg)
-                _report("vram_estimate", {"message": vram_msg,
-                                          "estimated_mb": estimated_mb,
-                                          "free_mb": free_mb,
-                                          "total_mb": total_mb})
+                    _report("vram_estimate", {"message": vram_msg,
+                                              "estimated_mb": estimated_mb,
+                                              "free_mb": free_mb,
+                                              "total_mb": total_mb,
+                                              "pct_of_total": pct_of_total,
+                                              "limit_pct": vram_estimate_pct_limit,
+                                              "blocked": False})
+        except RuntimeError:
+            raise  # propagate the abort
         except Exception:
             pass  # Never let estimation break training
 
@@ -1194,19 +1232,46 @@ class SSLPretrainingService:
                             peak_mb = self.gpu_manager.get_peak_allocated_mb()
                             mem_info = self.gpu_manager.get_memory_info()
                             total_mb = mem_info.get("total_mb", 0)
+                            peak_pct = ((peak_mb / total_mb * 100)
+                                        if total_mb > 0 else 0)
                             logger.info(
                                 "Peak GPU memory after first batch: "
                                 "%.0f MB / %.0f MB (%.0f%% used)",
-                                peak_mb, total_mb,
-                                (peak_mb / total_mb * 100) if total_mb > 0 else 0)
+                                peak_mb, total_mb, peak_pct)
+                            # Steady-state will exceed first-batch peak
+                            # (cuDNN autotune cache, BYOL EMA buffers,
+                            # accumulated allocator fragmentation), so
+                            # 70% measured here usually means 80%+ during
+                            # training -- the regime where WDDM paging
+                            # collapses throughput. Bail before that.
+                            peak_pct_limit = float(
+                                config.get("vram_peak_pct_limit", 70.0))
+                            blocked = peak_pct > peak_pct_limit
+                            msg = ("Peak VRAM: %.0f MB / %.0f MB (%.0f%%)"
+                                   % (peak_mb, total_mb, peak_pct))
+                            if blocked:
+                                msg = (
+                                    "Measured peak VRAM %.0f MB is %.0f%% of "
+                                    "total %.0f MB after the first batch "
+                                    "(limit %.0f%%). Steady-state will be "
+                                    "higher (cuDNN cache, allocator drift); "
+                                    "the GPU driver will start paging through "
+                                    "PCIe and drop throughput to ~1-2 img/s. "
+                                    "Reduce batch size or tile size and "
+                                    "rerun."
+                                    % (peak_mb, peak_pct, total_mb,
+                                       peak_pct_limit))
+                                logger.error(msg)
                             _report("peak_memory", {
-                                "message": "Peak VRAM: %.0f MB / %.0f MB (%.0f%%)"
-                                    % (peak_mb, total_mb,
-                                       (peak_mb / total_mb * 100)
-                                       if total_mb > 0 else 0),
+                                "message": msg,
                                 "peak_mb": peak_mb,
                                 "total_mb": total_mb,
+                                "peak_pct": peak_pct,
+                                "limit_pct": peak_pct_limit,
+                                "blocked": blocked,
                             })
+                            if blocked and abort_on_vram_risk:
+                                raise RuntimeError(msg)
                         first_batch_done = True
 
                     # Optimizer step
@@ -1295,7 +1360,15 @@ class SSLPretrainingService:
                     "proj_std": proj_std if proj_std is not None else -1.0,
                 })
 
-                # Update collapse streak and decide whether to abort
+                # Update collapse streak and decide whether to abort.
+                # Two paths:
+                #   (a) standard streak: proj_std < threshold for N epochs.
+                #   (b) immediate-collapse fast-path: proj_std < threshold/2
+                #       on epoch 1 means the projector started in a collapsed
+                #       configuration and won't recover. Bail right away
+                #       rather than burning two more epochs (epoch 1 alone
+                #       took >3 hours in the 22.6 GB-VRAM-thrashing run).
+                immediate_collapse_threshold = collapse_threshold / 2.0
                 if proj_std is not None and proj_std < collapse_threshold:
                     collapse_streak += 1
                     logger.warning(
@@ -1305,6 +1378,20 @@ class SSLPretrainingService:
                         collapse_streak, collapse_patience)
                 else:
                     collapse_streak = 0
+                immediate_collapse = (
+                    proj_std is not None
+                    and epoch == 1
+                    and proj_std < immediate_collapse_threshold)
+                if immediate_collapse:
+                    logger.error(
+                        "Aborting: severe collapse on epoch 1 "
+                        "(proj_std=%.6f < %.6f). Embeddings are already "
+                        "near-constant; further epochs will not recover. "
+                        "Lower temperature (0.1-0.2 for SimCLR), reduce "
+                        "batch size, or switch to BYOL with ema_decay=0.99.",
+                        proj_std, immediate_collapse_threshold)
+                    aborted_collapse = True
+                    break
                 if collapse_streak >= collapse_patience:
                     logger.error(
                         "Aborting: representation collapse detected "
