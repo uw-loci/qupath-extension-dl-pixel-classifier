@@ -327,6 +327,11 @@ public class MAEPretrainingDialog {
                 sourceModeGroup.selectedToggleProperty(),
                 dataPathField.textProperty(),
                 projectImagesList.getItems()));
+        // OK_DONE buttons default to defaultButton=true, so pressing Enter
+        // in any spinner editor (just to commit a value) fires Start.
+        // MAE pretraining is long-running and not trivially reversible,
+        // so require an explicit click.
+        startButton.setDefaultButton(false);
 
         // Refresh validity when per-item selection changes
         projectImagesList.getItems().addListener((javafx.collections.ListChangeListener<MAEImageItem>) c -> {

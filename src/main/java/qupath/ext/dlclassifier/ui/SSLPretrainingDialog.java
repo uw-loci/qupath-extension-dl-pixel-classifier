@@ -524,6 +524,12 @@ public class SSLPretrainingDialog {
                 dataPathField.textProperty(),
                 projectImagesList.getItems(),
                 annotationClassList.getItems()));
+        // OK_DONE buttons default to defaultButton=true, so pressing Enter
+        // anywhere in the dialog (including in a Spinner editor while the
+        // user is just trying to commit a value to update the live VRAM
+        // estimate) fires Start. SSL pretraining is long-running and not
+        // trivially reversible, so require an explicit click.
+        startButton.setDefaultButton(false);
 
         dialog.setResultConverter(button -> button == startType ? buildConfig() : null);
         return dialog.showAndWait();
