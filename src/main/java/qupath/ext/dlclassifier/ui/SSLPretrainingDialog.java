@@ -140,24 +140,30 @@ public class SSLPretrainingDialog {
     private SSLPretrainingDialog() {
         // --- Method selection ---
         methodCombo = new ComboBox<>(FXCollections.observableArrayList(
-                "BYOL", "SimCLR (image pairs)"));
+                "BYOL", "SimCLR (contrastive, larger batches)"));
         methodCombo.setValue("BYOL");
         methodCombo.setMaxWidth(Double.MAX_VALUE);
         TooltipHelper.install(methodCombo,
-                "Self-supervised pretraining method.\n\n" +
-                "Dataset-size guide (number of tiles, not images):\n" +
+                "Self-supervised pretraining method. BOTH methods consume\n" +
+                "the same flat tile dataset -- you do NOT need to provide\n" +
+                "paired images. SimCLR generates its 'pair' internally by\n" +
+                "running each tile through two random augmentations.\n\n" +
+                "Dataset-size guide (number of tiles, not source images):\n" +
                 "  small  : < 20,000 tiles\n" +
                 "  medium : 20,000 - 200,000 tiles\n" +
                 "  large  : > 200,000 tiles\n" +
                 "These thresholds are also used by the other SSL tooltips.\n\n" +
-                "SimCLR: Contrastive learning -- learns by comparing\n" +
-                "augmented views of the same image. Needs many negative\n" +
-                "samples per step, so it benefits from larger batches\n" +
-                "(>= 128 ideal, 64 minimum) and is best on medium/large\n" +
-                "datasets.\n\n" +
-                "BYOL: Self-distillation -- no negative pairs needed.\n" +
+                "SimCLR: Contrastive learning. For each tile, two random\n" +
+                "augmentations form a positive pair; every other tile in\n" +
+                "the batch is a negative. The model learns to pull positives\n" +
+                "together and push negatives apart. Needs many negatives\n" +
+                "per step, so larger batches help (>= 128 ideal, 64 minimum)\n" +
+                "and it's best on medium/large datasets.\n\n" +
+                "BYOL: Self-distillation -- no negatives needed at all. A\n" +
+                "student network predicts the output of an EMA-averaged\n" +
+                "teacher on a different augmentation of the same tile.\n" +
                 "Works on small datasets (< 20,000 tiles) and small batches\n" +
-                "(16-32) where SimCLR would underperform or collapse.");
+                "(16-32) where SimCLR would underperform.");
 
         // --- Backbone selection ---
         backboneCombo = new ComboBox<>(FXCollections.observableArrayList(SSL_BACKBONES));
@@ -539,15 +545,21 @@ public class SSLPretrainingDialog {
 
         Label methodLabel = new Label("SSL Method:");
         TooltipHelper.install(
-                "Self-supervised pretraining method.\n\n" +
+                "Self-supervised pretraining method. BOTH methods consume\n" +
+                "the same flat tile dataset -- you do NOT need paired images.\n" +
+                "SimCLR generates its 'pair' internally by running each tile\n" +
+                "through two random augmentations.\n\n" +
                 "Dataset-size guide (number of tiles):\n" +
                 "  small  : < 20,000 tiles\n" +
                 "  medium : 20,000 - 200,000 tiles\n" +
                 "  large  : > 200,000 tiles\n\n" +
-                "SimCLR: Contrastive learning. Best on medium/large datasets;\n" +
-                "needs batch size >= 64 (>= 128 ideal).\n" +
-                "BYOL: Self-distillation. Best on small datasets (< 20k tiles)\n" +
-                "and small batches (16-32) -- no negatives needed.",
+                "SimCLR: Contrastive learning -- pull augmented views of the\n" +
+                "same tile together, push other tiles apart. Best on medium/\n" +
+                "large datasets; needs batch size >= 64 (>= 128 ideal) for\n" +
+                "enough negatives per step.\n" +
+                "BYOL: Self-distillation -- student predicts an EMA teacher's\n" +
+                "output. Best on small datasets (< 20k tiles) and small\n" +
+                "batches (16-32); no negatives needed.",
                 methodLabel, methodCombo);
         grid.add(methodLabel, 0, 0);
         grid.add(methodCombo, 1, 0);
@@ -1389,14 +1401,20 @@ public class SSLPretrainingDialog {
                 "   two slides of variety.\n" +
                 "If you have few slides, collect more or use a coarser\n" +
                 "downsample, don't shrink tiles below ~224 px.\n\n" +
-                "SimCLR: Best with large batch sizes (64+, ideally 128+).\n" +
-                "The encoder learns to map augmented views of the same\n" +
-                "image close together in feature space. Below ~20k tiles\n" +
+                "Both SimCLR and BYOL take a flat dataset of tiles -- you\n" +
+                "do NOT need to provide pre-paired images. SimCLR generates\n" +
+                "its 'pair' internally by passing each tile through two\n" +
+                "different random augmentations on the fly.\n\n" +
+                "SimCLR: Contrastive learning. Each tile's two augmented\n" +
+                "views are a positive pair; every other tile in the batch\n" +
+                "is a negative. Best with large batch sizes (64+, ideally\n" +
+                "128+) so each step has enough negatives. Below ~20k tiles\n" +
                 "or below batch 64 it tends to underperform BYOL.\n\n" +
-                "BYOL: Works on small datasets (< 20k tiles) and small\n" +
-                "batches (16-32). Uses a teacher-student framework with\n" +
-                "exponential moving average updates -- no negative pairs,\n" +
-                "so it tolerates limited data.\n\n" +
+                "BYOL: Self-distillation. A student network predicts an\n" +
+                "EMA-averaged teacher's output on a different augmentation\n" +
+                "of the same tile -- no negatives at all. Works on small\n" +
+                "datasets (< 20k tiles) and small batches (16-32) where\n" +
+                "SimCLR would struggle.\n\n" +
                 "After pretraining, load the encoder weights in the\n" +
                 "Training dialog via 'Use SSL pretrained encoder'.\n" +
                 "The pretrained backbone gives better results than\n" +
