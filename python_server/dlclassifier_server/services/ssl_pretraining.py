@@ -17,6 +17,7 @@ Output format:
 import copy
 import json
 import logging
+import math
 import os
 import threading
 from pathlib import Path
@@ -1477,12 +1478,30 @@ class SSLPretrainingService:
                     "Cancelled at epoch %d but saved best model "
                     "(epoch %d, loss=%.6f) to %s",
                     len(history), best_epoch, best_loss, encoder_path)
+                # Run the same quality heuristics on the cancelled run.
+                # A user who cancels because the loss looked wrong should
+                # see the diagnostic ("loss near random" / "BYOL collapse-
+                # shaped") just like a clean-completion run -- otherwise
+                # they save a bad encoder thinking they "captured" useful
+                # weights from an early stop.
+                cq, cwarn = self._assess_training_quality(
+                    method=method,
+                    history=history,
+                    dataset_size=len(dataset),
+                    batch_size=batch_size,
+                )
+                cwarn.insert(0,
+                    f"Run was cancelled by the user at epoch "
+                    f"{len(history)} of {epochs}. The encoder reflects "
+                    f"the best epoch's weights, not a fully trained model.")
                 return {
                     "status": "cancelled_saved",
                     "encoder_path": encoder_path,
                     "epochs_completed": len(history),
                     "final_loss": history[-1]["loss"] if history else 0.0,
                     "best_loss": best_loss,
+                    "quality": cq if cq != "ok" else "cancelled",
+                    "warnings": cwarn,
                 }
             else:
                 logger.info("Cancelled with no completed epochs")
@@ -1492,6 +1511,11 @@ class SSLPretrainingService:
                     "epochs_completed": 0,
                     "final_loss": 0.0,
                     "best_loss": 0.0,
+                    "quality": "cancelled",
+                    "warnings": [
+                        f"Run was cancelled by the user before any epoch "
+                        f"completed; no encoder saved."
+                    ],
                 }
 
         # --- Run trajectory health check BEFORE saving ---
@@ -1629,6 +1653,54 @@ class SSLPretrainingService:
         proj_stds = [s for s in proj_stds if s is not None and s >= 0.0]
 
         is_byol = method.lower() == "byol"
+        is_simclr = method.lower() == "simclr"
+
+        # 0. SimCLR loss-near-random: InfoNCE loss for batch N has uniform-
+        #    random baseline ln(2N) (each anchor sees 1 positive vs 2N-1
+        #    negatives, so ~ln(2N) when predictions are uniform). If the
+        #    loss never moves meaningfully below that baseline, the encoder
+        #    isn't learning -- positive pairs aren't being aligned. This is
+        #    distinct from hard projection collapse (which the proj_std
+        #    probe catches): an alignment-collapsed encoder can still
+        #    spread its embeddings on the unit sphere (high proj_std) while
+        #    failing to bring positive pairs closer than negatives.
+        #
+        #    Reported case that motivated this heuristic: resnet34 SimCLR,
+        #    batch=64, 20 epochs, loss settled at 4.82 with random baseline
+        #    ln(128)~=4.85 -- only 0.03 below random, but the existing
+        #    heuristics were all gated on is_byol so the run was reported
+        #    as "ok" with no warnings.
+        if is_simclr and len(losses) >= 5:
+            try:
+                ln_random = math.log(2 * max(2, batch_size))
+            except (TypeError, ValueError):
+                ln_random = None
+            if ln_random and ln_random > 0:
+                # Final loss within 5% of the random baseline.
+                if final_loss > 0.95 * ln_random:
+                    warnings.append(
+                        f"SimCLR final loss {final_loss:.4f} is within 5% "
+                        f"of the uniform-random baseline ln(2N)~={ln_random:.4f} "
+                        f"(batch={batch_size}). The encoder is not learning "
+                        f"to align positive pairs. Common causes: "
+                        f"temperature too high (try 0.1-0.2 for histology), "
+                        f"learning rate too low for this batch size, or the "
+                        f"augmentation pipeline isn't producing meaningful "
+                        f"positive pairs. Encoder is unlikely to help "
+                        f"downstream."
+                    )
+                # Total drop from start to end is a small fraction of the
+                # baseline -- the loss curve is essentially flat. Tunable:
+                # 5% of ln_random over the whole run is a generous floor.
+                drop = first_loss - final_loss
+                if drop < 0.05 * ln_random:
+                    warnings.append(
+                        f"SimCLR loss barely changed: {first_loss:.4f} -> "
+                        f"{final_loss:.4f} ({drop:+.4f}) over {len(losses)} "
+                        f"epochs vs. baseline ln(2N)~={ln_random:.4f}. "
+                        f"With normal learning the loss should fall well "
+                        f"below the baseline within the first 10-20 epochs."
+                    )
 
         # 1. Final loss implausibly low (BYOL only -- SimCLR loss is on
         #    a different scale and naturally rides much lower).

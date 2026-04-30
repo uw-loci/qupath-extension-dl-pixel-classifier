@@ -507,10 +507,15 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 label.toUpperCase(), status, epochsCompleted, finalLoss, encoderPath,
                 quality, warnings.size());
 
+        // Mark cancelled-with-save runs as cancelled in the TrainingResult so
+        // SetupDLClassifier shows a "cancelled, partial encoder saved" dialog
+        // instead of the celebratory completion dialog.
+        boolean cancelled = "cancelled_saved".equals(status)
+                || "cancelled".equals(status);
         return new ClassifierClient.TrainingResult(
                 jobId, encoderPath, finalLoss, 0.0, 0, 0.0,
                 false, epochsCompleted, epochsCompleted, null,
-                false, null, null, 0.0, true,
+                cancelled, null, null, 0.0, true,
                 quality, warnings);
     }
 

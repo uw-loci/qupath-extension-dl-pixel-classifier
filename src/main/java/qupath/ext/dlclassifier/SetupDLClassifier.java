@@ -2298,13 +2298,17 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         boolean hasSavedModel = encoderPath != null && !encoderPath.isEmpty();
         if (hasSavedModel) {
             // Quality flags from Python: "ok", "warn", "likely_collapse",
-            // "aborted_collapse". The collapse-probe variants mean the encoder
-            // is almost certainly unusable -- show that prominently rather than
-            // burying it under a "complete!" headline.
+            // "aborted_collapse", "cancelled". The collapse-probe variants
+            // mean the encoder is almost certainly unusable -- show that
+            // prominently rather than burying it under a "complete!"
+            // headline. Cancelled runs get their own banner so the user
+            // doesn't mistake an early-stop encoder for a finished one.
             String quality = result.quality();
             java.util.List<String> warnings = result.warnings();
             boolean collapsed = "likely_collapse".equals(quality)
                     || "aborted_collapse".equals(quality);
+            boolean cancelled = result.cancelled()
+                    || "cancelled".equals(quality);
             boolean hasWarnings = result.hasQualityWarnings();
 
             StringBuilder messageBuilder = new StringBuilder();
@@ -2312,6 +2316,10 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 messageBuilder.append("[REVIEW WARNINGS] The collapse probe flagged this run.\n")
                         .append("The saved encoder is almost certainly unusable for downstream\n")
                         .append("supervised training. See details below.\n\n");
+            } else if (cancelled) {
+                messageBuilder.append("[CANCELLED] Training was stopped before normal completion.\n")
+                        .append("The encoder reflects the best epoch's weights up to the\n")
+                        .append("point of cancellation, NOT a fully trained model.\n\n");
             } else if (hasWarnings) {
                 messageBuilder.append("[REVIEW WARNINGS] This run completed with quality warnings.\n\n");
             }
@@ -2336,8 +2344,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             }
             String message = messageBuilder.toString();
             progress.complete(true, message);
-            logger.info("{} pretraining complete: loss={}, path={}, quality={}, warnings={}",
-                    label, result.finalLoss(), encoderPath, quality, warnings.size());
+            logger.info("{} pretraining {}: loss={}, path={}, quality={}, warnings={}",
+                    label, cancelled ? "cancelled (saved)" : "complete",
+                    result.finalLoss(), encoderPath, quality, warnings.size());
             for (String w : warnings) {
                 logger.warn("{} pretraining warning: {}", label, w);
             }
@@ -2350,6 +2359,15 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                     Alert alert = new Alert(Alert.AlertType.WARNING);
                     alert.setTitle(label + " pretraining: encoder collapsed");
                     alert.setHeaderText("Collapse probe aborted training");
+                    alert.setContentText(message);
+                    alert.getDialogPane().setPrefWidth(560);
+                    alert.show();
+                } else if (cancelled) {
+                    Dialogs.showWarningNotification(EXTENSION_NAME,
+                            label + " pretraining cancelled. Partial encoder saved -- see dialog.");
+                    Alert alert = new Alert(Alert.AlertType.WARNING);
+                    alert.setTitle(label + " pretraining: cancelled");
+                    alert.setHeaderText("Training stopped early; partial encoder saved");
                     alert.setContentText(message);
                     alert.getDialogPane().setPrefWidth(560);
                     alert.show();
