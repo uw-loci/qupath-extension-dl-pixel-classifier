@@ -190,8 +190,11 @@ public class AnnotationAdjuster {
         int h = adjustedMask.length;
         int w = adjustedMask[0].length;
 
-        // --- Step 1: Trace new annotations from the adjusted mask ---
-        List<PathObject> newAnnotations = new ArrayList<>();
+        // --- Step 1: Trace new in-tile ROIs from the adjusted mask, per class.
+        //
+        // Use a binary 0/1 mask with thresholds (0.5, 1.5) so classIdx == 0
+        // does NOT collapse to an all-zero image (which would cause
+        // ContourTracing to trace the entire tile as a single giant square).
         Set<Integer> classesPresent = new HashSet<>();
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
@@ -202,30 +205,29 @@ public class AnnotationAdjuster {
             }
         }
 
+        Map<Integer, ROI> newClassROIs = new LinkedHashMap<>();
         for (int classIdx : classesPresent) {
-            String className = classNames.get(classIdx);
-            PathClass pathClass = PathClass.fromString(className);
-
-            // Create SimpleImage for this class
             float[] data = new float[w * h];
             for (int y = 0; y < h; y++) {
                 for (int x = 0; x < w; x++) {
-                    data[y * w + x] = adjustedMask[y][x] == classIdx ? classIdx : 0;
+                    data[y * w + x] = adjustedMask[y][x] == classIdx ? 1.0f : 0.0f;
                 }
             }
             SimpleImage classImage = SimpleImages.createFloatImage(data, w, h);
-
-            // Trace mask directly to ROI (no JTS geometry intermediate)
             ROI tracedROI = ContourTracing.createTracedROI(
-                    classImage, classIdx, classIdx, region);
+                    classImage, 0.5, 1.5, region);
             if (tracedROI == null || tracedROI.isEmpty()) continue;
 
-            // Clip to tile boundary (safety measure)
             ROI clippedROI = RoiTools.intersection(tracedROI, tileROI);
             if (clippedROI == null || clippedROI.isEmpty()) continue;
+            newClassROIs.put(classIdx, clippedROI);
+        }
 
-            PathObject annotation = PathObjects.createAnnotationObject(clippedROI, pathClass);
-            newAnnotations.add(annotation);
+        // Map class name -> classIdx for quick lookup when matching existing
+        // annotations to a new in-tile ROI.
+        Map<String, Integer> classNameToIdx = new HashMap<>();
+        for (Map.Entry<Integer, ROI> e : newClassROIs.entrySet()) {
+            classNameToIdx.put(classNames.get(e.getKey()), e.getKey());
         }
 
         // --- Step 2: Find existing annotations overlapping the tile ---
@@ -235,7 +237,6 @@ public class AnnotationAdjuster {
             ROI annROI = ann.getROI();
             if (annROI == null) continue;
 
-            // Quick bounding-box pre-filter before the full intersection test
             double ax = annROI.getBoundsX();
             double ay = annROI.getBoundsY();
             double ax2 = ax + annROI.getBoundsWidth();
@@ -245,7 +246,6 @@ public class AnnotationAdjuster {
                 continue;
             }
 
-            // Full intersection check via RoiTools
             try {
                 if (RoiTools.intersectionArea(annROI, tileROI) > 0) {
                     overlapping.add(ann);
@@ -255,18 +255,48 @@ public class AnnotationAdjuster {
             }
         }
 
-        // --- Step 3: Surgically remove old annotation portions within the tile ---
+        // --- Step 3: Process overlapping annotations.
+        //
+        // For each existing annotation that overlaps the tile:
+        //   * If the class has a new in-tile ROI, accumulate the outer-of-tile
+        //     portion into the per-class merge bucket and mark the original
+        //     for removal. The new in-tile ROI will absorb the outer piece.
+        //   * Otherwise (class not affected by this adjustment), keep the
+        //     outer-of-tile portion as a clipped replacement, preserving
+        //     existing behaviour for unaffected classes.
         List<PathObject> removed = new ArrayList<>();
         Map<PathObject, PathObject> replaced = new LinkedHashMap<>();
+        Map<Integer, List<ROI>> sameClassOuterPieces = new LinkedHashMap<>();
+        List<PathObject> mergedAbsorbed = new ArrayList<>();
 
         for (PathObject ann : overlapping) {
+            String annClassName = ann.getPathClass().toString();
+            Integer mergeIdx = classNameToIdx.get(annClassName);
+
+            if (mergeIdx != null) {
+                // Same class as a new in-tile ROI: absorb the outer portion
+                // into the merge bucket regardless of whether it is empty.
+                try {
+                    ROI outerROI = RoiTools.difference(ann.getROI(), tileROI);
+                    if (outerROI != null && !outerROI.isEmpty()) {
+                        sameClassOuterPieces
+                                .computeIfAbsent(mergeIdx, k -> new ArrayList<>())
+                                .add(outerROI);
+                    }
+                } catch (Exception e) {
+                    logger.warn("ROI difference failed for same-class merge {}: {}",
+                            ann.getPathClass(), e.getMessage());
+                }
+                mergedAbsorbed.add(ann);
+                continue;
+            }
+
+            // Class is unaffected: clip and keep the outer part.
             try {
                 ROI outerROI = RoiTools.difference(ann.getROI(), tileROI);
                 if (outerROI == null || outerROI.isEmpty()) {
-                    // Entire annotation is within the tile: remove it
                     removed.add(ann);
                 } else {
-                    // Annotation extends beyond tile: keep the outer part
                     PathObject replacement = PathObjects.createAnnotationObject(
                             outerROI, ann.getPathClass());
                     replaced.put(ann, replacement);
@@ -277,9 +307,30 @@ public class AnnotationAdjuster {
             }
         }
 
-        // --- Step 4: Apply changes to hierarchy ---
+        // --- Step 4: Build the merged per-class annotations and apply.
+        List<PathObject> newAnnotations = new ArrayList<>();
+        for (Map.Entry<Integer, ROI> e : newClassROIs.entrySet()) {
+            int classIdx = e.getKey();
+            ROI mergedROI = e.getValue();
+            List<ROI> outerPieces = sameClassOuterPieces.get(classIdx);
+            if (outerPieces != null) {
+                for (ROI outer : outerPieces) {
+                    try {
+                        mergedROI = RoiTools.union(List.of(mergedROI, outer));
+                    } catch (Exception ex) {
+                        logger.warn("ROI union failed for class {}: {}",
+                                classNames.get(classIdx), ex.getMessage());
+                    }
+                }
+            }
+            if (mergedROI == null || mergedROI.isEmpty()) continue;
+            PathClass pathClass = PathClass.fromString(classNames.get(classIdx));
+            newAnnotations.add(PathObjects.createAnnotationObject(mergedROI, pathClass));
+        }
+
         List<PathObject> toRemove = new ArrayList<>(removed);
         toRemove.addAll(replaced.keySet());
+        toRemove.addAll(mergedAbsorbed);
         hierarchy.removeObjects(toRemove, false);
 
         List<PathObject> outerReplacements = new ArrayList<>(replaced.values());
@@ -288,21 +339,24 @@ public class AnnotationAdjuster {
 
         hierarchy.fireHierarchyChangedEvent(this);
 
-        // Save undo state
         lastUndo = new UndoSnapshot(hierarchy, toRemove, outerReplacements,
                 newAnnotations, replaced);
 
         int totalRemoved = removed.size();
         int totalClipped = replaced.size();
+        int totalMerged = mergedAbsorbed.size();
         int totalAdded = newAnnotations.size();
 
-        logger.info("Annotation adjustment applied: {} removed, {} clipped, {} added "
-                + "within tile ({},{})", totalRemoved, totalClipped, totalAdded, tileX, tileY);
+        logger.info("Annotation adjustment applied: {} removed, {} clipped, "
+                + "{} merged into new same-class annotations, {} added "
+                + "within tile ({},{})",
+                totalRemoved, totalClipped, totalMerged, totalAdded, tileX, tileY);
 
-        return new AdjustmentResult(totalRemoved + totalClipped, totalAdded,
+        return new AdjustmentResult(totalRemoved + totalClipped + totalMerged,
+                totalAdded,
                 countChangedPixels(adjustedMask),
-                String.format("Removed %d, clipped %d, added %d annotations",
-                        totalRemoved, totalClipped, totalAdded));
+                String.format("Removed %d, clipped %d, merged %d, added %d annotations",
+                        totalRemoved, totalClipped, totalMerged, totalAdded));
     }
 
     /**
