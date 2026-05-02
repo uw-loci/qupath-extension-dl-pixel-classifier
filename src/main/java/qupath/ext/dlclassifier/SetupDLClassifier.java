@@ -1465,6 +1465,19 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             }
         });
 
+        final boolean[] cleanupDeferred = {false};
+        Runnable maeCleanup = () -> {
+            if (projectTempTileDir != null) {
+                try {
+                    deleteRecursive(projectTempTileDir);
+                    logger.info("Deleted MAE temp tile dir {}", projectTempTileDir);
+                } catch (IOException ex) {
+                    logger.warn("Failed to delete MAE temp tile dir {}: {}",
+                            projectTempTileDir, ex.toString());
+                }
+            }
+        };
+
         Thread pretrainThread = new Thread(() -> {
             try {
                 Path effectiveDataPath = config.dataPath();
@@ -1519,8 +1532,13 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         () -> cancelSaveModeToString(progress.getCancelSaveMode())
                 );
 
+                if (result != null && result.isPaused()) {
+                    cleanupDeferred[0] = true;
+                }
+
                 handlePretrainResult("MAE", "pretrain_mae", apposeBackend, result, progress,
-                        config.outputDir(), runName, currentJobId, dataPathForRun);
+                        config.outputDir(), runName, currentJobId, dataPathForRun,
+                        maeCleanup);
 
             } catch (IOException e) {
                 if (progress.isCancelled()) {
@@ -1536,14 +1554,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                     "MAE pretraining failed: " + e.getMessage()));
                 }
             } finally {
-                if (projectTempTileDir != null) {
-                    try {
-                        deleteRecursive(projectTempTileDir);
-                        logger.info("Deleted MAE temp tile dir {}", projectTempTileDir);
-                    } catch (IOException ex) {
-                        logger.warn("Failed to delete MAE temp tile dir {}: {}",
-                                projectTempTileDir, ex.toString());
-                    }
+                if (!cleanupDeferred[0]) {
+                    maeCleanup.run();
                 }
             }
         }, "DLClassifier-MAEPretrain");
@@ -1746,6 +1758,19 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             }
         });
 
+        final boolean[] cleanupDeferred = {false};
+        Runnable sslCleanup = () -> {
+            if (projectTempTileDir != null) {
+                try {
+                    deleteRecursive(projectTempTileDir);
+                    logger.info("Deleted SSL temp tile dir {}", projectTempTileDir);
+                } catch (IOException ex) {
+                    logger.warn("Failed to delete SSL temp tile dir {}: {}",
+                            projectTempTileDir, ex.toString());
+                }
+            }
+        };
+
         Thread pretrainThread = new Thread(() -> {
             try {
                 Path effectiveDataPath = config.dataPath();
@@ -1781,13 +1806,31 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
                 String method = (String) config.config().get("method");
                 String encoder = (String) config.config().get("encoder_name");
+                Map<String, Object> sslCfg = config.config();
                 logger.info("Starting SSL pretraining: method={}, encoder={}, epochs={}, data={}",
-                        method, encoder, config.config().get("epochs"), effectiveDataPath);
+                        method, encoder, sslCfg.get("epochs"), effectiveDataPath);
                 progress.log("SSL pretraining starting...");
                 progress.log("Method: " + method + ", Backbone: " + encoder);
-                progress.log("Training: " + config.config().get("epochs")
-                        + " epochs, batch=" + config.config().get("batch_size")
-                        + ", lr=" + config.config().get("learning_rate"));
+                progress.log("Training: " + sslCfg.get("epochs")
+                        + " epochs, batch=" + sslCfg.get("batch_size")
+                        + ", lr=" + sslCfg.get("learning_rate")
+                        + ", warmup=" + sslCfg.get("warmup_epochs") + " epochs"
+                        + ", weight_decay=" + sslCfg.get("weight_decay")
+                        + ", scale_lr_by_batch=" + sslCfg.get("scale_lr_by_batch"));
+                if ("byol".equalsIgnoreCase(method)) {
+                    progress.log("BYOL: ema_decay=" + sslCfg.get("ema_decay")
+                            + " -> " + sslCfg.get("ema_decay_final")
+                            + ", projection_dim=" + sslCfg.get("projection_dim"));
+                } else {
+                    progress.log("SimCLR: temperature=" + sslCfg.get("temperature")
+                            + ", projection_dim=" + sslCfg.get("projection_dim"));
+                }
+                progress.log("Augmentation: tile_size=" + sslCfg.get("tile_size")
+                        + ", stain_aug=" + sslCfg.get("stain_aug"));
+                Object srcModel = sslCfg.get("pretrained_model_path");
+                if (srcModel != null && !srcModel.toString().isBlank()) {
+                    progress.log("Domain-adaptive source: " + srcModel);
+                }
                 progress.log("Data: " + effectiveDataPath);
                 progress.log("Output: " + config.outputDir());
                 final Path dataPathForRun = effectiveDataPath;
@@ -1809,8 +1852,15 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         () -> cancelSaveModeToString(progress.getCancelSaveMode())
                 );
 
+                if (result != null && result.isPaused()) {
+                    // Temp tile dir is still needed for resume; let
+                    // handlePretrainResult run cleanup at the actual end.
+                    cleanupDeferred[0] = true;
+                }
+
                 handlePretrainResult("SSL", "pretrain_ssl", apposeBackend, result, progress,
-                        config.outputDir(), runName, currentJobId, dataPathForRun);
+                        config.outputDir(), runName, currentJobId, dataPathForRun,
+                        sslCleanup);
 
             } catch (IOException e) {
                 if (progress.isCancelled()) {
@@ -1826,14 +1876,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                     "SSL pretraining failed: " + e.getMessage()));
                 }
             } finally {
-                if (projectTempTileDir != null) {
-                    try {
-                        deleteRecursive(projectTempTileDir);
-                        logger.info("Deleted SSL temp tile dir {}", projectTempTileDir);
-                    } catch (IOException ex) {
-                        logger.warn("Failed to delete SSL temp tile dir {}: {}",
-                                projectTempTileDir, ex.toString());
-                    }
+                if (!cleanupDeferred[0]) {
+                    sslCleanup.run();
                 }
             }
         }, "DLClassifier-SSLPretrain");
@@ -2223,13 +2267,20 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
      * @param runName      run name to show in resumed/pretraining headers
      * @param currentJobId mutable holder for the active job ID
      * @param dataPath     data path used for the original run (re-used on resume)
+     * @param terminalCleanup  one-shot cleanup (e.g. delete temp tile dir) that
+     *                          must run when the run truly ends -- not when it
+     *                          merely pauses. Threaded through resume so a
+     *                          paused-then-resumed run cleans up at the actual
+     *                          finish, and never on the pause path.
      */
     private void handlePretrainResult(String label, String taskName,
                                       ApposeClassifierBackend backend,
                                       ClassifierClient.TrainingResult result,
                                       ProgressMonitorController progress,
                                       Path outputDir, String runName,
-                                      String[] currentJobId, Path dataPath) {
+                                      String[] currentJobId, Path dataPath,
+                                      Runnable terminalCleanup) {
+        Runnable cleanup = terminalCleanup != null ? terminalCleanup : () -> {};
         if (result.isPaused()) {
             int last = result.lastEpoch();
             int total = result.totalEpochs();
@@ -2256,11 +2307,13 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                             progress.onTrainingJobStarted();
                                         });
                         handlePretrainResult(label, taskName, backend, resumeResult,
-                                progress, outputDir, runName, currentJobId, dataPath);
+                                progress, outputDir, runName, currentJobId, dataPath,
+                                cleanup);
                     } catch (IOException ex) {
                         logger.error("{} resume failed", label, ex);
                         progress.log("ERROR: resume failed: " + ex.getMessage());
                         progress.complete(false, label + " resume failed: " + ex.getMessage());
+                        cleanup.run();
                     }
                 }, "DLClassifier-" + label + "Resume");
                 resumeThread.setDaemon(true);
@@ -2288,6 +2341,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         progress.log("ERROR: finalize failed: " + ex.getMessage());
                         progress.complete(false,
                                 label + " finalize failed: " + ex.getMessage());
+                    } finally {
+                        cleanup.run();
                     }
                 }, "DLClassifier-" + label + "Finalize");
                 finalizeThread.setDaemon(true);
@@ -2385,6 +2440,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             progress.complete(false, label + " pretraining cancelled (no model saved).");
             logger.info("{} pretraining cancelled, no model saved", label);
         }
+        cleanup.run();
     }
 
     /**

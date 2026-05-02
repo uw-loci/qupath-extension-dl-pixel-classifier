@@ -1192,6 +1192,13 @@ class SSLPretrainingService:
                 # enough to make per-dim std a stable estimator.
                 proj_probe_size = 8
                 last_view1_batches = []
+                # Diagnostic accumulators (epoch averages). These let us
+                # distinguish "data pipeline produces near-identical inputs"
+                # from "encoder produces near-constant features" from
+                # "projector collapsed" from "gradients aren't flowing".
+                epoch_input_std_sum = 0.0
+                epoch_grad_norm_sum = 0.0
+                epoch_grad_norm_count = 0
 
                 optimizer.zero_grad(set_to_none=True)
 
@@ -1202,10 +1209,39 @@ class SSLPretrainingService:
                     view1 = view1.to(self.device, non_blocking=True)
                     view2 = view2.to(self.device, non_blocking=True)
 
+                    # Per-batch input std (across all elements). Tracks
+                    # whether augmentation+normalization is producing
+                    # diverse inputs at all. Healthy ~0.2-0.5 for
+                    # standardized image tensors; <<0.05 means the data
+                    # pipeline is squashing the signal.
+                    with torch.no_grad():
+                        epoch_input_std_sum += float(view1.float().std().item())
+
                     if not first_batch_done:
                         logger.info(
                             "First batch: shape=%s, dtype=%s, device=%s",
                             list(view1.shape), view1.dtype, view1.device)
+                        logger.info(
+                            "First batch input stats: min=%.4f max=%.4f "
+                            "mean=%.4f std=%.4f",
+                            float(view1.float().min().item()),
+                            float(view1.float().max().item()),
+                            float(view1.float().mean().item()),
+                            float(view1.float().std().item()))
+                        # One-time: save 8 augmented (view1, view2) pairs
+                        # so the user can eyeball whether the augmentation
+                        # pipeline is producing reasonable positive pairs.
+                        try:
+                            self._save_aug_pair_grid(
+                                view1, view2,
+                                output_dir / "aug_pairs_epoch1.png",
+                                norm_stats=norm_stats)
+                            logger.info(
+                                "Saved augmentation-pair preview to %s",
+                                output_dir / "aug_pairs_epoch1.png")
+                        except Exception as e:
+                            logger.debug(
+                                "Failed to save aug-pair preview: %s", e)
 
                     # Forward + loss
                     if use_amp:
@@ -1278,16 +1314,23 @@ class SSLPretrainingService:
                     # Optimizer step
                     if (batch_idx + 1) % grad_accum_steps == 0 or \
                             (batch_idx + 1) == len(dataloader):
+                        # Capture grad norm BEFORE clipping so we can tell
+                        # whether gradients are vanishing (~0) or being
+                        # clipped every step (>>1).
                         if use_amp and use_grad_scaler:
                             scaler.unscale_(optimizer)
-                            torch.nn.utils.clip_grad_norm_(
-                                model.parameters(), 1.0)
+                            grad_norm_val = float(
+                                torch.nn.utils.clip_grad_norm_(
+                                    model.parameters(), 1.0).item())
                             scaler.step(optimizer)
                             scaler.update()
                         else:
-                            torch.nn.utils.clip_grad_norm_(
-                                model.parameters(), 1.0)
+                            grad_norm_val = float(
+                                torch.nn.utils.clip_grad_norm_(
+                                    model.parameters(), 1.0).item())
                             optimizer.step()
+                        epoch_grad_norm_sum += grad_norm_val
+                        epoch_grad_norm_count += 1
                         optimizer.zero_grad(set_to_none=True)
 
                         # BYOL: EMA update after each optimizer step
@@ -1327,6 +1370,8 @@ class SSLPretrainingService:
                 # looked like collapse but were just BN running-stats noise
                 # (BYOL with batch=32 has very noisy running estimates).
                 proj_std = None
+                encoder_std = None
+                proj_pre_norm_std = None
                 if last_view1_batches:
                     try:
                         # Stay in train() so BN uses batch stats, matching
@@ -1334,6 +1379,8 @@ class SSLPretrainingService:
                         # The probe is no_grad so no parameter updates occur.
                         # BN running stats receive a few extra updates here,
                         # which is benign relative to ~1500 training steps/epoch.
+                        feats = []
+                        zs_pre = []
                         zs = []
                         with torch.no_grad():
                             inner = model
@@ -1344,11 +1391,22 @@ class SSLPretrainingService:
                                     feat = inner.pool(
                                         inner.online_encoder(v)[-1]
                                     ).flatten(1)
-                                    z = inner.online_projector(feat)
+                                    z_pre = inner.online_projector(feat)
                                 else:
-                                    z = inner(v)
-                                zs.append(F.normalize(z, dim=1))
+                                    feat = inner.pool(
+                                        inner.encoder(v)[-1]
+                                    ).flatten(1)
+                                    z_pre = inner.projector(feat)
+                                feats.append(feat)
+                                zs_pre.append(z_pre)
+                                zs.append(F.normalize(z_pre, dim=1))
+                            feat_all = torch.cat(feats, dim=0)
+                            z_pre_all = torch.cat(zs_pre, dim=0)
                             z_all = torch.cat(zs, dim=0)
+                            encoder_std = float(
+                                feat_all.std(dim=0).mean().item())
+                            proj_pre_norm_std = float(
+                                z_pre_all.std(dim=0).mean().item())
                             proj_std = float(z_all.std(dim=0).mean().item())
                     except Exception as e:
                         logger.debug("Projection-std probe failed: %s", e)
@@ -1365,6 +1423,9 @@ class SSLPretrainingService:
 
                 avg_loss = epoch_loss / max(1, n_batches)
                 current_lr = optimizer.param_groups[0]['lr']
+                avg_input_std = (epoch_input_std_sum / max(1, n_batches))
+                avg_grad_norm = (
+                    epoch_grad_norm_sum / max(1, epoch_grad_norm_count))
 
                 history.append({
                     "epoch": epoch,
@@ -1372,6 +1433,13 @@ class SSLPretrainingService:
                     "lr": current_lr,
                     "epoch_sec": round(epoch_duration, 2),
                     "proj_std": proj_std if proj_std is not None else -1.0,
+                    "encoder_std": (
+                        encoder_std if encoder_std is not None else -1.0),
+                    "proj_pre_norm_std": (
+                        proj_pre_norm_std
+                        if proj_pre_norm_std is not None else -1.0),
+                    "input_std": avg_input_std,
+                    "grad_norm": avg_grad_norm,
                 })
 
                 # Update collapse streak and decide whether to abort.
@@ -1442,10 +1510,19 @@ class SSLPretrainingService:
 
                 # Dense epoch logging with timing
                 proj_std_str = ("%.4f" % proj_std) if proj_std is not None else "n/a"
+                enc_std_str = (
+                    "%.4f" % encoder_std if encoder_std is not None else "n/a")
+                pre_std_str = (
+                    "%.4f" % proj_pre_norm_std
+                    if proj_pre_norm_std is not None else "n/a")
                 logger.info(
-                    "Epoch %d/%d: loss=%.6f, lr=%.2e, proj_std=%s "
+                    "Epoch %d/%d: loss=%.6f, lr=%.2e, "
+                    "input_std=%.4f, encoder_std=%s, "
+                    "proj_pre_std=%s, proj_std=%s, grad_norm=%.4f "
                     "(%.1fs, %.1f img/s, ~%.0fs remaining)",
-                    epoch, epochs, avg_loss, current_lr, proj_std_str,
+                    epoch, epochs, avg_loss, current_lr,
+                    avg_input_std, enc_std_str, pre_std_str, proj_std_str,
+                    avg_grad_norm,
                     epoch_duration, images_per_sec, remaining_sec)
 
                 # Periodic checkpoint
@@ -1865,6 +1942,68 @@ class SSLPretrainingService:
         gc.collect()
         self.gpu_manager.clear_cache()
         self.gpu_manager.log_memory_status(prefix="SSL cleanup: ")
+
+    @staticmethod
+    def _save_aug_pair_grid(view1, view2, out_path, norm_stats=None,
+                             num_pairs=8):
+        """Save a grid of (view1, view2) augmented pairs as a PNG.
+
+        Lets the user eyeball whether augmentations are producing
+        meaningful positive pairs. If view1 and view2 look identical,
+        the augmentation pipeline is too weak; if they look like
+        unrelated images, it is too aggressive.
+
+        Inputs are expected to be normalized (mean/std), so we
+        de-normalize for display when norm_stats are provided.
+        """
+        import numpy as np
+        try:
+            import imageio.v3 as iio
+        except Exception:
+            import imageio as iio
+
+        n = min(num_pairs, view1.shape[0])
+        v1 = view1[:n].detach().float().cpu().numpy()
+        v2 = view2[:n].detach().float().cpu().numpy()
+
+        if norm_stats is not None:
+            mean = np.asarray(
+                norm_stats.get("mean", [0.0]), dtype=np.float32)
+            std = np.asarray(
+                norm_stats.get("std", [1.0]), dtype=np.float32)
+            mean = mean.reshape(1, -1, 1, 1)
+            std = std.reshape(1, -1, 1, 1)
+            v1 = v1 * std + mean
+            v2 = v2 * std + mean
+
+        v1 = np.clip(v1, 0.0, 1.0)
+        v2 = np.clip(v2, 0.0, 1.0)
+
+        # (B, C, H, W) -> (B, H, W, C); fold 1-channel to RGB; take RGB
+        # of multi-channel.
+        def _to_rgb(arr):
+            if arr.shape[1] == 1:
+                arr = np.repeat(arr, 3, axis=1)
+            elif arr.shape[1] >= 3:
+                arr = arr[:, :3]
+            return np.transpose(arr, (0, 2, 3, 1))
+
+        v1 = _to_rgb(v1)
+        v2 = _to_rgb(v2)
+
+        # Build a 2-row grid: row 0 = view1, row 1 = view2
+        h, w = v1.shape[1], v1.shape[2]
+        gap = 4
+        grid = np.ones(
+            (2 * h + gap, n * w + (n - 1) * gap, 3), dtype=np.float32)
+        for i in range(n):
+            x = i * (w + gap)
+            grid[0:h, x:x + w] = v1[i]
+            grid[h + gap:2 * h + gap, x:x + w] = v2[i]
+
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        iio.imwrite(str(out_path), (grid * 255).astype(np.uint8))
 
     @staticmethod
     def _save_metadata(
