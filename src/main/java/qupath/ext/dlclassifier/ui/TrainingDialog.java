@@ -2494,6 +2494,7 @@ public class TrainingDialog {
                     .seed(seedSpinner.getValue() == 0 ? null : seedSpinner.getValue())
                     .validationSplit(validationSplitSpinner.getValue() / 100.0)
                     .tileSize(tileSizeSpinner.getValue())
+                    .trainingPixelSizeMicrons(nativePixelSizeMicrons)
                     .overlap(overlapSpinner.getValue())
                     .downsample(parseDownsample(downsampleCombo.getValue()))
                     .contextScale(parseContextScale(contextScaleCombo.getValue()))

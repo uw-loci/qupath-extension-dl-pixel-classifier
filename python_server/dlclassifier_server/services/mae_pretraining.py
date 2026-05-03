@@ -833,7 +833,14 @@ class MAEPretrainingService:
             },
             "run_name": config.get("run_name", ""),
             "normalization_stats": norm_stats,
+            "training_tile_size_px": int(tile_size),
         }
+        # Resolution contract -- carried through from the supervised
+        # training schema so a downstream classifier built on this MAE
+        # encoder can still detect cross-batch pixel-size mismatch.
+        train_px = config.get("training_pixel_size_um")
+        if train_px is not None and train_px > 0:
+            metadata["training_pixel_size_um"] = float(train_px)
         with open(str(output_dir / "metadata.json"), 'w') as f:
             json.dump(metadata, f, indent=2)
         # Clean up the pause checkpoint after a successful run

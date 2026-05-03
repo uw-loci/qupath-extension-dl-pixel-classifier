@@ -834,6 +834,51 @@ public class DLPixelClassifier implements PixelClassifier {
     private PixelClassifierMetadata buildPixelMetadata(ImageData<BufferedImage> imageData) {
         PixelCalibration cal = imageData.getServer().getPixelCalibration();
 
+        // Resolution-contract check: warn when the inference image's
+        // pixel size differs significantly from the training pixel size
+        // recorded in metadata.json. Auto-resampling is intentionally
+        // not done in QuPath (the existing tile-extraction path uses
+        // the metadata's own downsample); standalone Python users get
+        // anti-aliased resampling via inference_preprocess.
+        // resample_to_training_resolution. Two-times-or-more mismatch
+        // is the rough threshold past which scale jitter in training
+        // augmentation can no longer compensate.
+        try {
+            double trainPx = metadata.getTrainingPixelSizeMicrons();
+            double sourcePx = cal.getAveragedPixelSizeMicrons();
+            if (!Double.isNaN(trainPx) && trainPx > 0
+                    && !Double.isNaN(sourcePx) && sourcePx > 0) {
+                double ratio = sourcePx / trainPx;
+                if (ratio > 2.0 || ratio < 0.5) {
+                    logger.warn(
+                            "Inference image pixel size {} um/px is more "
+                                    + "than 2x different from training "
+                                    + "({} um/px). Predictions may be "
+                                    + "degraded; consider running "
+                                    + "inference at a closer resolution "
+                                    + "or retraining with stronger scale "
+                                    + "jitter.",
+                            sourcePx, trainPx);
+                } else if (Math.abs(ratio - 1.0) > 0.05) {
+                    logger.info(
+                            "Inference image pixel size {} um/px differs "
+                                    + "from training ({} um/px) by {}%.",
+                            sourcePx, trainPx,
+                            Math.round((ratio - 1.0) * 100));
+                }
+            } else if (Double.isNaN(trainPx)
+                    || trainPx <= 0) {
+                logger.debug(
+                        "Model lacks training_pixel_size_um in metadata; "
+                                + "skipping pixel-size mismatch check. "
+                                + "(Older model or trained on uncalibrated "
+                                + "images.)");
+            }
+        } catch (Exception e) {
+            // Never let the warning path block inference -- log and move on.
+            logger.debug("Pixel-size mismatch check failed: {}", e.toString());
+        }
+
         // Scale calibration by downsample factor so QuPath requests tiles at the correct resolution
         if (downsample > 1.0) {
             cal = cal.createScaledInstance(downsample, downsample);

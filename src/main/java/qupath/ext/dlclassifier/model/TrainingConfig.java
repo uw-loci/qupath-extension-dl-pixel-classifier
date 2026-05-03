@@ -31,6 +31,11 @@ public class TrainingConfig {
 
     // Tile parameters
     private final int tileSize;
+    // Physical pixel size of the training data (microns per pixel),
+    // sourced from QuPath's PixelCalibration. Saved into the model's
+    // metadata.json so inference can detect/correct cross-batch pixel
+    // size mismatch. NaN when the project images are uncalibrated.
+    private final double trainingPixelSizeMicrons;
     private final int overlap;
     // True when at least one image in the project has been assigned an
     // explicit TRAIN_ONLY or VAL_ONLY role. When false and overlap > 0,
@@ -143,6 +148,7 @@ public class TrainingConfig {
         this.discriminativeLrRatio = builder.discriminativeLrRatio;
         this.seed = builder.seed;
         this.tileSize = builder.tileSize;
+        this.trainingPixelSizeMicrons = builder.trainingPixelSizeMicrons;
         this.overlap = builder.overlap;
         this.hasPerImageSplitRoles = builder.hasPerImageSplitRoles;
         this.downsample = builder.downsample;
@@ -219,6 +225,14 @@ public class TrainingConfig {
 
     public int getTileSize() {
         return runtimeTileSize > 0 ? runtimeTileSize : tileSize;
+    }
+
+    /**
+     * Physical pixel size of the training data, in microns per pixel.
+     * Returns NaN when the project's images are uncalibrated.
+     */
+    public double getTrainingPixelSizeMicrons() {
+        return trainingPixelSizeMicrons;
     }
 
     public int getOverlap() {
@@ -824,6 +838,7 @@ public class TrainingConfig {
         private double discriminativeLrRatio = 0.1;
         private Integer seed = null;
         private int tileSize = 512;
+        private double trainingPixelSizeMicrons = Double.NaN;
         private int overlap = 64;
         private boolean hasPerImageSplitRoles = false;
         private double downsample = 1.0;
@@ -979,6 +994,17 @@ public class TrainingConfig {
 
         public Builder tileSize(int tileSize) {
             this.tileSize = tileSize;
+            return this;
+        }
+
+        /**
+         * Set the physical pixel size (microns per pixel) of the training
+         * data. NaN if the project images are uncalibrated. Saved into
+         * model metadata.json so inference can detect cross-batch
+         * pixel-size mismatch.
+         */
+        public Builder trainingPixelSizeMicrons(double micronsPerPixel) {
+            this.trainingPixelSizeMicrons = micronsPerPixel;
             return this;
         }
 

@@ -59,6 +59,12 @@ public class ClassifierMetadata {
     // Normalization stats computed from training dataset (may be null for older models)
     private final List<Map<String, Double>> normalizationStats;
 
+    // Resolution contract (may be NaN/0 for older models trained before
+    // these fields were saved). Used at inference to detect cross-batch
+    // pixel-size mismatch with the source image and warn the user.
+    private final double trainingPixelSizeMicrons;
+    private final int trainingTileSizePx;
+
     private ClassifierMetadata(Builder builder) {
         this.id = builder.id;
         this.name = builder.name;
@@ -85,6 +91,25 @@ public class ClassifierMetadata {
         this.normalizationStats = builder.normalizationStats != null
                 ? Collections.unmodifiableList(new ArrayList<>(builder.normalizationStats))
                 : null;
+        this.trainingPixelSizeMicrons = builder.trainingPixelSizeMicrons;
+        this.trainingTileSizePx = builder.trainingTileSizePx;
+    }
+
+    /**
+     * Physical pixel size of the training data in microns per pixel,
+     * or NaN when the model was trained on uncalibrated images / saved
+     * before this contract was added.
+     */
+    public double getTrainingPixelSizeMicrons() {
+        return trainingPixelSizeMicrons;
+    }
+
+    /**
+     * Training tile size in pixels (== input_size), or 0 when not
+     * recorded in metadata.
+     */
+    public int getTrainingTileSizePx() {
+        return trainingTileSizePx;
     }
 
     // Getters
@@ -370,6 +395,8 @@ public class ClassifierMetadata {
         private double finalAccuracy = 0.0;
         private Map<String, Object> trainingSettings;
         private List<Map<String, Double>> normalizationStats;
+        private double trainingPixelSizeMicrons = Double.NaN;
+        private int trainingTileSizePx = 0;
 
         public Builder id(String id) {
             this.id = id;
@@ -496,6 +523,23 @@ public class ClassifierMetadata {
          */
         public Builder normalizationStats(List<Map<String, Double>> stats) {
             this.normalizationStats = stats != null ? new ArrayList<>(stats) : null;
+            return this;
+        }
+
+        /**
+         * Sets the training data's physical pixel size in microns per pixel.
+         * Saved into the model's metadata.json as the resolution contract.
+         */
+        public Builder trainingPixelSizeMicrons(double value) {
+            this.trainingPixelSizeMicrons = value;
+            return this;
+        }
+
+        /**
+         * Sets the training tile size in pixels (== input_size).
+         */
+        public Builder trainingTileSizePx(int value) {
+            this.trainingTileSizePx = value;
             return this;
         }
 

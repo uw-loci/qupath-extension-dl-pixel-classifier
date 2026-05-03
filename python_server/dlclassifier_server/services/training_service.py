@@ -3471,7 +3471,11 @@ class TrainingService:
                 classes=classes, data_path=str(data_path),
                 training_history=training_history,
                 normalization_stats=dataset_norm_stats,
-                classifier_name=_cls_name
+                classifier_name=_cls_name,
+                training_pixel_size_um=training_params.get(
+                    "training_pixel_size_um"),
+                training_tile_size_px=training_params.get(
+                    "training_tile_size_px"),
             )
             logger.info("Saved last-epoch model after cancel: %s",
                         cancel_last_model_path)
@@ -3486,7 +3490,11 @@ class TrainingService:
                     classes=classes, data_path=str(data_path),
                     training_history=training_history,
                     normalization_stats=dataset_norm_stats,
-                    classifier_name=_cls_name
+                    classifier_name=_cls_name,
+                    training_pixel_size_um=training_params.get(
+                        "training_pixel_size_um"),
+                    training_tile_size_px=training_params.get(
+                        "training_tile_size_px"),
                 )
                 logger.info("Saved best model (epoch %d) after cancel: %s",
                             best_epoch, cancel_best_model_path)
@@ -3570,7 +3578,9 @@ class TrainingService:
             data_path=str(data_path),
             training_history=training_history,
             normalization_stats=dataset_norm_stats,
-            classifier_name=training_params.get("classifier_name")
+            classifier_name=training_params.get("classifier_name"),
+            training_pixel_size_um=training_params.get("training_pixel_size_um"),
+            training_tile_size_px=training_params.get("training_tile_size_px"),
         )
 
         # Clean up in-progress best model (final model saved above)
@@ -4414,7 +4424,9 @@ class TrainingService:
         data_path: str,
         training_history: Optional[List[Dict[str, Any]]] = None,
         normalization_stats: Optional[List[Dict[str, float]]] = None,
-        classifier_name: Optional[str] = None
+        classifier_name: Optional[str] = None,
+        training_pixel_size_um: Optional[float] = None,
+        training_tile_size_px: Optional[int] = None,
     ) -> str:
         """Save the trained model."""
         import time
@@ -4639,6 +4651,25 @@ class TrainingService:
             "input_config": saved_input_config,
             "classes": class_list
         }
+        # Resolution contract: if pixel size or tile size were provided
+        # by the caller, embed them so the inference path (and the
+        # standalone Python preprocessing helper) can detect cross-batch
+        # pixel-size mismatch and resample accordingly. NaN/None means
+        # uncalibrated training images -- emit a warning so the user
+        # knows the contract is incomplete.
+        if training_tile_size_px is not None and training_tile_size_px > 0:
+            metadata["training_tile_size_px"] = int(training_tile_size_px)
+        if (training_pixel_size_um is not None
+                and training_pixel_size_um > 0
+                and not (isinstance(training_pixel_size_um, float)
+                         and training_pixel_size_um != training_pixel_size_um)):
+            metadata["training_pixel_size_um"] = float(training_pixel_size_um)
+        else:
+            logger.warning(
+                "training_pixel_size_um not available -- model will lack "
+                "the resolution contract. Inference on images with "
+                "different pixel size will not auto-resample. Calibrate "
+                "your QuPath project images to record this.")
         if onnx_variants:
             metadata["onnx_variants"] = onnx_variants
 

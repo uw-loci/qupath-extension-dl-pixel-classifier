@@ -299,6 +299,28 @@ public class ModelManager {
                     .finalAccuracy(finalAccuracy)
                     .trainingSettings(trainingSettings)
                     .normalizationStats(normalizationStats);
+            // Resolution contract -- top-level metadata fields written by
+            // training_service / mae / ssl. Absent in older models.
+            if (obj.has("training_pixel_size_um")
+                    && obj.get("training_pixel_size_um").isJsonPrimitive()) {
+                try {
+                    builder.trainingPixelSizeMicrons(
+                            obj.get("training_pixel_size_um").getAsDouble());
+                } catch (NumberFormatException | IllegalStateException e) {
+                    logger.debug("Could not parse training_pixel_size_um: {}",
+                            e.getMessage());
+                }
+            }
+            if (obj.has("training_tile_size_px")
+                    && obj.get("training_tile_size_px").isJsonPrimitive()) {
+                try {
+                    builder.trainingTileSizePx(
+                            obj.get("training_tile_size_px").getAsInt());
+                } catch (NumberFormatException | IllegalStateException e) {
+                    logger.debug("Could not parse training_tile_size_px: {}",
+                            e.getMessage());
+                }
+            }
             if (createdAt != null) {
                 builder.createdAt(createdAt);
             }

@@ -2079,7 +2079,7 @@ class SSLPretrainingService:
         history, best_loss, best_epoch, batch_size, effective_batch,
         learning_rate, num_images, temperature, ema_decay,
         projection_dim, pretrained_model_path, norm_stats,
-        run_name=None,
+        run_name=None, training_pixel_size_um=None,
     ):
         """Save metadata.json alongside model.pt."""
         metadata = {
@@ -2110,7 +2110,10 @@ class SSLPretrainingService:
                                  if pretrained_model_path else None),
             },
             "normalization_stats": norm_stats,
+            "training_tile_size_px": int(tile_size),
         }
+        if training_pixel_size_um is not None and training_pixel_size_um > 0:
+            metadata["training_pixel_size_um"] = float(training_pixel_size_um)
         with open(str(Path(output_dir) / "metadata.json"), 'w') as f:
             json.dump(metadata, f, indent=2)
 

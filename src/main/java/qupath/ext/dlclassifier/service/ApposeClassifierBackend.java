@@ -225,6 +225,17 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         Map<String, Object> inputConfig = buildInputConfig(channelConfig);
 
         Map<String, Object> trainingParams = new HashMap<>();
+        // Save training tile size + physical pixel size in metadata so
+        // inference can detect cross-batch pixel-size mismatch and the
+        // user's standalone Python inference path can read the model's
+        // resolution contract from metadata.json. NaN is preserved
+        // (becomes null in JSON) when the project has uncalibrated
+        // images.
+        trainingParams.put("training_tile_size_px", trainingConfig.getTileSize());
+        double trainPx = trainingConfig.getTrainingPixelSizeMicrons();
+        if (!Double.isNaN(trainPx) && trainPx > 0) {
+            trainingParams.put("training_pixel_size_um", trainPx);
+        }
         trainingParams.put("epochs", trainingConfig.getEpochs());
         trainingParams.put("batch_size", trainingConfig.getBatchSize());
         trainingParams.put("learning_rate", trainingConfig.getLearningRate());
