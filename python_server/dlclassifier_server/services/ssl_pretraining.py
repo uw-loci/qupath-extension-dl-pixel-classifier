@@ -729,6 +729,16 @@ class SSLPretrainingService:
         # abort if it stays below this threshold for N consecutive epochs.
         collapse_threshold = float(config.get("collapse_threshold", 0.01))
         collapse_patience = int(config.get("collapse_patience", 3))
+        # Encoder-side collapse guard. The projection-output probe misses
+        # cases where the encoder pools to near-constant features but the
+        # projector compensates by inflating its output magnitude -- the
+        # L2-normalized proj_std then stays just above the threshold even
+        # though the encoder is dead. Healthy pooled-encoder std is ~1.0;
+        # values below ~0.5 mean the encoder is no longer carrying signal.
+        encoder_collapse_threshold = float(
+            config.get("encoder_collapse_threshold", 0.5))
+        encoder_collapse_patience = int(
+            config.get("encoder_collapse_patience", 2))
 
         if method not in ("simclr", "byol"):
             raise ValueError("Unsupported SSL method: %s" % method)
@@ -1135,6 +1145,11 @@ class SSLPretrainingService:
 
         # Collapse-guard state
         collapse_streak = 0
+        encoder_collapse_streak = 0
+        # Set to "proj_std", "proj_std_immediate", or "encoder_std" when a
+        # probe trips, so the post-loop warning can accurately describe
+        # which signal failed instead of using a generic message.
+        aborted_reason = None
         # Set when the training loop exits because the collapse probe
         # tripped, so the post-loop save path can return a status that
         # the Java side surfaces as a warning instead of pretending the
@@ -1473,6 +1488,7 @@ class SSLPretrainingService:
                         "batch size, or switch to BYOL with ema_decay=0.99.",
                         proj_std, immediate_collapse_threshold)
                     aborted_collapse = True
+                    aborted_reason = "proj_std_immediate"
                     break
                 if collapse_streak >= collapse_patience:
                     logger.error(
@@ -1481,6 +1497,38 @@ class SSLPretrainingService:
                         "Use checkpoint_epoch_<earlier>.pt for downstream.",
                         collapse_threshold, collapse_patience)
                     aborted_collapse = True
+                    aborted_reason = "proj_std"
+                    break
+
+                # Encoder-side collapse: catches the failure mode where the
+                # projector inflates magnitude to compensate for a dead
+                # encoder. proj_std (post-L2-norm) can sit just above
+                # threshold while encoder_std collapses to ~0.25 (run on
+                # 2026-05-02 collapsed at epoch 24 this way and trained
+                # uselessly for 17 more epochs before user cancel).
+                if (encoder_std is not None
+                        and encoder_std < encoder_collapse_threshold):
+                    encoder_collapse_streak += 1
+                    logger.warning(
+                        "Encoder-collapse warning epoch %d: "
+                        "encoder_std=%.4f < %.4f (streak %d/%d)",
+                        epoch, encoder_std, encoder_collapse_threshold,
+                        encoder_collapse_streak,
+                        encoder_collapse_patience)
+                else:
+                    encoder_collapse_streak = 0
+                if encoder_collapse_streak >= encoder_collapse_patience:
+                    logger.error(
+                        "Aborting: encoder collapse detected "
+                        "(encoder_std < %.4f for %d consecutive epochs). "
+                        "The projector may still appear healthy via "
+                        "proj_std, but pooled encoder features have "
+                        "lost their spread. Lower learning rate, tighten "
+                        "gradient clip, or lower ema_decay for BYOL.",
+                        encoder_collapse_threshold,
+                        encoder_collapse_patience)
+                    aborted_collapse = True
+                    aborted_reason = "encoder_std"
                     break
 
                 # Best model tracking with disk persistence
@@ -1696,17 +1744,37 @@ class SSLPretrainingService:
         # heuristic check may not catch a 3-epoch run on its own.
         if aborted_collapse:
             quality = "likely_collapse"
-            warnings.insert(0,
-                "Training aborted by the collapse probe -- the encoder's "
-                "embeddings degenerated to a near-constant output (proj_std "
-                "below threshold for 3 consecutive epochs). The saved "
-                "encoder is almost certainly unusable for downstream "
-                "supervised training. Causes for this run: "
-                "(1) tiles within each annotation class are very similar, "
-                "so positive pairs were trivially aligned; "
-                "(2) default temperature (0.5) and small batches make this "
-                "worse on visually-uniform histology -- try temperature "
-                "0.1-0.2; (3) consider BYOL with ema_decay=0.99 instead.")
+            if aborted_reason == "encoder_std":
+                msg = (
+                    "Training aborted by the encoder-collapse probe -- "
+                    "the pooled encoder features lost variance "
+                    "(encoder_std < %.2f for %d consecutive epochs) "
+                    "while the projector continued inflating its output "
+                    "magnitude to compensate. The saved encoder is "
+                    "almost certainly unusable for downstream "
+                    "supervised training. Likely causes for this run: "
+                    "(1) one-batch gradient spike during cosine LR "
+                    "ramp-up that the 1.0 grad-clip didn't catch -- try "
+                    "lowering the clip threshold; "
+                    "(2) for BYOL, ema_decay too high for dataset size "
+                    "-- try 0.98 with ema_decay_final=0.999 on small "
+                    "datasets (<100k tiles); "
+                    "(3) scale_lr_by_batch may be cutting LR too low "
+                    "for warmup, then the post-warmup LR transition "
+                    "destabilizes the encoder -- try unscaled LR.") % (
+                    encoder_collapse_threshold, encoder_collapse_patience)
+            else:
+                msg = (
+                    "Training aborted by the collapse probe -- the "
+                    "encoder's embeddings degenerated to a near-constant "
+                    "output (proj_std below threshold for %d consecutive "
+                    "epochs). The saved encoder is almost certainly "
+                    "unusable for downstream supervised training. "
+                    "Causes: weak augmentations producing trivially "
+                    "easy positive pairs, temperature too high "
+                    "(try 0.1-0.2 for SimCLR on histology), or for "
+                    "BYOL try ema_decay=0.99.") % collapse_patience
+            warnings.insert(0, msg)
         if warnings:
             logger.warning("=" * 60)
             logger.warning("SSL pretraining QUALITY WARNINGS (%s):", quality.upper())
