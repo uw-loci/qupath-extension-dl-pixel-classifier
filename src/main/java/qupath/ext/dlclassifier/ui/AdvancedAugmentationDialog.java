@@ -334,6 +334,8 @@ class AdvancedAugmentationDialog {
         p.put("p_noise", DLClassifierPreferences.getAugPNoise());
         p.put("noise_std_min", DLClassifierPreferences.getAugNoiseStdMin());
         p.put("noise_std_max", DLClassifierPreferences.getAugNoiseStdMax());
+        p.put("scale_jitter_limit",
+                DLClassifierPreferences.getAugScaleJitterLimit());
         return p;
     }
 }

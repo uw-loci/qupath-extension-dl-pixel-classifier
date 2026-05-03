@@ -116,6 +116,10 @@ def get_training_augmentation(
     elastic_sigma_ratio: float = 0.05,
     noise_std_min: float = 0.04,
     noise_std_max: float = 0.2,
+    # Scale jitter -- 0 disables. Trains pixel-size robustness without
+    # relying on inference-side resampling alone.
+    scale_jitter_limit: float = 0.0,
+    p_scale_jitter: float = 0.5,
 ) -> Optional[A.Compose]:
     """Create training augmentation pipeline.
 
@@ -196,6 +200,18 @@ def get_training_augmentation(
             brightness_limit=brightness_limit,
             contrast_limit=contrast_limit,
             p=p_color))
+    elif intensity_mode == "generic":
+        # Modality-agnostic ColorJitter: brightness/contrast/saturation
+        # variation without brightfield- or fluorescence-specific shape.
+        # Recommended default for non-histology imagery (e.g. fly wings)
+        # where cross-batch white-balance / exposure shift is the main
+        # form of acquisition variation.
+        transforms.append(A.ColorJitter(
+            brightness=brightness_limit,
+            contrast=contrast_limit,
+            saturation=brightness_limit,
+            hue=0.0,
+            p=p_color))
 
     transforms.extend([
         # Blur - simulates slight defocus
@@ -207,6 +223,28 @@ def get_training_augmentation(
         # Noise - std_range is fraction of image max value
         A.GaussNoise(std_range=(noise_lo, noise_hi), p=p_noise),
     ])
+
+    # Scale jitter: trains the model to tolerate pixel-size mismatch
+    # between training and inference. Random scale within +/- limit, then
+    # crop/pad back to image_size so downstream tensor shapes are
+    # consistent. Skipped when limit == 0.
+    if scale_jitter_limit and scale_jitter_limit > 0.0:
+        scale_lo = max(0.05, 1.0 - scale_jitter_limit)
+        scale_hi = 1.0 + scale_jitter_limit
+        transforms.extend([
+            A.RandomScale(
+                scale_limit=(scale_lo - 1.0, scale_hi - 1.0),
+                interpolation=1,  # INTER_LINEAR
+                p=p_scale_jitter,
+            ),
+            A.PadIfNeeded(
+                min_height=image_size,
+                min_width=image_size,
+                border_mode=2,  # BORDER_REFLECT
+                p=1.0,
+            ),
+            A.RandomCrop(height=image_size, width=image_size, p=1.0),
+        ])
 
     return A.Compose(transforms, additional_targets={})
 
@@ -1222,6 +1260,8 @@ class SegmentationDataset(Dataset):
             intensity_mode = aug_config.get("intensity_mode", "none")
             # Set color probability based on intensity mode
             p_color = 0.3 if intensity_mode != "none" else 0.0
+            scale_jitter_limit = float(
+                aug_config.get("scale_jitter_limit", 0.0))
             self.transform = get_training_augmentation(
                 image_size=aug_config.get("image_size", 512),
                 p_flip=aug_config.get("p_flip", 0.5),
@@ -1238,6 +1278,8 @@ class SegmentationDataset(Dataset):
                 elastic_sigma_ratio=aug_config.get("elastic_sigma_ratio", 0.05),
                 noise_std_min=aug_config.get("noise_std_min", 0.04),
                 noise_std_max=aug_config.get("noise_std_max", 0.2),
+                scale_jitter_limit=scale_jitter_limit,
+                p_scale_jitter=aug_config.get("p_scale_jitter", 0.5),
             )
             logger.info(
                 f"Augmentation enabled (intensity_mode={intensity_mode}, "
@@ -1245,7 +1287,8 @@ class SegmentationDataset(Dataset):
                 f"p_rotate={aug_config.get('p_rotate', 0.5)}, "
                 f"p_elastic={aug_config.get('p_elastic', 0.3)}, "
                 f"p_color={aug_config.get('p_color', p_color)}, "
-                f"p_noise={aug_config.get('p_noise', 0.2)})"
+                f"p_noise={aug_config.get('p_noise', 0.2)}, "
+                f"scale_jitter_limit={scale_jitter_limit})"
             )
         else:
             self.transform = None

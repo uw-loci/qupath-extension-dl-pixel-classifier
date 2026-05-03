@@ -90,10 +90,18 @@ public final class DLClassifierPreferences {
             "dlclassifier.augRotation", true);
 
     private static final BooleanProperty augColorJitter = PathPrefs.createPersistentPreference(
-            "dlclassifier.augColorJitter", false);
+            "dlclassifier.augColorJitter", true);
 
     private static final StringProperty augIntensityMode = PathPrefs.createPersistentPreference(
-            "dlclassifier.augIntensityMode", "none");
+            "dlclassifier.augIntensityMode", "generic");
+
+    // Scale jitter strength: random rescale of training tiles within
+    // +/- this fraction of native size, then crop/pad back to image_size.
+    // Trains the model to tolerate cross-batch pixel-size mismatch on top
+    // of the explicit metadata-driven resample at inference. 0.0 disables.
+    private static final DoubleProperty augScaleJitterLimit =
+            PathPrefs.createPersistentPreference(
+                    "dlclassifier.augScaleJitterLimit", 0.3);
 
     private static final BooleanProperty augElasticDeform = PathPrefs.createPersistentPreference(
             "dlclassifier.augElasticDeform", false);
@@ -762,6 +770,18 @@ public final class DLClassifierPreferences {
 
     public static StringProperty augIntensityModeProperty() {
         return augIntensityMode;
+    }
+
+    public static double getAugScaleJitterLimit() {
+        return augScaleJitterLimit.get();
+    }
+
+    public static void setAugScaleJitterLimit(double limit) {
+        augScaleJitterLimit.set(limit);
+    }
+
+    public static DoubleProperty augScaleJitterLimitProperty() {
+        return augScaleJitterLimit;
     }
 
     public static boolean isAugElasticDeform() {

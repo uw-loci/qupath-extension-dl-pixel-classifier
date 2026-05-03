@@ -277,6 +277,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             augConfig.put("noise_std_min", toDouble(params.get("noise_std_min"), 0.04));
         if (params.containsKey("noise_std_max"))
             augConfig.put("noise_std_max", toDouble(params.get("noise_std_max"), 0.2));
+        if (params.containsKey("scale_jitter_limit"))
+            augConfig.put("scale_jitter_limit",
+                    toDouble(params.get("scale_jitter_limit"), 0.0));
+        if (params.containsKey("p_scale_jitter"))
+            augConfig.put("p_scale_jitter",
+                    toDouble(params.get("p_scale_jitter"), 0.5));
 
         augConfig.put("intensity_mode", trainingConfig.getIntensityAugMode());
         trainingParams.put("augmentation_config", augConfig);
