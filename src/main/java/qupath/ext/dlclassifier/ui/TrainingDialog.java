@@ -445,27 +445,45 @@ public class TrainingDialog {
             TitledPane basicInfoSection = createBasicInfoSection();
             TitledPane modelSection = createModelSection();
             TitledPane weightInitSection = createWeightInitializationSection();
-            TitledPane trainingSection = createTrainingSection();
-            TitledPane strategySection = createTrainingStrategySection();
+            // Section creators are called in this dependency-driven order:
+            //   Duration creates epochsSpinner; BatchMemory creates batch/AMP
+            //   plus VRAM listeners on architecture/backbone; TilesResolution
+            //   creates tile/downsample/context/overlap and registers the VRAM,
+            //   spatial, and tile-estimate listeners that depend on
+            //   vramEstimateLabel and epochsSpinner; LearningRate registers the
+            //   updateSchedulerDesc listener on epochsSpinner; Loss and
+            //   Performance are otherwise self-contained.
+            TitledPane durationSection = createDurationSection();
+            TitledPane batchMemorySection = createBatchMemorySection();
+            TitledPane tilesResolutionSection = createTilesResolutionSection();
+            TitledPane learningRateSection = createLearningRateSection();
+            TitledPane lossSection = createLossSection();
+            TitledPane performanceSection = createPerformanceSection();
             TitledPane augmentationSection = createAugmentationSection();
 
             gatedSections.addAll(List.of(
                     basicInfoSection, modelSection, weightInitSection,
-                    trainingSection, strategySection,
+                    durationSection, batchMemorySection, tilesResolutionSection,
+                    learningRateSection, lossSection, performanceSection,
                     channelSection, classSection, augmentationSection
             ));
 
-            // Build layout: header, image source, gated sections, error panel, button bar
-            // Classifier info (naming) comes after model/training params so the user
-            // can choose a name informed by those settings.
+            // Build layout: header, image source, gated sections, error panel, button bar.
+            // Display order groups training-time concerns (tiles/resolution -> duration ->
+            // batch/memory) before deeper hyperparameters (LR, loss, performance), then
+            // channels/classes/augmentation, and finally the basic-info naming row.
             content.getChildren().addAll(
                     checkpointRecoveryBanner,
                     createHeaderBox(),
                     imageSourceSection,
                     modelSection,
                     weightInitSection,
-                    trainingSection,
-                    strategySection,
+                    tilesResolutionSection,
+                    durationSection,
+                    batchMemorySection,
+                    learningRateSection,
+                    lossSection,
+                    performanceSection,
                     channelSection,
                     classSection,
                     augmentationSection,
@@ -475,9 +493,11 @@ public class TrainingDialog {
             );
 
             // Advanced-only sections: fully hidden in basic mode
-            // (Model, weight init, training params, and channel sections are now
-            //  visible in basic mode with per-control visibility bindings instead)
-            for (TitledPane advSection : List.of(strategySection, augmentationSection)) {
+            // (Model, weight init, tiles/resolution, duration, batch/memory and
+            //  channel sections are visible in basic mode with per-control
+            //  visibility bindings instead.)
+            for (TitledPane advSection : List.of(
+                    learningRateSection, lossSection, performanceSection, augmentationSection)) {
                 advSection.visibleProperty().bind(advancedMode);
                 advSection.managedProperty().bind(advancedMode);
             }
@@ -2755,19 +2775,27 @@ public class TrainingDialog {
             }
         }
 
-        private TitledPane createTrainingSection() {
+        /**
+         * Standard two-column GridPane used by every training-related section
+         * (label column ~150px, field column grows). Pulled out so each
+         * section creator stays focused on its own widgets.
+         */
+        private GridPane newParamGrid() {
             GridPane grid = new GridPane();
             grid.setHgap(10);
             grid.setVgap(8);
             grid.setPadding(new Insets(10));
-
             ColumnConstraints labelCol = new ColumnConstraints();
             labelCol.setMinWidth(140);
             labelCol.setPrefWidth(150);
             ColumnConstraints fieldCol = new ColumnConstraints();
             fieldCol.setHgrow(Priority.ALWAYS);
             grid.getColumnConstraints().addAll(labelCol, fieldCol);
+            return grid;
+        }
 
+        private TitledPane createDurationSection() {
+            GridPane grid = newParamGrid();
             int row = 0;
 
             // Epochs
@@ -2805,194 +2833,6 @@ public class TrainingDialog {
             earlyStoppingStatusLabel.visibleProperty().bind(advancedMode.not());
             earlyStoppingStatusLabel.managedProperty().bind(advancedMode.not());
             grid.add(earlyStoppingStatusLabel, 0, row, 2, 1);
-            row++;
-
-            // Batch size
-            batchSizeSpinner = new Spinner<>(1, 128, DLClassifierPreferences.getDefaultBatchSize(), 4);
-            batchSizeSpinner.setEditable(true);
-            batchSizeSpinner.setPrefWidth(100);
-
-            Label batchLabel = new Label("Batch Size:");
-            TooltipHelper.install(
-                    "Number of tiles processed together in each training step.\n" +
-                    "Larger batches give more stable gradients but use more GPU memory.\n" +
-                    "Reduce if you get CUDA out-of-memory errors.\n\n" +
-                    "Typical: 4-16 depending on tile size and GPU VRAM.\n" +
-                    "With 512px tiles: 4-8 for 8GB VRAM, 8-16 for 12+ GB VRAM.\n" +
-                    "With 256px tiles: double the above batch sizes.",
-                    batchLabel, batchSizeSpinner);
-
-            grid.add(batchLabel, 0, row);
-            grid.add(batchSizeSpinner, 1, row);
-            row++;
-
-            // Batch size hint (basic mode only)
-            Label batchHint = new Label("Images processed at once. Larger = faster but more GPU memory.");
-            batchHint.setWrapText(true);
-            batchHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11px;");
-            batchHint.visibleProperty().bind(advancedMode.not());
-            batchHint.managedProperty().bind(advancedMode.not());
-            grid.add(batchHint, 0, row, 2, 1);
-            row++;
-
-            // Live VRAM estimate (updated when architecture/batch/tile/etc. change)
-            vramEstimateLabel = new Label();
-            vramEstimateLabel.setWrapText(true);
-            vramEstimateLabel.setStyle("-fx-font-size: 11px;");
-            grid.add(vramEstimateLabel, 0, row, 3, 1);
-            row++;
-
-            // Learning rate (advanced only)
-            learningRateSpinner = new Spinner<>(0.00001, 1.0, DLClassifierPreferences.getDefaultLearningRate(), 0.0001);
-            learningRateSpinner.setEditable(true);
-            learningRateSpinner.setPrefWidth(100);
-            // Default StringConverter rounds 0.001 to "0.0" - use enough decimal places
-            var lrFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory) learningRateSpinner.getValueFactory();
-            lrFactory.setConverter(new javafx.util.StringConverter<Double>() {
-                @Override
-                public String toString(Double value) {
-                    return value == null ? "" : String.format("%.5f", value);
-                }
-                @Override
-                public Double fromString(String string) {
-                    try {
-                        return Double.parseDouble(string.trim());
-                    } catch (NumberFormatException e) {
-                        return lrFactory.getValue();
-                    }
-                }
-            });
-            Label lrLabel = new Label("Learning Rate:");
-            TooltipHelper.install(
-                    "Controls the step size during gradient descent.\n" +
-                    "Too high: training oscillates or diverges. Too low: training stalls.\n\n" +
-                    "Recommended: 1e-4 (0.0001) -- stable for both fresh training and\n" +
-                    "continue-training. With discriminative LRs, the encoder gets 1/10th\n" +
-                    "this rate (1e-5) and decoder/head get the full rate.\n\n" +
-                    "Only increase to 1e-3 if training is very slow to converge and you\n" +
-                    "are using OneCycleLR (which auto-finds the optimal max LR).\n\n" +
-                    "The LR scheduler will further adjust the rate during training.",
-                    lrLabel, learningRateSpinner);
-            lrLabel.visibleProperty().bind(advancedMode);
-            lrLabel.managedProperty().bind(advancedMode);
-            learningRateSpinner.visibleProperty().bind(advancedMode);
-            learningRateSpinner.managedProperty().bind(advancedMode);
-
-            grid.add(lrLabel, 0, row);
-            grid.add(learningRateSpinner, 1, row);
-            row++;
-
-            // LR info label -- updates based on scheduler selection (advanced only)
-            lrInfoLabel = new Label();
-            lrInfoLabel.setWrapText(true);
-            lrInfoLabel.setMaxWidth(Double.MAX_VALUE);
-            lrInfoLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 0.85em;");
-            lrInfoLabel.visibleProperty().bind(advancedMode);
-            lrInfoLabel.managedProperty().bind(advancedMode);
-            grid.add(lrInfoLabel, 0, row, 2, 1);
-            row++;
-
-            // Discriminative LR ratio (advanced only)
-            discriminativeLrSpinner = new Spinner<>(0.01, 1.0,
-                    DLClassifierPreferences.getDefaultDiscriminativeLrRatio(), 0.05);
-            discriminativeLrSpinner.setEditable(true);
-            discriminativeLrSpinner.setPrefWidth(100);
-            var discLrFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory)
-                    discriminativeLrSpinner.getValueFactory();
-            discLrFactory.setConverter(new javafx.util.StringConverter<Double>() {
-                @Override public String toString(Double value) {
-                    return value == null ? "" : String.format("%.2f", value);
-                }
-                @Override public Double fromString(String string) {
-                    try { return Double.parseDouble(string.trim()); }
-                    catch (NumberFormatException e) { return discLrFactory.getValue(); }
-                }
-            });
-            Label discLrLabel = new Label("Encoder LR Factor:");
-            TooltipHelper.install(
-                    "Ratio applied to the base learning rate for encoder layers.\n\n" +
-                    "0.1 (default): Encoder trains at 1/10th the decoder LR.\n" +
-                    "  Good for ImageNet-pretrained backbones on new domains.\n\n" +
-                    "0.3 - 0.5: For histology-pretrained backbones on histology data.\n" +
-                    "  The pretrained features are already domain-relevant.\n\n" +
-                    "1.0: Same LR for all layers (no discriminative LRs).\n\n" +
-                    "Lower values preserve pretrained features more aggressively.\n" +
-                    "Only applies when using pretrained weights (not from scratch).",
-                    discLrLabel, discriminativeLrSpinner);
-            discLrLabel.visibleProperty().bind(advancedMode);
-            discLrLabel.managedProperty().bind(advancedMode);
-            discriminativeLrSpinner.visibleProperty().bind(advancedMode);
-            discriminativeLrSpinner.managedProperty().bind(advancedMode);
-            grid.add(discLrLabel, 0, row);
-            grid.add(discriminativeLrSpinner, 1, row);
-            row++;
-
-            // Effective per-group LR display (advanced only)
-            effectiveLrLabel = new Label();
-            effectiveLrLabel.setWrapText(true);
-            effectiveLrLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
-            effectiveLrLabel.visibleProperty().bind(advancedMode);
-            effectiveLrLabel.managedProperty().bind(advancedMode);
-            grid.add(effectiveLrLabel, 0, row, 2, 1);
-            row++;
-
-            // Update effective LR display when inputs change
-            learningRateSpinner.valueProperty().addListener((obs, o, n) -> updateEffectiveLrLabel());
-            discriminativeLrSpinner.valueProperty().addListener((obs, o, n) -> updateEffectiveLrLabel());
-            updateEffectiveLrLabel();
-
-            // Weight decay (advanced only)
-            weightDecaySpinner = new Spinner<>(0.0, 0.5,
-                    DLClassifierPreferences.getDefaultWeightDecay(), 0.005);
-            weightDecaySpinner.setEditable(true);
-            weightDecaySpinner.setPrefWidth(100);
-            var wdFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory)
-                    weightDecaySpinner.getValueFactory();
-            wdFactory.setConverter(new javafx.util.StringConverter<Double>() {
-                @Override public String toString(Double value) {
-                    return value == null ? "" : String.format("%.3f", value);
-                }
-                @Override public Double fromString(String string) {
-                    try { return Double.parseDouble(string.trim()); }
-                    catch (NumberFormatException e) { return wdFactory.getValue(); }
-                }
-            });
-            Label wdLabel = new Label("Weight Decay:");
-            TooltipHelper.install(
-                    "L2 regularization strength (AdamW). Penalizes large weights\n" +
-                    "to prevent overfitting.\n\n" +
-                    "0.01 (default): Good for most training runs.\n" +
-                    "0.05 - 0.1: Increase for very small datasets.\n" +
-                    "0.001: Decrease for large datasets or from-scratch training.\n" +
-                    "0: Disable weight decay entirely.",
-                    wdLabel, weightDecaySpinner);
-            wdLabel.visibleProperty().bind(advancedMode);
-            wdLabel.managedProperty().bind(advancedMode);
-            weightDecaySpinner.visibleProperty().bind(advancedMode);
-            weightDecaySpinner.managedProperty().bind(advancedMode);
-            grid.add(wdLabel, 0, row);
-            grid.add(weightDecaySpinner, 1, row);
-            row++;
-
-            // Reproducibility seed (advanced only)
-            seedSpinner = new Spinner<>(0, 999999, DLClassifierPreferences.getLastSeed(), 1);
-            seedSpinner.setEditable(true);
-            seedSpinner.setPrefWidth(100);
-            Label seedLabel = new Label("Random Seed:");
-            TooltipHelper.install(
-                    "Set a fixed seed for reproducible training results.\n\n" +
-                    "0 (default): Non-deterministic -- results vary between runs.\n" +
-                    "Any positive value: Deterministic -- same results given same\n" +
-                    "  data and settings. Useful for ablation studies.\n\n" +
-                    "Note: Deterministic mode may reduce training speed by 10-20%\n" +
-                    "due to cuDNN deterministic algorithms.",
-                    seedLabel, seedSpinner);
-            seedLabel.visibleProperty().bind(advancedMode);
-            seedLabel.managedProperty().bind(advancedMode);
-            seedSpinner.visibleProperty().bind(advancedMode);
-            seedSpinner.managedProperty().bind(advancedMode);
-            grid.add(seedLabel, 0, row);
-            grid.add(seedSpinner, 1, row);
             row++;
 
             // Validation split (advanced only)
@@ -3046,6 +2886,297 @@ public class TrainingDialog {
                     validationSplitObservedLabel.textProperty().isNotEmpty()));
             grid.add(validationSplitObservedLabel, 1, row, 2, 1);
             row++;
+
+            // Early stopping metric
+            earlyStoppingMetricCombo = new ComboBox<>(FXCollections.observableArrayList(
+                    "Mean IoU", "Validation Loss", "Disabled"));
+            earlyStoppingMetricCombo.setValue(
+                    mapEarlyStoppingMetricToDisplay(DLClassifierPreferences.getDefaultEarlyStoppingMetric()));
+            Label esMetricLabel = new Label("Early Stop Metric:");
+            TooltipHelper.install(
+                    "Which metric decides WHEN TO STOP training.\n" +
+                    "Independent of Focus Class: Focus Class drives 'best\n" +
+                    "model' checkpoint selection, while this metric drives\n" +
+                    "early stopping and the plateau LR scheduler.\n\n" +
+                    "Mean IoU (recommended): Intersection-over-union averaged\n" +
+                    "  across all classes. Directly measures segmentation\n" +
+                    "  quality. Stops when overall accuracy plateaus.\n\n" +
+                    "Validation Loss: Combined loss on held-out data.\n" +
+                    "  Can oscillate while IoU still improves, so Mean IoU\n" +
+                    "  is generally more reliable.\n\n" +
+                    "Disabled: Train for the full epoch count regardless of\n" +
+                    "  metric progress. Best-model selection still applies.",
+                    esMetricLabel, earlyStoppingMetricCombo);
+            esMetricLabel.visibleProperty().bind(advancedMode);
+            esMetricLabel.managedProperty().bind(advancedMode);
+            earlyStoppingMetricCombo.visibleProperty().bind(advancedMode);
+            earlyStoppingMetricCombo.managedProperty().bind(advancedMode);
+
+            grid.add(esMetricLabel, 0, row);
+            grid.add(earlyStoppingMetricCombo, 1, row);
+            row++;
+
+            // Early stopping patience
+            earlyStoppingPatienceSpinner = new Spinner<>(3, 50,
+                    DLClassifierPreferences.getDefaultEarlyStoppingPatience(), 1);
+            earlyStoppingPatienceSpinner.setEditable(true);
+            earlyStoppingPatienceSpinner.setPrefWidth(100);
+            Label esPatienceLabel = new Label("Early Stop Patience:");
+            TooltipHelper.install(
+                    "How many consecutive epochs without improvement before stopping.\n\n" +
+                    "After each epoch, if the early stop metric hasn't improved in\n" +
+                    "this many epochs, training stops and the best model is saved.\n\n" +
+                    "10-15: Good default for most runs.\n" +
+                    "20-30: Use with cosine annealing or noisy loss curves.\n" +
+                    "3-5: For quick experiments.\n\n" +
+                    "It is safe to set a high epoch count (e.g. 200) and rely on\n" +
+                    "patience to stop training -- you won't waste GPU time.",
+                    esPatienceLabel, earlyStoppingPatienceSpinner);
+            esPatienceLabel.visibleProperty().bind(advancedMode);
+            esPatienceLabel.managedProperty().bind(advancedMode);
+            earlyStoppingPatienceSpinner.visibleProperty().bind(advancedMode);
+            earlyStoppingPatienceSpinner.managedProperty().bind(advancedMode);
+
+            grid.add(esPatienceLabel, 0, row);
+            grid.add(earlyStoppingPatienceSpinner, 1, row);
+            row++;
+
+            // Focus class
+            focusClassCombo = new ComboBox<>(FXCollections.observableArrayList(
+                    "None (use Mean IoU)"));
+            focusClassCombo.setValue("None (use Mean IoU)");
+            Label focusClassLabel = new Label("Focus Class:");
+            TooltipHelper.install(
+                    "Optionally select a class to focus on for BEST-MODEL\n" +
+                    "checkpoint selection.\n\n" +
+                    "When set, the focus class's per-class IoU decides which\n" +
+                    "epoch's weights are saved as the final model. The Early\n" +
+                    "Stop Metric (above) is INDEPENDENT -- it controls when\n" +
+                    "training stops based on its own metric (Mean IoU or\n" +
+                    "Validation Loss).\n\n" +
+                    "Combine them: e.g., Focus Class = 'vein' + Early Stop\n" +
+                    "Metric = 'Mean IoU' saves the best vein model but lets\n" +
+                    "training run until overall mean IoU plateaus.\n\n" +
+                    "Use this when you care more about one class than the\n" +
+                    "others. For example, if detecting 'Hinge' is critical,\n" +
+                    "set it as the focus class so the best model is the one\n" +
+                    "with the best Hinge IoU, not the best average across\n" +
+                    "all classes.",
+                    focusClassLabel, focusClassCombo);
+            focusClassLabel.visibleProperty().bind(advancedMode);
+            focusClassLabel.managedProperty().bind(advancedMode);
+            focusClassCombo.visibleProperty().bind(advancedMode);
+            focusClassCombo.managedProperty().bind(advancedMode);
+
+            focusClassCombo.valueProperty().addListener((obs, old, newVal) -> {
+                boolean hasFocusClass = newVal != null && !newVal.startsWith("None");
+                // Show/hide min IoU row
+                focusClassMinIoUSpinner.setVisible(hasFocusClass);
+                focusClassMinIoUSpinner.setManaged(hasFocusClass);
+                focusClassMinIoULabel.setVisible(hasFocusClass);
+                focusClassMinIoULabel.setManaged(hasFocusClass);
+                // Focus Class and Early Stop Metric are independent: focus
+                // class drives best-model selection; ES metric drives when
+                // training stops. Both can be set without conflict.
+            });
+
+            grid.add(focusClassLabel, 0, row);
+            grid.add(focusClassCombo, 1, row);
+            row++;
+
+            // Focus class min IoU threshold (hidden by default)
+            focusClassMinIoULabel = new Label("Min Focus IoU:");
+            double savedMinIoU = DLClassifierPreferences.getDefaultFocusClassMinIoU();
+            focusClassMinIoUSpinner = new Spinner<>(0.0, 1.0,
+                    savedMinIoU > 0 ? savedMinIoU : 0.5, 0.05);
+            focusClassMinIoUSpinner.setEditable(true);
+            focusClassMinIoUSpinner.setPrefWidth(100);
+            var minIoUFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory) focusClassMinIoUSpinner.getValueFactory();
+            minIoUFactory.setConverter(new javafx.util.StringConverter<Double>() {
+                @Override
+                public String toString(Double value) {
+                    return value == null ? "" : String.format("%.2f", value);
+                }
+                @Override
+                public Double fromString(String string) {
+                    try {
+                        return Double.parseDouble(string.trim());
+                    } catch (NumberFormatException e) {
+                        return minIoUFactory.getValue();
+                    }
+                }
+            });
+            TooltipHelper.install(
+                    "Minimum IoU threshold for the focus class.\n\n" +
+                    "Training will not stop early until the focus class\n" +
+                    "reaches this IoU, regardless of patience.\n\n" +
+                    "0.00: No minimum -- early stopping works normally.\n" +
+                    "0.30: Training continues until focus class IoU >= 0.30,\n" +
+                    "  then patience-based stopping resumes.\n\n" +
+                    "Set this to prevent the model from stopping before the\n" +
+                    "focus class has had a chance to learn.",
+                    focusClassMinIoULabel, focusClassMinIoUSpinner);
+
+            // Hidden by default
+            focusClassMinIoUSpinner.setVisible(false);
+            focusClassMinIoUSpinner.setManaged(false);
+            focusClassMinIoULabel.setVisible(false);
+            focusClassMinIoULabel.setManaged(false);
+
+            grid.add(focusClassMinIoULabel, 0, row);
+            grid.add(focusClassMinIoUSpinner, 1, row);
+            row++;
+
+            // Reproducibility seed (advanced only)
+            seedSpinner = new Spinner<>(0, 999999, DLClassifierPreferences.getLastSeed(), 1);
+            seedSpinner.setEditable(true);
+            seedSpinner.setPrefWidth(100);
+            Label seedLabel = new Label("Random Seed:");
+            TooltipHelper.install(
+                    "Set a fixed seed for reproducible training results.\n\n" +
+                    "0 (default): Non-deterministic -- results vary between runs.\n" +
+                    "Any positive value: Deterministic -- same results given same\n" +
+                    "  data and settings. Useful for ablation studies.\n\n" +
+                    "Note: Deterministic mode may reduce training speed by 10-20%\n" +
+                    "due to cuDNN deterministic algorithms.",
+                    seedLabel, seedSpinner);
+            seedLabel.visibleProperty().bind(advancedMode);
+            seedLabel.managedProperty().bind(advancedMode);
+            seedSpinner.visibleProperty().bind(advancedMode);
+            seedSpinner.managedProperty().bind(advancedMode);
+            grid.add(seedLabel, 0, row);
+            grid.add(seedSpinner, 1, row);
+            row++;
+
+            // Update the basic-mode early stopping status label when these controls change,
+            // and grey out the patience spinner when early stopping is disabled.
+            Runnable applyEarlyStoppingDisableState = () -> {
+                boolean disabled = "Disabled".equals(earlyStoppingMetricCombo.getValue());
+                earlyStoppingPatienceSpinner.setDisable(disabled);
+                esPatienceLabel.setDisable(disabled);
+            };
+            earlyStoppingMetricCombo.valueProperty().addListener((obs, o, n) -> {
+                updateEarlyStoppingStatusLabel();
+                applyEarlyStoppingDisableState.run();
+            });
+            earlyStoppingPatienceSpinner.valueProperty().addListener(
+                    (obs, o, n) -> updateEarlyStoppingStatusLabel());
+            applyEarlyStoppingDisableState.run();
+
+            TitledPane pane = new TitledPane("DURATION & STOPPING", grid);
+            pane.setExpanded(true);
+            pane.setStyle("-fx-font-weight: bold;");
+            pane.setTooltip(TooltipHelper.create(
+                    "How long to train and when to stop: epochs, validation split, "
+                    + "early stopping, focus class, and seed."));
+            return pane;
+        }
+
+        private TitledPane createBatchMemorySection() {
+            GridPane grid = newParamGrid();
+            int row = 0;
+
+            // Batch size
+            batchSizeSpinner = new Spinner<>(1, 128, DLClassifierPreferences.getDefaultBatchSize(), 4);
+            batchSizeSpinner.setEditable(true);
+            batchSizeSpinner.setPrefWidth(100);
+
+            Label batchLabel = new Label("Batch Size:");
+            TooltipHelper.install(
+                    "Number of tiles processed together in each training step.\n" +
+                    "Larger batches give more stable gradients but use more GPU memory.\n" +
+                    "Reduce if you get CUDA out-of-memory errors.\n\n" +
+                    "Typical: 4-16 depending on tile size and GPU VRAM.\n" +
+                    "With 512px tiles: 4-8 for 8GB VRAM, 8-16 for 12+ GB VRAM.\n" +
+                    "With 256px tiles: double the above batch sizes.",
+                    batchLabel, batchSizeSpinner);
+
+            grid.add(batchLabel, 0, row);
+            grid.add(batchSizeSpinner, 1, row);
+            row++;
+
+            // Batch size hint (basic mode only)
+            Label batchHint = new Label("Images processed at once. Larger = faster but more GPU memory.");
+            batchHint.setWrapText(true);
+            batchHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11px;");
+            batchHint.visibleProperty().bind(advancedMode.not());
+            batchHint.managedProperty().bind(advancedMode.not());
+            grid.add(batchHint, 0, row, 2, 1);
+            row++;
+
+            // Gradient accumulation (advanced only)
+            gradientAccumulationSpinner = new Spinner<>(1, 8,
+                    DLClassifierPreferences.getDefaultGradientAccumulation(), 1);
+            gradientAccumulationSpinner.setEditable(true);
+            gradientAccumulationSpinner.setPrefWidth(100);
+            Label gradAccLabel = new Label("Gradient Accumulation:");
+            TooltipHelper.install(
+                    "Accumulate gradients over N batches before updating weights.\n\n" +
+                    "Effective batch size = Batch Size x Accumulation Steps.\n" +
+                    "Use this when GPU memory is too limited for large batches.\n\n" +
+                    "1: Normal training (no accumulation).\n" +
+                    "2-4: Simulates 2-4x larger batch without extra memory.\n" +
+                    "8: Maximum accumulation; very stable but slower per epoch.",
+                    gradAccLabel, gradientAccumulationSpinner);
+            gradAccLabel.visibleProperty().bind(advancedMode);
+            gradAccLabel.managedProperty().bind(advancedMode);
+            gradientAccumulationSpinner.visibleProperty().bind(advancedMode);
+            gradientAccumulationSpinner.managedProperty().bind(advancedMode);
+
+            grid.add(gradAccLabel, 0, row);
+            grid.add(gradientAccumulationSpinner, 1, row);
+            row++;
+
+            // Live VRAM estimate (updated when architecture/batch/tile/etc. change)
+            vramEstimateLabel = new Label();
+            vramEstimateLabel.setWrapText(true);
+            vramEstimateLabel.setStyle("-fx-font-size: 11px;");
+            grid.add(vramEstimateLabel, 0, row, 3, 1);
+            row++;
+
+            // Mixed precision (advanced only)
+            mixedPrecisionCheck = new CheckBox("Enable mixed precision (AMP)");
+            mixedPrecisionCheck.setSelected(DLClassifierPreferences.isDefaultMixedPrecision());
+            TooltipHelper.installWithLink(mixedPrecisionCheck,
+                    "Use automatic mixed precision (FP16/FP32) on CUDA GPUs.\n" +
+                    "Typically provides ~2x speedup with no accuracy loss.\n" +
+                    "Only active when training on NVIDIA GPUs; ignored on CPU/MPS.\n\n" +
+                    "Safe to leave enabled -- PyTorch automatically manages which\n" +
+                    "operations use FP16 vs FP32 for numerical stability.",
+                    "https://pytorch.org/docs/stable/amp.html");
+            mixedPrecisionCheck.visibleProperty().bind(advancedMode);
+            mixedPrecisionCheck.managedProperty().bind(advancedMode);
+
+            grid.add(mixedPrecisionCheck, 0, row, 2, 1);
+            row++;
+
+            // Wire VRAM estimation listeners for inputs in this section and earlier sections.
+            // batchSize/mixedPrecision live here. architecture/backbone come from createModelSection.
+            // Tile-size, downsample, context, overlap listeners are registered later in
+            // createTilesResolutionSection.
+            batchSizeSpinner.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
+            mixedPrecisionCheck.selectedProperty().addListener((obs, old, newVal) -> updateVramEstimate());
+            architectureCombo.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
+            backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
+
+            // Tile/time estimate refresh when batch size changes -- batch is the
+            // only widget owned by this section that affects the per-epoch
+            // time estimate.
+            batchSizeSpinner.valueProperty().addListener((obs, o, n) -> {
+                if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
+            });
+
+            TitledPane pane = new TitledPane("BATCH SIZE & MEMORY", grid);
+            pane.setExpanded(true);
+            pane.setStyle("-fx-font-weight: bold;");
+            pane.setTooltip(TooltipHelper.create(
+                    "Batch size, gradient accumulation, mixed precision, and live VRAM estimate."));
+            return pane;
+        }
+
+        private TitledPane createTilesResolutionSection() {
+            GridPane grid = newParamGrid();
+            int row = 0;
 
             // Tile size
             tileSizeSpinner = new Spinner<>(64, 1024, DLClassifierPreferences.getTileSize(), 64);
@@ -3311,18 +3442,18 @@ public class TrainingDialog {
             // Initial update (will show pixel-only info until image is loaded)
             updateSpatialInfoLabels();
 
-            // Wire VRAM estimation listeners to all parameters that affect GPU memory
+            // Wire VRAM estimation listeners for the parameters owned by this section.
+            // batch/mixedPrecision/architecture/backbone listeners are registered in
+            // createBatchMemorySection (which runs before this one).
             tileSizeSpinner.valueProperty().addListener((obs, old, newVal) -> {
                 updateVramEstimate();
                 updateTileAdvisory();
             });
-            batchSizeSpinner.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
             contextScaleCombo.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
-            architectureCombo.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
-            backboneCombo.valueProperty().addListener((obs, old, newVal) -> updateVramEstimate());
             // overlapSpinner listener wired after construction below
 
-            // Wire tile/time estimate listeners -- refresh when relevant parameters change
+            // Wire tile/time estimate listeners -- refresh when relevant parameters change.
+            // batchSize listener is registered in createBatchMemorySection.
             tileSizeSpinner.valueProperty().addListener((obs, o, n) -> {
                 if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
             });
@@ -3330,9 +3461,6 @@ public class TrainingDialog {
                 if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
             });
             epochsSpinner.valueProperty().addListener((obs, o, n) -> {
-                if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
-            });
-            batchSizeSpinner.valueProperty().addListener((obs, o, n) -> {
                 if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
             });
             backboneCombo.valueProperty().addListener((obs, o, n) -> {
@@ -3411,27 +3539,149 @@ public class TrainingDialog {
             grid.add(lineStrokeLabel, 0, row);
             grid.add(lineStrokeWidthSpinner, 1, row);
 
-            TitledPane pane = new TitledPane("TRAINING PARAMETERS", grid);
+            TitledPane pane = new TitledPane("TILES & RESOLUTION", grid);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(TooltipHelper.create("Configure training hyperparameters and tile extraction settings"));
+            pane.setTooltip(TooltipHelper.create(
+                    "Tile size, downsample, surrounding context, overlap, and line stroke width."));
             return pane;
         }
 
-        private TitledPane createTrainingStrategySection() {
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(8);
-            grid.setPadding(new Insets(10));
-
-            ColumnConstraints labelCol = new ColumnConstraints();
-            labelCol.setMinWidth(140);
-            labelCol.setPrefWidth(150);
-            ColumnConstraints fieldCol = new ColumnConstraints();
-            fieldCol.setHgrow(Priority.ALWAYS);
-            grid.getColumnConstraints().addAll(labelCol, fieldCol);
-
+        private TitledPane createLearningRateSection() {
+            GridPane grid = newParamGrid();
             int row = 0;
+
+            // Learning rate (advanced only)
+            learningRateSpinner = new Spinner<>(0.00001, 1.0, DLClassifierPreferences.getDefaultLearningRate(), 0.0001);
+            learningRateSpinner.setEditable(true);
+            learningRateSpinner.setPrefWidth(100);
+            // Default StringConverter rounds 0.001 to "0.0" - use enough decimal places
+            var lrFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory) learningRateSpinner.getValueFactory();
+            lrFactory.setConverter(new javafx.util.StringConverter<Double>() {
+                @Override
+                public String toString(Double value) {
+                    return value == null ? "" : String.format("%.5f", value);
+                }
+                @Override
+                public Double fromString(String string) {
+                    try {
+                        return Double.parseDouble(string.trim());
+                    } catch (NumberFormatException e) {
+                        return lrFactory.getValue();
+                    }
+                }
+            });
+            Label lrLabel = new Label("Learning Rate:");
+            TooltipHelper.install(
+                    "Controls the step size during gradient descent.\n" +
+                    "Too high: training oscillates or diverges. Too low: training stalls.\n\n" +
+                    "Recommended: 1e-4 (0.0001) -- stable for both fresh training and\n" +
+                    "continue-training. With discriminative LRs, the encoder gets 1/10th\n" +
+                    "this rate (1e-5) and decoder/head get the full rate.\n\n" +
+                    "Only increase to 1e-3 if training is very slow to converge and you\n" +
+                    "are using OneCycleLR (which auto-finds the optimal max LR).\n\n" +
+                    "The LR scheduler will further adjust the rate during training.",
+                    lrLabel, learningRateSpinner);
+            lrLabel.visibleProperty().bind(advancedMode);
+            lrLabel.managedProperty().bind(advancedMode);
+            learningRateSpinner.visibleProperty().bind(advancedMode);
+            learningRateSpinner.managedProperty().bind(advancedMode);
+
+            grid.add(lrLabel, 0, row);
+            grid.add(learningRateSpinner, 1, row);
+            row++;
+
+            // LR info label -- updates based on scheduler selection (advanced only)
+            lrInfoLabel = new Label();
+            lrInfoLabel.setWrapText(true);
+            lrInfoLabel.setMaxWidth(Double.MAX_VALUE);
+            lrInfoLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 0.85em;");
+            lrInfoLabel.visibleProperty().bind(advancedMode);
+            lrInfoLabel.managedProperty().bind(advancedMode);
+            grid.add(lrInfoLabel, 0, row, 2, 1);
+            row++;
+
+            // Discriminative LR ratio (advanced only)
+            discriminativeLrSpinner = new Spinner<>(0.01, 1.0,
+                    DLClassifierPreferences.getDefaultDiscriminativeLrRatio(), 0.05);
+            discriminativeLrSpinner.setEditable(true);
+            discriminativeLrSpinner.setPrefWidth(100);
+            var discLrFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory)
+                    discriminativeLrSpinner.getValueFactory();
+            discLrFactory.setConverter(new javafx.util.StringConverter<Double>() {
+                @Override public String toString(Double value) {
+                    return value == null ? "" : String.format("%.2f", value);
+                }
+                @Override public Double fromString(String string) {
+                    try { return Double.parseDouble(string.trim()); }
+                    catch (NumberFormatException e) { return discLrFactory.getValue(); }
+                }
+            });
+            Label discLrLabel = new Label("Encoder LR Factor:");
+            TooltipHelper.install(
+                    "Ratio applied to the base learning rate for encoder layers.\n\n" +
+                    "0.1 (default): Encoder trains at 1/10th the decoder LR.\n" +
+                    "  Good for ImageNet-pretrained backbones on new domains.\n\n" +
+                    "0.3 - 0.5: For histology-pretrained backbones on histology data.\n" +
+                    "  The pretrained features are already domain-relevant.\n\n" +
+                    "1.0: Same LR for all layers (no discriminative LRs).\n\n" +
+                    "Lower values preserve pretrained features more aggressively.\n" +
+                    "Only applies when using pretrained weights (not from scratch).",
+                    discLrLabel, discriminativeLrSpinner);
+            discLrLabel.visibleProperty().bind(advancedMode);
+            discLrLabel.managedProperty().bind(advancedMode);
+            discriminativeLrSpinner.visibleProperty().bind(advancedMode);
+            discriminativeLrSpinner.managedProperty().bind(advancedMode);
+            grid.add(discLrLabel, 0, row);
+            grid.add(discriminativeLrSpinner, 1, row);
+            row++;
+
+            // Effective per-group LR display (advanced only)
+            effectiveLrLabel = new Label();
+            effectiveLrLabel.setWrapText(true);
+            effectiveLrLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            effectiveLrLabel.visibleProperty().bind(advancedMode);
+            effectiveLrLabel.managedProperty().bind(advancedMode);
+            grid.add(effectiveLrLabel, 0, row, 2, 1);
+            row++;
+
+            // Update effective LR display when inputs change
+            learningRateSpinner.valueProperty().addListener((obs, o, n) -> updateEffectiveLrLabel());
+            discriminativeLrSpinner.valueProperty().addListener((obs, o, n) -> updateEffectiveLrLabel());
+            updateEffectiveLrLabel();
+
+            // Weight decay (advanced only)
+            weightDecaySpinner = new Spinner<>(0.0, 0.5,
+                    DLClassifierPreferences.getDefaultWeightDecay(), 0.005);
+            weightDecaySpinner.setEditable(true);
+            weightDecaySpinner.setPrefWidth(100);
+            var wdFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory)
+                    weightDecaySpinner.getValueFactory();
+            wdFactory.setConverter(new javafx.util.StringConverter<Double>() {
+                @Override public String toString(Double value) {
+                    return value == null ? "" : String.format("%.3f", value);
+                }
+                @Override public Double fromString(String string) {
+                    try { return Double.parseDouble(string.trim()); }
+                    catch (NumberFormatException e) { return wdFactory.getValue(); }
+                }
+            });
+            Label wdLabel = new Label("Weight Decay:");
+            TooltipHelper.install(
+                    "L2 regularization strength (AdamW). Penalizes large weights\n" +
+                    "to prevent overfitting.\n\n" +
+                    "0.01 (default): Good for most training runs.\n" +
+                    "0.05 - 0.1: Increase for very small datasets.\n" +
+                    "0.001: Decrease for large datasets or from-scratch training.\n" +
+                    "0: Disable weight decay entirely.",
+                    wdLabel, weightDecaySpinner);
+            wdLabel.visibleProperty().bind(advancedMode);
+            wdLabel.managedProperty().bind(advancedMode);
+            weightDecaySpinner.visibleProperty().bind(advancedMode);
+            weightDecaySpinner.managedProperty().bind(advancedMode);
+            grid.add(wdLabel, 0, row);
+            grid.add(weightDecaySpinner, 1, row);
+            row++;
 
             // LR Scheduler
             schedulerCombo = new ComboBox<>(FXCollections.observableArrayList(
@@ -3498,10 +3748,39 @@ public class TrainingDialog {
                 updateSchedulerDesc.run();
                 updateLrInfoLabel();
             });
+            // epochsSpinner lives in createDurationSection; this listener is
+            // registered here because updateSchedulerDesc is defined here.
             epochsSpinner.valueProperty().addListener((obs, old, val) -> updateSchedulerDesc.run());
             updateSchedulerDesc.run();
             grid.add(schedulerDesc, 0, row, 2, 1);
             row++;
+
+            // Auto-find learning rate (LR Finder presweep toggle)
+            useLrFinderCheck = new CheckBox("Auto-find learning rate (LR Finder)");
+            useLrFinderCheck.setSelected(true);
+            TooltipHelper.install(useLrFinderCheck,
+                    "Run a 100-iteration LR Finder presweep before training to pick\n" +
+                    "a good OneCycleLR peak learning rate.\n\n" +
+                    "When to disable:\n" +
+                    "- Training a tiny model where the presweep is a big fraction of\n" +
+                    "  total training time\n" +
+                    "- You already know a good learning rate for this task\n\n" +
+                    "When disabled, max_lr = base_lr * sqrt(batch_size / 8) is used.\n" +
+                    "Only affects training when the scheduler is OneCycleLR.");
+            grid.add(useLrFinderCheck, 0, row, 2, 1);
+            row++;
+
+            TitledPane pane = new TitledPane("LEARNING RATE & OPTIMIZER", grid);
+            pane.setExpanded(false);
+            pane.setStyle("-fx-font-weight: bold;");
+            pane.setTooltip(TooltipHelper.create(
+                    "Learning rate, encoder LR factor, weight decay, scheduler, and LR Finder."));
+            return pane;
+        }
+
+        private TitledPane createLossSection() {
+            GridPane grid = newParamGrid();
+            int row = 0;
 
             // Loss function
             lossFunctionCombo = new ComboBox<>(FXCollections.observableArrayList(
@@ -3788,166 +4067,29 @@ public class TrainingDialog {
             grid.add(ohemAdaptiveFloorCheck, 0, row, 2, 1);
             row++;
 
-            // Early stopping metric
-            earlyStoppingMetricCombo = new ComboBox<>(FXCollections.observableArrayList(
-                    "Mean IoU", "Validation Loss", "Disabled"));
-            earlyStoppingMetricCombo.setValue(
-                    mapEarlyStoppingMetricToDisplay(DLClassifierPreferences.getDefaultEarlyStoppingMetric()));
-            Label esMetricLabel = new Label("Early Stop Metric:");
-            TooltipHelper.install(
-                    "Which metric decides WHEN TO STOP training.\n" +
-                    "Independent of Focus Class: Focus Class drives 'best\n" +
-                    "model' checkpoint selection, while this metric drives\n" +
-                    "early stopping and the plateau LR scheduler.\n\n" +
-                    "Mean IoU (recommended): Intersection-over-union averaged\n" +
-                    "  across all classes. Directly measures segmentation\n" +
-                    "  quality. Stops when overall accuracy plateaus.\n\n" +
-                    "Validation Loss: Combined loss on held-out data.\n" +
-                    "  Can oscillate while IoU still improves, so Mean IoU\n" +
-                    "  is generally more reliable.\n\n" +
-                    "Disabled: Train for the full epoch count regardless of\n" +
-                    "  metric progress. Best-model selection still applies.",
-                    esMetricLabel, earlyStoppingMetricCombo);
+            TitledPane pane = new TitledPane("LOSS FUNCTION", grid);
+            pane.setExpanded(false);
+            pane.setStyle("-fx-font-weight: bold;");
+            pane.setTooltip(TooltipHelper.create(
+                    "Loss function selection plus focal, boundary-softening, and OHEM parameters."));
+            return pane;
+        }
 
-            grid.add(esMetricLabel, 0, row);
-            grid.add(earlyStoppingMetricCombo, 1, row);
-            row++;
+        private TitledPane createPerformanceSection() {
+            GridPane grid = newParamGrid();
+            int row = 0;
 
-            // Early stopping patience
-            earlyStoppingPatienceSpinner = new Spinner<>(3, 50,
-                    DLClassifierPreferences.getDefaultEarlyStoppingPatience(), 1);
-            earlyStoppingPatienceSpinner.setEditable(true);
-            earlyStoppingPatienceSpinner.setPrefWidth(100);
-            Label esPatienceLabel = new Label("Early Stop Patience:");
-            TooltipHelper.install(
-                    "How many consecutive epochs without improvement before stopping.\n\n" +
-                    "After each epoch, if the early stop metric hasn't improved in\n" +
-                    "this many epochs, training stops and the best model is saved.\n\n" +
-                    "10-15: Good default for most runs.\n" +
-                    "20-30: Use with cosine annealing or noisy loss curves.\n" +
-                    "3-5: For quick experiments.\n\n" +
-                    "It is safe to set a high epoch count (e.g. 200) and rely on\n" +
-                    "patience to stop training -- you won't waste GPU time.",
-                    esPatienceLabel, earlyStoppingPatienceSpinner);
-
-            grid.add(esPatienceLabel, 0, row);
-            grid.add(earlyStoppingPatienceSpinner, 1, row);
-            row++;
-
-            // Focus class
-            focusClassCombo = new ComboBox<>(FXCollections.observableArrayList(
-                    "None (use Mean IoU)"));
-            focusClassCombo.setValue("None (use Mean IoU)");
-            Label focusClassLabel = new Label("Focus Class:");
-            TooltipHelper.install(
-                    "Optionally select a class to focus on for BEST-MODEL\n" +
-                    "checkpoint selection.\n\n" +
-                    "When set, the focus class's per-class IoU decides which\n" +
-                    "epoch's weights are saved as the final model. The Early\n" +
-                    "Stop Metric (above) is INDEPENDENT -- it controls when\n" +
-                    "training stops based on its own metric (Mean IoU or\n" +
-                    "Validation Loss).\n\n" +
-                    "Combine them: e.g., Focus Class = 'vein' + Early Stop\n" +
-                    "Metric = 'Mean IoU' saves the best vein model but lets\n" +
-                    "training run until overall mean IoU plateaus.\n\n" +
-                    "Use this when you care more about one class than the\n" +
-                    "others. For example, if detecting 'Hinge' is critical,\n" +
-                    "set it as the focus class so the best model is the one\n" +
-                    "with the best Hinge IoU, not the best average across\n" +
-                    "all classes.",
-                    focusClassLabel, focusClassCombo);
-
-            focusClassCombo.valueProperty().addListener((obs, old, newVal) -> {
-                boolean hasFocusClass = newVal != null && !newVal.startsWith("None");
-                // Show/hide min IoU row
-                focusClassMinIoUSpinner.setVisible(hasFocusClass);
-                focusClassMinIoUSpinner.setManaged(hasFocusClass);
-                focusClassMinIoULabel.setVisible(hasFocusClass);
-                focusClassMinIoULabel.setManaged(hasFocusClass);
-                // Focus Class and Early Stop Metric are independent: focus
-                // class drives best-model selection; ES metric drives when
-                // training stops. Both can be set without conflict.
-            });
-
-            grid.add(focusClassLabel, 0, row);
-            grid.add(focusClassCombo, 1, row);
-            row++;
-
-            // Focus class min IoU threshold (hidden by default)
-            focusClassMinIoULabel = new Label("Min Focus IoU:");
-            double savedMinIoU = DLClassifierPreferences.getDefaultFocusClassMinIoU();
-            focusClassMinIoUSpinner = new Spinner<>(0.0, 1.0,
-                    savedMinIoU > 0 ? savedMinIoU : 0.5, 0.05);
-            focusClassMinIoUSpinner.setEditable(true);
-            focusClassMinIoUSpinner.setPrefWidth(100);
-            var minIoUFactory = (SpinnerValueFactory.DoubleSpinnerValueFactory) focusClassMinIoUSpinner.getValueFactory();
-            minIoUFactory.setConverter(new javafx.util.StringConverter<Double>() {
-                @Override
-                public String toString(Double value) {
-                    return value == null ? "" : String.format("%.2f", value);
-                }
-                @Override
-                public Double fromString(String string) {
-                    try {
-                        return Double.parseDouble(string.trim());
-                    } catch (NumberFormatException e) {
-                        return minIoUFactory.getValue();
-                    }
-                }
-            });
-            TooltipHelper.install(
-                    "Minimum IoU threshold for the focus class.\n\n" +
-                    "Training will not stop early until the focus class\n" +
-                    "reaches this IoU, regardless of patience.\n\n" +
-                    "0.00: No minimum -- early stopping works normally.\n" +
-                    "0.30: Training continues until focus class IoU >= 0.30,\n" +
-                    "  then patience-based stopping resumes.\n\n" +
-                    "Set this to prevent the model from stopping before the\n" +
-                    "focus class has had a chance to learn.",
-                    focusClassMinIoULabel, focusClassMinIoUSpinner);
-
-            // Hidden by default
-            focusClassMinIoUSpinner.setVisible(false);
-            focusClassMinIoUSpinner.setManaged(false);
-            focusClassMinIoULabel.setVisible(false);
-            focusClassMinIoULabel.setManaged(false);
-
-            grid.add(focusClassMinIoULabel, 0, row);
-            grid.add(focusClassMinIoUSpinner, 1, row);
-            row++;
-
-            // Mixed precision
-            mixedPrecisionCheck = new CheckBox("Enable mixed precision (AMP)");
-            mixedPrecisionCheck.setSelected(DLClassifierPreferences.isDefaultMixedPrecision());
-            TooltipHelper.installWithLink(mixedPrecisionCheck,
-                    "Use automatic mixed precision (FP16/FP32) on CUDA GPUs.\n" +
-                    "Typically provides ~2x speedup with no accuracy loss.\n" +
-                    "Only active when training on NVIDIA GPUs; ignored on CPU/MPS.\n\n" +
-                    "Safe to leave enabled -- PyTorch automatically manages which\n" +
-                    "operations use FP16 vs FP32 for numerical stability.",
-                    "https://pytorch.org/docs/stable/amp.html");
-
-            mixedPrecisionCheck.selectedProperty().addListener((obs, old, newVal) -> updateVramEstimate());
-            grid.add(mixedPrecisionCheck, 0, row, 2, 1);
-            row++;
-
-            // Gradient accumulation
-            gradientAccumulationSpinner = new Spinner<>(1, 8,
-                    DLClassifierPreferences.getDefaultGradientAccumulation(), 1);
-            gradientAccumulationSpinner.setEditable(true);
-            gradientAccumulationSpinner.setPrefWidth(100);
-            Label gradAccLabel = new Label("Gradient Accumulation:");
-            TooltipHelper.install(
-                    "Accumulate gradients over N batches before updating weights.\n\n" +
-                    "Effective batch size = Batch Size x Accumulation Steps.\n" +
-                    "Use this when GPU memory is too limited for large batches.\n\n" +
-                    "1: Normal training (no accumulation).\n" +
-                    "2-4: Simulates 2-4x larger batch without extra memory.\n" +
-                    "8: Maximum accumulation; very stable but slower per epoch.",
-                    gradAccLabel, gradientAccumulationSpinner);
-
-            grid.add(gradAccLabel, 0, row);
-            grid.add(gradientAccumulationSpinner, 1, row);
+            // Fused optimizer: one-kernel AdamW update, saves 2-5 ms/step on tiny models.
+            fusedOptimizerCheck = new CheckBox("Fused optimizer (CUDA only)");
+            fusedOptimizerCheck.setSelected(true);
+            TooltipHelper.install(fusedOptimizerCheck,
+                    "Use PyTorch's fused AdamW implementation on NVIDIA GPUs.\n\n" +
+                    "Benefits:\n" +
+                    "- Single CUDA kernel for the full param update (2-5 ms/step saved)\n" +
+                    "- No accuracy change; same math as the standard implementation\n\n" +
+                    "Safe to leave enabled. Ignored on CPU, MPS, and older PyTorch (<2.0).\n" +
+                    "Disable only if you hit a CUDA kernel error that mentions 'fused'.");
+            grid.add(fusedOptimizerCheck, 0, row, 2, 1);
             row++;
 
             // Progressive resizing
@@ -3967,34 +4109,6 @@ public class TrainingDialog {
                     "plenty of annotated data.");
 
             grid.add(progressiveResizeCheck, 0, row, 2, 1);
-            row++;
-
-            // Fused optimizer: one-kernel AdamW update, saves 2-5 ms/step on tiny models.
-            fusedOptimizerCheck = new CheckBox("Fused optimizer (CUDA only)");
-            fusedOptimizerCheck.setSelected(true);
-            TooltipHelper.install(fusedOptimizerCheck,
-                    "Use PyTorch's fused AdamW implementation on NVIDIA GPUs.\n\n" +
-                    "Benefits:\n" +
-                    "- Single CUDA kernel for the full param update (2-5 ms/step saved)\n" +
-                    "- No accuracy change; same math as the standard implementation\n\n" +
-                    "Safe to leave enabled. Ignored on CPU, MPS, and older PyTorch (<2.0).\n" +
-                    "Disable only if you hit a CUDA kernel error that mentions 'fused'.");
-            grid.add(fusedOptimizerCheck, 0, row, 2, 1);
-            row++;
-
-            // Auto-find learning rate (LR Finder presweep toggle)
-            useLrFinderCheck = new CheckBox("Auto-find learning rate (LR Finder)");
-            useLrFinderCheck.setSelected(true);
-            TooltipHelper.install(useLrFinderCheck,
-                    "Run a 100-iteration LR Finder presweep before training to pick\n" +
-                    "a good OneCycleLR peak learning rate.\n\n" +
-                    "When to disable:\n" +
-                    "- Training a tiny model where the presweep is a big fraction of\n" +
-                    "  total training time\n" +
-                    "- You already know a good learning rate for this task\n\n" +
-                    "When disabled, max_lr = base_lr * sqrt(batch_size / 8) is used.\n" +
-                    "Only affects training when the scheduler is OneCycleLR.");
-            grid.add(useLrFinderCheck, 0, row, 2, 1);
             row++;
 
             // GPU augmentation via kornia (experimental, opt-in).
@@ -4049,26 +4163,12 @@ public class TrainingDialog {
                     "https://pytorch.org/docs/stable/generated/torch.compile.html");
             grid.add(useTorchCompileCheck, 0, row, 2, 1);
 
-            // Update the basic-mode early stopping status label when these controls change,
-            // and grey out the patience spinner when early stopping is disabled.
-            Runnable applyEarlyStoppingDisableState = () -> {
-                boolean disabled = "Disabled".equals(earlyStoppingMetricCombo.getValue());
-                earlyStoppingPatienceSpinner.setDisable(disabled);
-                esPatienceLabel.setDisable(disabled);
-            };
-            earlyStoppingMetricCombo.valueProperty().addListener((obs, o, n) -> {
-                updateEarlyStoppingStatusLabel();
-                applyEarlyStoppingDisableState.run();
-            });
-            earlyStoppingPatienceSpinner.valueProperty().addListener(
-                    (obs, o, n) -> updateEarlyStoppingStatusLabel());
-            applyEarlyStoppingDisableState.run();
-
-            TitledPane pane = new TitledPane("TRAINING STRATEGY", grid);
-            pane.setExpanded(false); // Collapsed by default - advanced settings
+            TitledPane pane = new TitledPane("PERFORMANCE", grid);
+            pane.setExpanded(false);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(TooltipHelper.create(
-                    "Advanced training strategy: scheduler, loss function, early stopping, and mixed precision"));
+                    "Optional speed/accuracy trade-offs: fused optimizer, progressive resize, "
+                    + "GPU augmentation, torch.compile."));
             return pane;
         }
 
