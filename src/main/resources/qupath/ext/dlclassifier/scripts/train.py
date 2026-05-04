@@ -172,7 +172,7 @@ if not getattr(_tsm.SegmentationDataset, '_patched_getitem', False):
 # numpy cache. Normalization and augmentation still run per-batch.
 #
 # Activation:
-#   "auto" -> enable when the dataset fits in ~25% of psutil.available;
+#   "auto" -> enable when the dataset fits in ~50% of available RAM;
 #   "on"   -> force (may OOM on huge datasets);
 #   "off"  -> leave the disk-streaming path alone.
 #
@@ -180,6 +180,87 @@ if not getattr(_tsm.SegmentationDataset, '_patched_getitem', False):
 # val, and progressive-resize small loaders) picks it up automatically.
 # Patched once per worker process (Appose reuses workers across tasks).
 _in_memory_mode = training_params.get("in_memory_dataset", "auto")
+
+
+def _query_available_ram_bytes():
+    """Best-effort 'how much RAM can the cache safely use' query.
+
+    psutil.virtual_memory().available reads from a Windows perf counter
+    that can lag the real value by tens of GB when antivirus, the
+    standby cache, or another process is mid-flux. On at least one
+    deployment we observed psutil reporting 4 GB while Task Manager
+    reported 27 GB available -- the cache aborted on a stale read.
+    Mitigate by also calling MemoryStatusEx.ullAvailPhys (Windows) or
+    parsing /proc/meminfo MemAvailable (Linux) and taking the larger
+    of the two; both are cheap. Returns (bytes, source_str) so the
+    log can show which value won.
+    """
+    psutil_bytes = None
+    os_bytes = None
+    try:
+        import psutil as _ps
+        psutil_bytes = _ps.virtual_memory().available
+    except Exception:
+        pass
+
+    import sys as _sys
+    if _sys.platform == "win32":
+        try:
+            import ctypes as _ct
+            from ctypes import wintypes as _wt
+
+            class _MEMORYSTATUSEX(_ct.Structure):
+                _fields_ = [
+                    ("dwLength", _ct.c_ulong),
+                    ("dwMemoryLoad", _ct.c_ulong),
+                    ("ullTotalPhys", _ct.c_ulonglong),
+                    ("ullAvailPhys", _ct.c_ulonglong),
+                    ("ullTotalPageFile", _ct.c_ulonglong),
+                    ("ullAvailPageFile", _ct.c_ulonglong),
+                    ("ullTotalVirtual", _ct.c_ulonglong),
+                    ("ullAvailVirtual", _ct.c_ulonglong),
+                    ("sullAvailExtendedVirtual", _ct.c_ulonglong),
+                ]
+            stat = _MEMORYSTATUSEX()
+            stat.dwLength = _ct.sizeof(_MEMORYSTATUSEX)
+            if _ct.windll.kernel32.GlobalMemoryStatusEx(_ct.byref(stat)):
+                os_bytes = int(stat.ullAvailPhys)
+        except Exception:
+            pass
+    elif _sys.platform.startswith("linux"):
+        try:
+            with open("/proc/meminfo", "r") as _f:
+                for _line in _f:
+                    if _line.startswith("MemAvailable:"):
+                        os_bytes = int(_line.split()[1]) * 1024
+                        break
+        except Exception:
+            pass
+
+    if psutil_bytes is None and os_bytes is None:
+        return None, "unavailable"
+    if psutil_bytes is None:
+        return os_bytes, "os"
+    if os_bytes is None:
+        return psutil_bytes, "psutil"
+    # Both readings: take the larger. Significant disagreement is logged
+    # so we know when the perf-counter path is producing stale numbers.
+    if max(psutil_bytes, os_bytes) > 1.5 * min(psutil_bytes, os_bytes):
+        logger.info(
+            "RAM query: psutil=%.2f GB, OS=%.2f GB -- significant "
+            "disagreement; using OS value (psutil perf counter may be "
+            "stale)",
+            psutil_bytes / 1e9, os_bytes / 1e9)
+    return max(psutil_bytes, os_bytes), (
+        "os" if os_bytes >= psutil_bytes else "psutil")
+
+
+# Threshold: dataset must fit in this fraction of available RAM for
+# 'auto' to enable. 0.50 (was 0.25) is more aggressive but reasonable:
+# the cache only stores tile data + uint8 masks, not gradients or
+# activations, and the dataloader still has its own working set.
+_AUTO_CACHE_FRACTION = 0.50
+
 if _in_memory_mode in ("auto", "on") and not getattr(
         _tsm.SegmentationDataset, "_patched_preload", False):
     _orig_sd_init = _tsm.SegmentationDataset.__init__
@@ -190,8 +271,8 @@ if _in_memory_mode in ("auto", "on") and not getattr(
         _psutil_ok = False
         if _in_memory_mode == "auto":
             logger.warning("In-memory cache: psutil not available -- "
-                           "'auto' mode cannot check RAM; skipping preload. "
-                           "Install psutil or set preference to 'on' to force.")
+                           "'auto' mode will rely on OS-native RAM query. "
+                           "Install psutil for cross-validation.")
 
     def _init_with_cache(self, *args, **kwargs):
         _orig_sd_init(self, *args, **kwargs)
@@ -220,26 +301,36 @@ if _in_memory_mode in ("auto", "on") and not getattr(
             return
 
         if _in_memory_mode == "auto":
-            if not _psutil_ok:
+            available, source = _query_available_ram_bytes()
+            if available is None:
+                logger.warning(
+                    "In-memory cache: cannot query available RAM "
+                    "(psutil + OS-native both failed); skipping preload")
                 return
-            available = _psutil.virtual_memory().available
-            if total_bytes >= 0.25 * available:
+            if total_bytes >= _AUTO_CACHE_FRACTION * available:
                 logger.info(
                     "In-memory cache: 'auto' declined for %s -- "
-                    "estimate %.2f GB >= 25%% of %.2f GB available",
+                    "estimate %.2f GB >= %.0f%% of %.2f GB available "
+                    "(source=%s)",
                     self.images_dir.name if hasattr(self.images_dir, 'name')
                     else str(self.images_dir),
-                    total_bytes / 1e9, available / 1e9)
+                    total_bytes / 1e9,
+                    _AUTO_CACHE_FRACTION * 100, available / 1e9, source)
                 return
+            logger.info(
+                "In-memory cache: 'auto' will preload %.2f GB "
+                "(%.0f%% of %.2f GB available, source=%s)",
+                total_bytes / 1e9,
+                100 * total_bytes / available,
+                available / 1e9, source)
         elif _in_memory_mode == "on":
-            if _psutil_ok:
-                available = _psutil.virtual_memory().available
-                if total_bytes > available:
-                    logger.warning(
-                        "In-memory cache: 'on' forced but estimate %.2f GB "
-                        "exceeds %.2f GB available -- preload may fail "
-                        "with MemoryError",
-                        total_bytes / 1e9, available / 1e9)
+            available, source = _query_available_ram_bytes()
+            if available is not None and total_bytes > available:
+                logger.warning(
+                    "In-memory cache: 'on' forced but estimate %.2f GB "
+                    "exceeds %.2f GB available (source=%s) -- preload "
+                    "may fail with MemoryError",
+                    total_bytes / 1e9, available / 1e9, source)
 
         logger.info("In-memory cache: preloading %d patches (~%.2f GB) from %s...",
                     n, total_bytes / 1e9,
