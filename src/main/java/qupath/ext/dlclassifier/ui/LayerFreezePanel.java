@@ -89,29 +89,38 @@ public class LayerFreezePanel extends VBox {
                 "or select Custom to toggle individual layers."));
         presetCombo = new ComboBox<>();
         presetCombo.getItems().addAll(
-                "Keep most, retrain a little -- small dataset (<500 tiles)",
-                "Keep basics, retrain upper layers -- medium dataset (500-5000)",
-                "Retrain nearly everything -- large dataset (>5000)",
+                "Small dataset (<500 tiles)",
+                "Medium dataset (500-5000 tiles)",
+                "Large dataset (>5000 tiles)",
                 "Custom"
         );
-        presetCombo.setValue("Keep basics, retrain upper layers -- medium dataset (500-5000)");
+        presetCombo.setValue("Medium dataset (500-5000 tiles)");
         // Wide enough that the longest preset string is never clipped, even
         // if the parent dialog is shrunk by the user.
         presetCombo.setMinWidth(480);
         presetCombo.setOnAction(e -> applyPreset());
         TooltipHelper.install(presetCombo,
-                "How much of the pretrained model to keep vs. retrain on your data.\n\n" +
-                "Keep most, retrain a little:\n" +
-                "  Preserves most pretrained features. Only the final layers adapt to\n" +
-                "  your images. Best with limited annotations (<500 tiles) to avoid\n" +
-                "  overfitting. Fastest training.\n\n" +
-                "Keep basics, retrain upper layers:\n" +
-                "  Keeps low-level features (edges, textures) but retrains higher layers\n" +
-                "  to learn your tissue patterns. Good default for most projects.\n\n" +
-                "Retrain nearly everything:\n" +
-                "  Retrains almost all layers for maximum adaptation to your data.\n" +
-                "  Needs a large dataset (>5000 tiles) to avoid overfitting.\n\n" +
-                "Custom: Manually toggle individual layers below.");
+                "Pick based on your training data size. The exact layers frozen\n" +
+                "depend on the encoder family, not the preset name:\n\n" +
+                "  ImageNet encoders (resnet, efficientnet, ...): pretrained on\n" +
+                "    generic images, so more aggressive freezing makes sense.\n" +
+                "  Histology encoders (lunit, kather, tcga): already in-domain,\n" +
+                "    so the same preset freezes far fewer layers.\n\n" +
+                "Small dataset (<500 tiles):\n" +
+                "  Most conservative for the chosen encoder. ImageNet encoders\n" +
+                "  freeze through mid-blocks; histology encoders freeze only the\n" +
+                "  stem + low-level. Reduces overfitting on limited annotations.\n\n" +
+                "Medium dataset (500-5000 tiles):\n" +
+                "  Balanced. Keeps stem + low-level pretrained, retrains higher\n" +
+                "  layers. Good default for most projects.\n\n" +
+                "Large dataset (>5000 tiles):\n" +
+                "  Aggressive retraining. ImageNet encoders keep only stem +\n" +
+                "  early low-level; histology encoders may not freeze anything.\n\n" +
+                "Custom: Manually toggle individual layers below.\n\n" +
+                "Note: late layers carry most of the parameter count, so even the\n" +
+                "small-dataset preset typically leaves the majority of weights\n" +
+                "trainable. The status bar below shows the actual frozen / trainable\n" +
+                "split after Apply.");
 
         Button applyButton = new Button("Apply");
         TooltipHelper.install(applyButton, "Apply the selected retraining preset to all layers");
@@ -451,11 +460,11 @@ public class LayerFreezePanel extends VBox {
         String selection = presetCombo.getValue();
         String datasetSize;
 
-        if (selection.startsWith("Keep most")) {
+        if (selection.startsWith("Small dataset")) {
             datasetSize = "small";
-        } else if (selection.startsWith("Keep basics")) {
+        } else if (selection.startsWith("Medium dataset")) {
             datasetSize = "medium";
-        } else if (selection.startsWith("Retrain nearly")) {
+        } else if (selection.startsWith("Large dataset")) {
             datasetSize = "large";
         } else {
             return; // Custom - don't change
