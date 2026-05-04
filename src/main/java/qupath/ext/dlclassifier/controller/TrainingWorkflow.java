@@ -1249,6 +1249,35 @@ public class TrainingWorkflow {
                                             progress.log("  " + entry.getKey() + ": " + entry.getValue());
                                         }
                                     }
+                                } else if ("bounded_cache_subset".equals(trainingProgress.setupPhase())) {
+                                    // Bounded cache: Python computed the subset.
+                                    // Surface to the user in three places so the
+                                    // gotcha is visible regardless of where they
+                                    // are looking (toast / log / detail line).
+                                    var cfg = trainingProgress.configSummary();
+                                    if (cfg != null) {
+                                        String subsetSize = cfg.getOrDefault("subset_size", "?");
+                                        String fullSize = cfg.getOrDefault("full_size", "?");
+                                        String coverage = cfg.getOrDefault("coverage_pct", "?");
+                                        String subsetGb = cfg.getOrDefault("subset_bytes_gb", "?");
+                                        String availGb = cfg.getOrDefault("available_bytes_gb", "?");
+                                        String summary = String.format(
+                                                "Bounded subset: %s / %s patches (%s%% coverage)",
+                                                subsetSize, fullSize, coverage);
+                                        Dialogs.showInfoNotification(
+                                                "Bounded cache active", summary);
+                                        progress.log("");
+                                        progress.log("=== BOUNDED CACHE ACTIVE ===");
+                                        progress.log("  " + summary);
+                                        progress.log("  RAM: " + subsetGb + " GB cached / "
+                                                + availGb + " GB available");
+                                        progress.log("  The model will train ONLY on this "
+                                                + "subset for the entire run.");
+                                        progress.log("  Patches outside the subset are NOT seen.");
+                                        progress.log("============================");
+                                        progress.setDetail(summary
+                                                + "  -  full dataset NOT in this run");
+                                    }
                                 } else if ("training_batch".equals(trainingProgress.setupPhase())) {
                                     // Batch-level progress within an epoch (for long epochs on slow devices)
                                     var cfg = trainingProgress.configSummary();
@@ -1739,6 +1768,19 @@ public class TrainingWorkflow {
                                     for (var entry : config.entrySet()) {
                                         progress.log("  " + entry.getKey() + ": " + entry.getValue());
                                     }
+                                }
+                            } else if ("bounded_cache_subset".equals(trainingProgress.setupPhase())) {
+                                var cfg = trainingProgress.configSummary();
+                                if (cfg != null) {
+                                    String summary = String.format(
+                                            "Bounded subset: %s / %s patches (%s%% coverage)",
+                                            cfg.getOrDefault("subset_size", "?"),
+                                            cfg.getOrDefault("full_size", "?"),
+                                            cfg.getOrDefault("coverage_pct", "?"));
+                                    Dialogs.showInfoNotification(
+                                            "Bounded cache active", summary);
+                                    progress.log("=== BOUNDED CACHE ACTIVE === " + summary);
+                                    progress.setDetail(summary);
                                 }
                             } else if ("training_batch".equals(trainingProgress.setupPhase())) {
                                 var cfg = trainingProgress.configSummary();

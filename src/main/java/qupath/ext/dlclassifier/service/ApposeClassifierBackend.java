@@ -366,6 +366,11 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         }
         trainingParams.put("data_loader_workers", trainingConfig.getDataLoaderWorkers());
         trainingParams.put("in_memory_dataset", trainingConfig.getInMemoryDataset());
+        // Bounded cache: fraction of available RAM the subset cache may use.
+        // Honored by train.py only when in_memory_dataset == "bounded".
+        trainingParams.put("cache_bounded_fraction",
+                qupath.ext.dlclassifier.preferences.DLClassifierPreferences
+                        .getCacheBoundedFraction());
         // "disabled" as the metric means the user wants to train for the full
         // epoch count -- turn off the EarlyStopping instance on the Python side.
         boolean earlyStoppingEnabled =

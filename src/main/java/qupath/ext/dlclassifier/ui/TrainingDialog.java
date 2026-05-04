@@ -5559,6 +5559,20 @@ public class TrainingDialog {
                 }
             }
 
+            // Pre-flight: bounded-cache notice. If the user picked
+            // "bounded" they're opting in to training on a SUBSET, not
+            // their full dataset. This is high-impact behavior so we
+            // confirm before launching, with a "don't show again"
+            // checkbox for power users. The notice describes the
+            // gotchas in user-facing UI rather than burying them in
+            // the training log.
+            if ("bounded".equalsIgnoreCase(trainingConfig.getInMemoryDataset())
+                    && !DLClassifierPreferences.isBoundedCacheNoticeDismissed()) {
+                if (!showBoundedCacheNotice()) {
+                    return null;  // user cancelled; keep dialog open
+                }
+            }
+
             // Pre-flight VRAM estimation: warn INSIDE the dialog so the user can
             // adjust settings (tile size, batch, downsample) without losing their work.
             try {
@@ -5753,6 +5767,67 @@ public class TrainingDialog {
             config.put("rotation_90", rotationCheck.isSelected());
             config.put("elastic_deformation", elasticCheck.isSelected());
             return config;
+        }
+
+        /**
+         * Pre-flight notice for the 'bounded' in-memory cache mode.
+         * <p>
+         * The user has opted in to training on a fixed random subset of
+         * the dataset. This dialog spells out exactly what that means in
+         * user-facing terms (not just a log line) so the user can back
+         * out before patches are exported. Returns true to proceed,
+         * false to cancel and keep the training dialog open.
+         */
+        private boolean showBoundedCacheNotice() {
+            double frac = DLClassifierPreferences.getCacheBoundedFraction();
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Bounded cache mode");
+            alert.setHeaderText("Training will use a SUBSET of your dataset, "
+                    + "not the full data");
+
+            Label message = new Label(
+                    "You have selected 'bounded' for the in-memory dataset "
+                            + "cache.\n\n"
+                            + "What this does:\n"
+                            + "  - At training start, a stratified random "
+                            + "subset of patches that fits in "
+                            + String.format("%.0f%%", frac * 100)
+                            + " of available RAM is loaded into memory.\n"
+                            + "  - Every epoch trains on the SAME subset. "
+                            + "Patches outside the subset are NOT seen by "
+                            + "the model in this run.\n"
+                            + "  - Each class is guaranteed at least one "
+                            + "patch in the subset (rare-class floor).\n\n"
+                            + "Implications:\n"
+                            + "  - Total gradient steps = epochs x "
+                            + "subset_size, not epochs x full_dataset_size.\n"
+                            + "  - If the subset is small, the model may "
+                            + "overfit it. Validation IoU on the full set "
+                            + "is the correct quality signal.\n"
+                            + "  - This is intended for cases where disk "
+                            + "streaming is too slow and you accept training "
+                            + "on a subset. For full-dataset training, set "
+                            + "the cache mode to 'auto' or 'off'.\n\n"
+                            + "The subset size and coverage will be reported "
+                            + "in the progress monitor once training starts.");
+            message.setWrapText(true);
+            message.setMaxWidth(520);
+
+            CheckBox dontShowAgain = new CheckBox(
+                    "Do not show this notice again on this machine");
+
+            VBox content = new VBox(10, message, dontShowAgain);
+            content.setPadding(new Insets(10, 0, 0, 0));
+            alert.getDialogPane().setContent(content);
+            alert.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
+            ((Button) alert.getDialogPane().lookupButton(ButtonType.OK))
+                    .setText("Proceed with bounded training");
+
+            var result = alert.showAndWait();
+            if (dontShowAgain.isSelected()) {
+                DLClassifierPreferences.setBoundedCacheNoticeDismissed(true);
+            }
+            return result.isPresent() && result.get() == ButtonType.OK;
         }
 
         /**

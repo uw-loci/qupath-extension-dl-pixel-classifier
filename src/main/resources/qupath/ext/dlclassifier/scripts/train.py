@@ -180,6 +180,8 @@ if not getattr(_tsm.SegmentationDataset, '_patched_getitem', False):
 # val, and progressive-resize small loaders) picks it up automatically.
 # Patched once per worker process (Appose reuses workers across tasks).
 _in_memory_mode = training_params.get("in_memory_dataset", "auto")
+_bounded_fraction = float(
+    training_params.get("cache_bounded_fraction", 0.40))
 
 
 def _query_available_ram_bytes():
@@ -261,7 +263,7 @@ def _query_available_ram_bytes():
 # activations, and the dataloader still has its own working set.
 _AUTO_CACHE_FRACTION = 0.50
 
-if _in_memory_mode in ("auto", "on") and not getattr(
+if _in_memory_mode in ("auto", "on", "bounded") and not getattr(
         _tsm.SegmentationDataset, "_patched_preload", False):
     _orig_sd_init = _tsm.SegmentationDataset.__init__
     try:
@@ -300,7 +302,168 @@ if _in_memory_mode in ("auto", "on") and not getattr(
             logger.warning("In-memory cache: byte estimate failed (%s); skipping preload", _e)
             return
 
-        if _in_memory_mode == "auto":
+        # Bounded mode: pick a stratified random subset that fits in
+        # `_bounded_fraction` of available RAM, slice self.image_files
+        # in place so the rest of the dataloader (and the cache below)
+        # only sees the subset. Each class is guaranteed >= 1 patch via
+        # a rare-class floor. This is the explicit "train on a subset"
+        # path -- the user has confirmed this in a pre-flight dialog.
+        if _in_memory_mode == "bounded":
+            available, source = _query_available_ram_bytes()
+            if available is None:
+                logger.warning(
+                    "Bounded cache: cannot query available RAM; "
+                    "skipping preload, falling back to disk streaming")
+                return
+            cap_bytes = _bounded_fraction * available
+            per_patch_bytes = per_img_bytes + per_mask_bytes
+            if cap_bytes >= total_bytes:
+                logger.info(
+                    "Bounded cache: full dataset fits in %.0f%% of "
+                    "%.2f GB available (source=%s); preloading entire "
+                    "dataset (no subsetting needed)",
+                    _bounded_fraction * 100, available / 1e9, source)
+                # Fall through to the regular preload path -- n stays the same.
+            else:
+                n_subset = max(1, int(cap_bytes // per_patch_bytes))
+                if n_subset >= n:
+                    n_subset = n  # paranoia
+                # Stratified subset: try to read class info from masks
+                # (sparse-sample). The same per-patch class presence the
+                # AnnotationExtractor uses for stratified train/val split.
+                logger.info(
+                    "Bounded cache: building stratified subset of %d "
+                    "patches (out of %d) to fit %.2f GB cap "
+                    "(%.0f%% of %.2f GB %s)",
+                    n_subset, n,
+                    cap_bytes / 1e9,
+                    _bounded_fraction * 100, available / 1e9, source)
+                try:
+                    import random as _random
+                    _rng = _random.Random(42)
+                    # Class presence per patch (sparse-sample masks).
+                    presence = []
+                    for i in range(n):
+                        mp = self.masks_dir / (
+                            self.image_files[i].stem + ".png")
+                        seen = set()
+                        if mp.exists():
+                            try:
+                                _m = _PILImage.open(mp)
+                                _w, _h = _m.size
+                                # 5x5 grid sample is enough to identify
+                                # the dominant class without loading the
+                                # full mask for all 56k patches.
+                                _ar = _np.asarray(_m)
+                                step_y = max(1, _h // 5)
+                                step_x = max(1, _w // 5)
+                                for _y in range(0, _h, step_y):
+                                    for _x in range(0, _w, step_x):
+                                        seen.add(int(_ar[_y, _x]))
+                            except Exception:
+                                pass
+                        if not seen:
+                            seen.add(0)
+                        presence.append(seen)
+
+                    # Group by dominant class (smallest class index in
+                    # the patch -- biases toward rare classes which is
+                    # what we want for the floor).
+                    by_class = {}
+                    for i, seen in enumerate(presence):
+                        cls = min(seen)
+                        by_class.setdefault(cls, []).append(i)
+
+                    selected = []
+                    # Floor: 1 patch per class present, sampled randomly.
+                    for cls, idxs in sorted(by_class.items()):
+                        _rng.shuffle(idxs)
+                        selected.append(idxs[0])
+                    floor_count = len(selected)
+
+                    # Fill the rest proportionally to class frequency.
+                    remaining = n_subset - floor_count
+                    if remaining > 0:
+                        # Available-after-floor pool per class.
+                        pool = {cls: idxs[1:]
+                                for cls, idxs in by_class.items()}
+                        total_pool = sum(len(v) for v in pool.values())
+                        if total_pool > 0:
+                            for cls, idxs in pool.items():
+                                # Proportional take, clamped to pool size.
+                                take = int(round(
+                                    remaining * len(idxs) / total_pool))
+                                take = min(take, len(idxs))
+                                selected.extend(idxs[:take])
+                            # Any rounding shortfall: fill randomly.
+                            if len(selected) < n_subset:
+                                leftover = []
+                                taken = set(selected)
+                                for idxs in pool.values():
+                                    for j in idxs:
+                                        if j not in taken:
+                                            leftover.append(j)
+                                _rng.shuffle(leftover)
+                                need = n_subset - len(selected)
+                                selected.extend(leftover[:need])
+
+                    # Trim to exactly n_subset if proportional rounding
+                    # overshot (rare but possible).
+                    selected = selected[:n_subset]
+                    selected.sort()  # stable order for reproducibility
+
+                    # Slice the dataset in place. From this point on,
+                    # len(self) reflects the subset; the cache below
+                    # only allocates n_subset entries.
+                    self.image_files = [self.image_files[i] for i in selected]
+                    n = len(self.image_files)
+                    total_bytes = n * per_patch_bytes
+
+                    # Per-class count for the user-visible report.
+                    cls_counts = {}
+                    for i in selected:
+                        cls = min(presence[i])
+                        cls_counts[cls] = cls_counts.get(cls, 0) + 1
+                    classes_str = ", ".join(
+                        "class %d: %d" % (c, cls_counts[c])
+                        for c in sorted(cls_counts))
+                    coverage_pct = 100.0 * n / len(presence)
+                    logger.warning(
+                        "Bounded cache active: training on %d / %d "
+                        "patches (%.1f%% coverage). Per-class subset "
+                        "counts: %s. The model will NOT see patches "
+                        "outside this subset in this run.",
+                        n, len(presence), coverage_pct, classes_str)
+                    # Surface the same info to the Java progress monitor
+                    # via setup_callback. The Java side renders this as
+                    # a banner so the user can see it without scrolling
+                    # the log.
+                    try:
+                        if 'setup_callback' in globals():
+                            setup_callback("bounded_cache_subset", {
+                                "subset_size": n,
+                                "full_size": len(presence),
+                                "coverage_pct": round(coverage_pct, 2),
+                                "per_class_counts": {
+                                    str(c): cls_counts[c]
+                                    for c in sorted(cls_counts)},
+                                "subset_bytes_gb":
+                                    round(total_bytes / 1e9, 2),
+                                "available_bytes_gb":
+                                    round(available / 1e9, 2),
+                            })
+                    except Exception:
+                        pass
+                except Exception as _e:
+                    logger.error(
+                        "Bounded cache: subset selection failed (%s); "
+                        "skipping cache, falling back to disk streaming",
+                        _e)
+                    return
+            # Continue to the preload loop below with the (possibly
+            # subset-sliced) self.image_files.
+
+        elif _in_memory_mode == "auto":
             available, source = _query_available_ram_bytes()
             if available is None:
                 logger.warning(
@@ -411,7 +574,8 @@ _dl_workers_pref = int(training_params.get("data_loader_workers", 0))
 # must not re-upgrade here. Matches the D.1 fix.
 _cache_mode_for_workers = str(
     training_params.get("in_memory_dataset", "auto")).lower()
-if _cache_mode_for_workers in ("auto", "on") and _dl_workers_pref > 0:
+if (_cache_mode_for_workers in ("auto", "on", "bounded")
+        and _dl_workers_pref > 0):
     logger.info(
         "DataLoader bootstrap: monkey-patch suppressed because "
         "in-memory cache is active (would duplicate cache per "

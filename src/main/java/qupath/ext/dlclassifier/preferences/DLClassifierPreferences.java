@@ -280,6 +280,20 @@ public final class DLClassifierPreferences {
     private static final StringProperty defaultInMemoryDataset = PathPrefs.createPersistentPreference(
             "dlclassifier.defaultInMemoryDataset", "auto");
 
+    // Fraction of available RAM the bounded cache may use (only honored
+    // when defaultInMemoryDataset == "bounded"). 0.40 leaves 60% for the
+    // dataloader, optimizer state, and other system processes.
+    private static final DoubleProperty cacheBoundedFraction =
+            PathPrefs.createPersistentPreference(
+                    "dlclassifier.cacheBoundedFraction", 0.40);
+
+    // Whether to suppress the pre-flight 'bounded mode' confirmation
+    // dialog. Stays false by default so a user changing to bounded mode
+    // sees the warning the first time. They can opt out per-machine.
+    private static final BooleanProperty boundedCacheNoticeDismissed =
+            PathPrefs.createPersistentPreference(
+                    "dlclassifier.boundedCacheNoticeDismissed", false);
+
     // One-time overlay notice dismissed
     private static final BooleanProperty overlayNoticeDismissed = PathPrefs.createPersistentPreference(
             "dlclassifier.overlayNoticeDismissed", false);
@@ -440,16 +454,32 @@ public final class DLClassifierPreferences {
         items.add(new PropertyItemBuilder<>(defaultInMemoryDataset, String.class)
                 .propertyType(PropertyItemBuilder.PropertyType.CHOICE)
                 .choices(javafx.collections.FXCollections.observableArrayList(
-                        "auto", "on", "off"))
+                        "auto", "on", "off", "bounded"))
                 .name("Training: Pre-Load Patches Into RAM")
                 .category(CATEGORY)
-                .description("Cache all training patches in RAM at startup to skip " +
-                        "per-batch disk I/O and TIFF decode. " +
-                        "auto = enable when the dataset fits in about 25% of free RAM " +
-                        "(safe default); " +
-                        "on = always enable (may run out of memory on large datasets); " +
+                .description("Cache training patches in RAM to skip per-batch " +
+                        "disk I/O. " +
+                        "auto = enable when the dataset fits in about 50% of " +
+                        "free RAM (safe default); " +
+                        "on = always enable (may run out of memory on large " +
+                        "datasets); " +
                         "off = always stream from disk. " +
-                        "Typically cuts per-epoch time by 30-70% on GPU-bound setups.")
+                        "bounded = WARNING: trains on a fixed RANDOM SUBSET of " +
+                        "the dataset that fits in RAM. The model will not see " +
+                        "patches outside the subset. Use only when disk " +
+                        "streaming is too slow and you accept training on a " +
+                        "subset. A pre-flight dialog confirms before each " +
+                        "training run.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(cacheBoundedFraction, Double.class)
+                .name("Training: Bounded Cache Fraction")
+                .category(CATEGORY)
+                .description("When 'Pre-Load Patches Into RAM' = bounded, the " +
+                        "fraction of available RAM the cache may use. " +
+                        "0.40 means 40% of free RAM. The actual subset size is " +
+                        "(fraction * available_RAM) / per_patch_bytes, so larger " +
+                        "values train on a larger subset but leave less headroom.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(showMenuDot, Boolean.class)
@@ -1255,24 +1285,54 @@ public final class DLClassifierPreferences {
     }
 
     /**
-     * @return the in-memory dataset mode: "auto", "on", or "off".
+     * @return the in-memory dataset mode: "auto", "on", "off", or "bounded".
      */
     public static String getDefaultInMemoryDataset() {
         String v = defaultInMemoryDataset.get();
-        if ("auto".equals(v) || "on".equals(v) || "off".equals(v)) {
+        if ("auto".equals(v) || "on".equals(v) || "off".equals(v)
+                || "bounded".equals(v)) {
             return v;
         }
         return "auto";
     }
 
     public static void setDefaultInMemoryDataset(String mode) {
-        if ("auto".equals(mode) || "on".equals(mode) || "off".equals(mode)) {
+        if ("auto".equals(mode) || "on".equals(mode) || "off".equals(mode)
+                || "bounded".equals(mode)) {
             defaultInMemoryDataset.set(mode);
         }
     }
 
     public static StringProperty defaultInMemoryDatasetProperty() {
         return defaultInMemoryDataset;
+    }
+
+    public static double getCacheBoundedFraction() {
+        double v = cacheBoundedFraction.get();
+        // Clamp to a sane range; defensive against bad pref edits.
+        if (v < 0.05) return 0.05;
+        if (v > 0.95) return 0.95;
+        return v;
+    }
+
+    public static void setCacheBoundedFraction(double fraction) {
+        cacheBoundedFraction.set(fraction);
+    }
+
+    public static DoubleProperty cacheBoundedFractionProperty() {
+        return cacheBoundedFraction;
+    }
+
+    public static boolean isBoundedCacheNoticeDismissed() {
+        return boundedCacheNoticeDismissed.get();
+    }
+
+    public static void setBoundedCacheNoticeDismissed(boolean dismissed) {
+        boundedCacheNoticeDismissed.set(dismissed);
+    }
+
+    public static BooleanProperty boundedCacheNoticeDismissedProperty() {
+        return boundedCacheNoticeDismissed;
     }
 
     // ==================== Overlay Notice ====================
