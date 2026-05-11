@@ -4,9 +4,11 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.binding.StringBinding;
@@ -75,6 +77,15 @@ public class TrainingAreaIssuesDialog {
     // new dataset's loss range.
     private Slider thresholdSliderRef;
     private Label thresholdLabelRef;
+    private ComboBox<String> splitFilterRef;
+
+    // Per-session exclusion of entire source images. Used when the user has
+    // already fixed one representative tile and does not want to keep clicking
+    // through every overlapping duplicate for the same image. In-memory only:
+    // re-opening the dialog with a fresh reload restores all images.
+    private final Set<String> excludedImageNames = new HashSet<>();
+    private Button excludeImageButton;
+    private Hyperlink restoreExcludedLink;
 
     // Renders the selected tile's heatmap/disagreement PNG as a real QuPath
     // overlay aligned to the tile coordinates in the main viewer.
@@ -208,7 +219,32 @@ public class TrainingAreaIssuesDialog {
 
         Label filterLabel = new Label("Filter:");
         filterLabel.setTooltip(TooltipHelper.create("Filter tiles by dataset split and minimum loss threshold."));
-        HBox filterBox = new HBox(10, filterLabel, splitFilter, thresholdLabel, thresholdSlider);
+        this.splitFilterRef = splitFilter;
+
+        excludeImageButton = new Button("Exclude Image");
+        excludeImageButton.setTooltip(
+                TooltipHelper.create("Hide every tile that comes from the currently-selected row's source image.\n\n"
+                        + "Useful after fixing annotations on an image -- the heatmap is\n"
+                        + "stale for the whole image, and overlapping tiles in the same\n"
+                        + "region all report similar disagreement, so clicking each one\n"
+                        + "in turn is wasted work.\n\n"
+                        + "Exclusions are remembered for this session only. Re-open the\n"
+                        + "Training Area Issues dialog (or click Restore) to bring the\n"
+                        + "images back."));
+        excludeImageButton.setDisable(true);
+        excludeImageButton.setOnAction(e -> excludeSelectedRowImage());
+
+        restoreExcludedLink = new Hyperlink("");
+        restoreExcludedLink.setVisible(false);
+        restoreExcludedLink.setManaged(false);
+        restoreExcludedLink.setOnAction(e -> {
+            excludedImageNames.clear();
+            updateExcludedAffordances();
+            refreshFilter();
+        });
+
+        HBox filterBox = new HBox(
+                10, filterLabel, splitFilter, thresholdLabel, thresholdSlider, excludeImageButton, restoreExcludedLink);
         filterBox.setAlignment(Pos.CENTER_LEFT);
 
         // Table
@@ -277,6 +313,10 @@ public class TrainingAreaIssuesDialog {
                 clearPreview();
                 overlayController.clear();
                 updateAdjustmentPanelState(null);
+            }
+            // Exclude-Image button is only meaningful when a row is selected.
+            if (excludeImageButton != null) {
+                excludeImageButton.setDisable(newRow == null);
             }
         });
 
@@ -527,12 +567,62 @@ public class TrainingAreaIssuesDialog {
                     return false;
                 }
             }
+            if (excludedImageNames.contains(row.getSourceImage())) {
+                return false;
+            }
             return row.getLoss() >= minLoss;
         });
 
         long visible = filteredRows.size();
         long highLoss = filteredRows.stream().filter(r -> r.getLoss() > 1.0).count();
-        summaryLabel.setText(String.format("%d tiles shown | %d with loss > 1.0", visible, highLoss));
+        String summary = String.format("%d tiles shown | %d with loss > 1.0", visible, highLoss);
+        if (!excludedImageNames.isEmpty()) {
+            summary += String.format(" | %d image(s) excluded", excludedImageNames.size());
+        }
+        summaryLabel.setText(summary);
+    }
+
+    /**
+     * Re-evaluate the filter predicate using the current filter UI state
+     * (split combo + threshold slider + exclusion set). Used when state
+     * changes outside the existing listeners -- e.g. after the user clicks
+     * "Exclude Image" or "Restore".
+     */
+    private void refreshFilter() {
+        if (splitFilterRef == null || thresholdSliderRef == null) return;
+        updateFilter(splitFilterRef.getValue(), thresholdSliderRef.getValue());
+    }
+
+    /**
+     * Hide every row whose source image matches the currently-selected row's.
+     * Clears the table selection so the now-hidden tile is not still
+     * "selected" (which would leave a stale viewer overlay).
+     */
+    private void excludeSelectedRowImage() {
+        TileRow selected = table.getSelectionModel().getSelectedItem();
+        if (selected == null) return;
+        String img = selected.getSourceImage();
+        if (img == null || img.isEmpty()) return;
+        excludedImageNames.add(img);
+        table.getSelectionModel().clearSelection();
+        // Selection cleared -> overlay/preview cleared by the listener above.
+        updateExcludedAffordances();
+        refreshFilter();
+    }
+
+    /** Toggle visibility of the "Restore" link based on whether anything is excluded. */
+    private void updateExcludedAffordances() {
+        if (restoreExcludedLink == null) return;
+        int n = excludedImageNames.size();
+        if (n == 0) {
+            restoreExcludedLink.setVisible(false);
+            restoreExcludedLink.setManaged(false);
+            restoreExcludedLink.setText("");
+        } else {
+            restoreExcludedLink.setText(String.format("Restore %d excluded image(s)", n));
+            restoreExcludedLink.setVisible(true);
+            restoreExcludedLink.setManaged(true);
+        }
     }
 
     private void navigateToTile(TileRow row) {
@@ -659,6 +749,10 @@ public class TrainingAreaIssuesDialog {
         for (ClassifierClient.TileEvaluationResult r : loaded.results()) {
             allRows.add(new TileRow(r));
         }
+        // Per-session exclusions: a fresh reload restores everything so the
+        // user can review the complete set again.
+        excludedImageNames.clear();
+        updateExcludedAffordances();
         long highLoss = allRows.stream().filter(r -> r.getLoss() > 1.0).count();
         summaryLabel.setText(String.format("%d tiles loaded | %d with loss > 1.0", allRows.size(), highLoss));
         stage.setTitle("Training Area Issues - " + classifierName + " (session "
