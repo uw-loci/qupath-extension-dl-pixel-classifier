@@ -12,7 +12,7 @@ Open the image you want to classify in QuPath. The image type (brightfield, fluo
 
 ## Step 2: Open the Inference Dialog
 
-Go to **Extensions > DL Pixel Classifier > Apply Classifier...**
+Go to **Extensions > DL Pixel Classifier > Apply DL Pixel Classifier...**
 
 ## Step 3: Select a Classifier
 

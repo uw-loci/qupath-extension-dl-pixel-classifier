@@ -36,7 +36,7 @@ Training a classifier involves:
 
 ## Step 2: Open the Training Dialog
 
-Go to **Extensions > DL Pixel Classifier > Train Classifier...**
+Go to **Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**
 
 The dialog opens in **Basic mode** by default, showing only the essentials: Training Data Source, Annotation Classes, and Classifier Name. Click **"Show All Settings"** in the header to reveal all configuration options. The mode is remembered across sessions.
 
@@ -428,7 +428,7 @@ Before training a MuViT-based classifier, you can optionally pretrain the encode
 
 After pretraining completes, load the encoder weights when training a MuViT classifier:
 
-1. Open **Extensions > DL Pixel Classifier > Train Classifier...**
+1. Open **Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**
 2. Select the **MuViT (Transformer)** architecture
 3. In **WEIGHT INITIALIZATION**, select **"Use MAE pretrained encoder"**
 4. Click **"Browse..."** and select the pretrained .pt file
@@ -469,7 +469,7 @@ See [PARAMETERS.md](PARAMETERS.md#mae-pretraining-parameters) for detailed param
 
 ## Step 11: Verify the Result
 
-When training completes, the classifier is saved to your QuPath project under `classifiers/`. View it via **Extensions > DL Pixel Classifier > Manage Models...**
+When training completes, the classifier is saved to your QuPath project under `classifiers/`. View it via **Extensions > DL Pixel Classifier > Manage Classifiers...**
 
 ### Quick verification
 
