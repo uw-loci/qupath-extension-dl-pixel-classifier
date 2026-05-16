@@ -40,6 +40,7 @@ import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner.OrphanedCheckpoint;
+import qupath.ext.dlclassifier.utilities.ImageClassCoverageSplitter;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.commands.MiniViewers;
@@ -2155,93 +2156,53 @@ public class TrainingDialog {
                     if (!proceed) return;
                 }
 
-                int numChannels = -1;
-                try {
-                    if (channelPanel != null && channelPanel.isValid()) {
-                        numChannels = channelPanel.getChannelConfiguration().getNumChannels();
-                    }
-                } catch (Exception ignored) {
-                    // channel config not loaded yet -- grouping key just won't include channel count
-                }
-
                 int splitPct = (validationSplitSpinner != null)
                         ? validationSplitSpinner.getValue()
                         : DLClassifierPreferences.getValidationSplit();
                 double valFraction = splitPct / 100.0;
-
-                Map<String, List<ImageSelectionItem>> buckets = new LinkedHashMap<>();
-                for (ImageSelectionItem item : selected) {
-                    String key = item.imageWidth + "x" + item.imageHeight
-                            + "|" + (numChannels > 0 ? String.valueOf(numChannels) : "?")
-                            + "|" + filenamePrefix(item.entry.getImageName());
-                    buckets.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
-                }
-
                 long seed = System.currentTimeMillis();
-                Random rng = new Random(seed);
-                int nTrain = 0;
-                int nVal = 0;
-                StringBuilder summary = new StringBuilder();
 
-                // Pool singletons into one combined bucket. Without this, a set of
-                // 11 whole-slide images with different dimensions becomes 11 size-1
-                // buckets and the per-bucket "size==1 -> train" rule sends them all
-                // to train. With pooling they're split as one group of 11.
-                List<ImageSelectionItem> singletonPool = new ArrayList<>();
-                Map<String, List<ImageSelectionItem>> multiBuckets = new LinkedHashMap<>();
-                for (Map.Entry<String, List<ImageSelectionItem>> e : buckets.entrySet()) {
-                    if (e.getValue().size() == 1) {
-                        singletonPool.add(e.getValue().get(0));
-                    } else {
-                        multiBuckets.put(e.getKey(), e.getValue());
-                    }
-                }
-                if (!singletonPool.isEmpty()) {
-                    multiBuckets.put("singletons(" + singletonPool.size() + ")", singletonPool);
-                }
+                // Read per-image class areas so the splitter can keep every class
+                // represented on both sides. Falls back to a random split (with
+                // the same singleton-pool guard) when class data can't be read --
+                // e.g. an unreadable hierarchy, or no classified annotations on
+                // any image -- so the button still does something sensible.
+                final int strokeWidth = lineStrokeWidthSpinner.getValue();
+                List<ImageClassCoverageSplitter.ImageInput<ImageSelectionItem>> inputs =
+                        readClassAreasForSplit(selected, strokeWidth);
 
-                for (Map.Entry<String, List<ImageSelectionItem>> e : multiBuckets.entrySet()) {
-                    List<ImageSelectionItem> bucket = e.getValue();
-                    Collections.shuffle(bucket, rng);
-                    // Pooled singletons get the standard val fraction (no minimum)
-                    // because there is no "siblings on both sides" risk to defend
-                    // against. Multi-buckets keep at least one train and at least
-                    // one val item so every group contributes to both sides.
-                    int bucketVal;
-                    if (bucket.size() == 1) {
-                        // Should not happen now that singletons are pooled, but
-                        // guard anyway.
-                        bucketVal = (rng.nextDouble() < valFraction) ? 1 : 0;
-                    } else {
-                        bucketVal =
-                                Math.max(1, Math.min(bucket.size() - 1, (int) Math.round(bucket.size() * valFraction)));
-                    }
-                    for (int i = 0; i < bucket.size(); i++) {
-                        ImageSelectionItem item = bucket.get(i);
-                        if (i < bucketVal) {
-                            item.splitRole.set(SplitRole.VAL_ONLY);
+                boolean haveClassData =
+                        inputs.stream().anyMatch(input -> !input.classAreas().isEmpty());
+
+                if (haveClassData) {
+                    ImageClassCoverageSplitter.SplitResult<ImageSelectionItem> result =
+                            ImageClassCoverageSplitter.split(inputs, valFraction, seed);
+
+                    int nTrain = 0;
+                    int nVal = 0;
+                    for (ImageClassCoverageSplitter.ImageAssignment<ImageSelectionItem> a : result.assignments()) {
+                        if (a.role() == ImageClassCoverageSplitter.Role.VAL) {
+                            a.handle().splitRole.set(SplitRole.VAL_ONLY);
                             nVal++;
                         } else {
-                            item.splitRole.set(SplitRole.TRAIN_ONLY);
+                            a.handle().splitRole.set(SplitRole.TRAIN_ONLY);
                             nTrain++;
                         }
                     }
-                    if (summary.length() > 0) summary.append(", ");
-                    summary.append(e.getKey())
-                            .append(": ")
-                            .append(bucket.size() - bucketVal)
-                            .append("t/")
-                            .append(bucketVal)
-                            .append("v");
-                }
 
-                logger.info(
-                        "Auto-distribute (seed={}): {} train / {} val across {} bucket(s); {}",
-                        seed,
-                        nTrain,
-                        nVal,
-                        multiBuckets.size(),
-                        summary);
+                    logger.info(
+                            "Auto-distribute (class-aware, seed={}): {} train / {} val from {} images",
+                            seed,
+                            nTrain,
+                            nVal,
+                            selected.size());
+                    surfaceCoverageWarnings(result);
+                } else {
+                    logger.info(
+                            "Auto-distribute (seed={}): no class data available, " + "falling back to random split",
+                            seed);
+                    randomSplitFallback(selected, valFraction, seed);
+                }
                 // The splitRole listeners installed when items were added will
                 // fire updateValidationSplitSpinnerState() for us.
 
@@ -2251,6 +2212,134 @@ public class TrainingDialog {
             } finally {
                 inAutoDistribute = false;
             }
+        }
+
+        /**
+         * Reads each selected image's hierarchy and accumulates effective pixel
+         * coverage per class (line ROIs use {@code length * strokeWidth}, area
+         * ROIs use {@code getArea()}). Uses {@code readHierarchy()} so the image
+         * server isn't opened. Returns one entry per input image, with an empty
+         * map for any image whose hierarchy could not be read.
+         */
+        private List<ImageClassCoverageSplitter.ImageInput<ImageSelectionItem>> readClassAreasForSplit(
+                List<ImageSelectionItem> selected, int strokeWidth) {
+            List<ImageClassCoverageSplitter.ImageInput<ImageSelectionItem>> out = new ArrayList<>(selected.size());
+            for (ImageSelectionItem item : selected) {
+                Map<String, Double> areas = new LinkedHashMap<>();
+                try {
+                    var hierarchy = item.entry.readHierarchy();
+                    for (PathObject ann : hierarchy.getAnnotationObjects()) {
+                        PathClass pc = ann.getPathClass();
+                        if (pc == null || pc.isDerivedClass()) continue;
+                        var roi = ann.getROI();
+                        if (roi == null) continue;
+                        double coverage = roi.isLine() ? roi.getLength() * strokeWidth : roi.getArea();
+                        if (coverage <= 0) continue;
+                        areas.merge(pc.getName(), coverage, Double::sum);
+                    }
+                } catch (Exception e) {
+                    logger.debug(
+                            "Could not read hierarchy for class-aware split of '{}': {}",
+                            item.entry.getImageName(),
+                            e.getMessage());
+                }
+                out.add(new ImageClassCoverageSplitter.ImageInput<>(item, areas));
+            }
+            return out;
+        }
+
+        /**
+         * Shows a non-blocking notification for any coverage warnings emitted by
+         * the splitter -- typically classes that exist in only one image and
+         * therefore can't appear in both train and val.
+         */
+        private void surfaceCoverageWarnings(ImageClassCoverageSplitter.SplitResult<ImageSelectionItem> result) {
+            if (result.warnings().isEmpty()) {
+                int coverable = (int) result.coverage().values().stream()
+                        .filter(cc -> cc.imagesContaining() >= 2)
+                        .count();
+                Dialogs.showInfoNotification(
+                        "Auto-Distribute",
+                        String.format(
+                                "Class-aware split: %d/%d coverable classes present in both train and val.",
+                                coverable, coverable));
+                return;
+            }
+            StringBuilder msg = new StringBuilder();
+            msg.append("Class coverage warnings (split applied anyway):\n");
+            int shown = 0;
+            for (String w : result.warnings()) {
+                if (shown >= 6) {
+                    msg.append("... and ")
+                            .append(result.warnings().size() - shown)
+                            .append(" more (see log)\n");
+                    break;
+                }
+                msg.append("  - ").append(w).append('\n');
+                shown++;
+            }
+            Dialogs.showMessageDialog("Auto-Distribute - Coverage Warnings", msg.toString());
+        }
+
+        /**
+         * Used when no class data could be read for any selected image: fall
+         * back to dimension-bucketed shuffling so that tile collections sharing
+         * a parent scan stay grouped, with singletons pooled into one bucket so
+         * a set of unique-dimensional whole slides isn't sent all to one side.
+         */
+        private void randomSplitFallback(List<ImageSelectionItem> selected, double valFraction, long seed) {
+            int numChannels = -1;
+            try {
+                if (channelPanel != null && channelPanel.isValid()) {
+                    numChannels = channelPanel.getChannelConfiguration().getNumChannels();
+                }
+            } catch (Exception ignored) {
+                // channel config not loaded yet
+            }
+            Map<String, List<ImageSelectionItem>> buckets = new LinkedHashMap<>();
+            for (ImageSelectionItem item : selected) {
+                String key = item.imageWidth + "x" + item.imageHeight
+                        + "|" + (numChannels > 0 ? String.valueOf(numChannels) : "?")
+                        + "|" + filenamePrefix(item.entry.getImageName());
+                buckets.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
+            }
+            List<ImageSelectionItem> singletonPool = new ArrayList<>();
+            Map<String, List<ImageSelectionItem>> multiBuckets = new LinkedHashMap<>();
+            for (Map.Entry<String, List<ImageSelectionItem>> e : buckets.entrySet()) {
+                if (e.getValue().size() == 1) singletonPool.add(e.getValue().get(0));
+                else multiBuckets.put(e.getKey(), e.getValue());
+            }
+            if (!singletonPool.isEmpty()) {
+                multiBuckets.put("singletons(" + singletonPool.size() + ")", singletonPool);
+            }
+            Random rng = new Random(seed);
+            int nTrain = 0;
+            int nVal = 0;
+            for (Map.Entry<String, List<ImageSelectionItem>> e : multiBuckets.entrySet()) {
+                List<ImageSelectionItem> bucket = e.getValue();
+                Collections.shuffle(bucket, rng);
+                // The outer guard rejects selected.size() < 2 and singletons are
+                // pooled into one bucket above, so every bucket here has size >= 2.
+                // Keep at least 1 train and 1 val per bucket so each group
+                // contributes to both sides.
+                int bucketVal = Math.max(1, Math.min(bucket.size() - 1, (int) Math.round(bucket.size() * valFraction)));
+                for (int i = 0; i < bucket.size(); i++) {
+                    ImageSelectionItem item = bucket.get(i);
+                    if (i < bucketVal) {
+                        item.splitRole.set(SplitRole.VAL_ONLY);
+                        nVal++;
+                    } else {
+                        item.splitRole.set(SplitRole.TRAIN_ONLY);
+                        nTrain++;
+                    }
+                }
+            }
+            logger.info(
+                    "Auto-distribute fallback (seed={}): {} train / {} val across {} bucket(s)",
+                    seed,
+                    nTrain,
+                    nVal,
+                    multiBuckets.size());
         }
 
         /**
