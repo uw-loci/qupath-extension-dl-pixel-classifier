@@ -25,8 +25,15 @@ class TrainingDiagnostics:
         diag.run_all_checks(training_history)
     """
 
-    def __init__(self, classes: List[str]):
+    def __init__(self, classes: List[str],
+                 limited_data_classes: Optional[set] = None):
         self.classes = classes
+        # Classes with too few source slides for their val IoU to be
+        # meaningful. The "never learned" check skips them because the
+        # user has already been warned at training launch and the ceiling
+        # is data-availability, not training quality.
+        self.limited_data_classes = (set(limited_data_classes)
+                                     if limited_data_classes else set())
         self._warned: set = set()  # track which warnings have been issued
 
     def run_checks(self, history: List[Dict[str, Any]],
@@ -225,6 +232,13 @@ class TrainingDiagnostics:
             return warnings
 
         for cls_name in self.classes:
+            # Skip limited-data classes: their val IoU is single-slide
+            # noise and the user was already warned at split time. The
+            # "never learned" message would be misleading -- the model
+            # may have learned the class from train side, the val signal
+            # just doesn't show it reliably.
+            if cls_name in self.limited_data_classes:
+                continue
             ious = [e.get("per_class_iou", {}).get(cls_name, 0)
                     for e in history]
             max_iou = max(ious) if ious else 0

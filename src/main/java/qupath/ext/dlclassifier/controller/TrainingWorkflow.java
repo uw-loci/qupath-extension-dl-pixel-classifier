@@ -52,11 +52,15 @@ import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
 import qupath.ext.dlclassifier.ui.TrainingAreaIssuesDialog;
 import qupath.ext.dlclassifier.ui.TrainingDialog;
 import qupath.ext.dlclassifier.utilities.AnnotationExtractor;
+import qupath.ext.dlclassifier.utilities.ImageClassCoverageSplitter;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.common.ColorTools;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
+import qupath.lib.objects.PathObject;
+import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.ProjectImageEntry;
+import qupath.lib.roi.interfaces.ROI;
 import qupath.lib.scripting.QP;
 
 /**
@@ -648,6 +652,24 @@ public class TrainingWorkflow {
 
         // Store classifier name in config so it survives in checkpoints
         trainingConfig.setClassifierName(classifierName);
+
+        // Detect classes with too few source slides. The Python training
+        // loop excludes these from best-epoch / early-stopping selection
+        // because their per-class val IoU is single-slide noise -- they
+        // would otherwise yank the selection metric around epoch-to-epoch
+        // and surface false "best" epochs whose mIoU was inflated by a
+        // lucky guess on the limited class. See ImageClassCoverageSplitter.
+        try {
+            java.util.Set<String> limitedClasses = detectLimitedDataClasses(selectedImages, trainingConfig);
+            trainingConfig.setLimitedDataClasses(limitedClasses);
+            if (!limitedClasses.isEmpty()) {
+                logger.info(
+                        "Limited-data classes (excluded from best-epoch selection): {}",
+                        String.join(", ", limitedClasses));
+            }
+        } catch (Exception e) {
+            logger.debug("Limited-data class detection skipped: {}", e.getMessage());
+        }
 
         // Generate classifierId early so model files can be saved directly
         // to the project directory during training (not just at the end).
@@ -2520,6 +2542,45 @@ public class TrainingWorkflow {
      * Returns a distinct default color for a class index.
      * Used when class colors are not available (e.g. headless training).
      */
+    /**
+     * Counts source slides per class across {@code selectedImages} and asks
+     * {@link ImageClassCoverageSplitter} which fall below the limited-data
+     * floor. Returns an empty set if {@code selectedImages} is null/empty
+     * (single-image mode -- nothing to compare against).
+     * <p>
+     * Reads only the project hierarchies (lightweight), not full image
+     * data; safe to call on the FX thread.
+     */
+    private static java.util.Set<String> detectLimitedDataClasses(
+            List<ProjectImageEntry<BufferedImage>> selectedImages, TrainingConfig config) {
+        if (selectedImages == null || selectedImages.isEmpty()) {
+            return java.util.Set.of();
+        }
+        int strokeWidth = Math.max(1, config.getLineStrokeWidth());
+        List<ImageClassCoverageSplitter.ImageInput<ProjectImageEntry<BufferedImage>>> inputs =
+                new ArrayList<>(selectedImages.size());
+        for (ProjectImageEntry<BufferedImage> entry : selectedImages) {
+            java.util.Map<String, Double> areas = new java.util.LinkedHashMap<>();
+            try {
+                var hierarchy = entry.readHierarchy();
+                for (PathObject ann : hierarchy.getAnnotationObjects()) {
+                    PathClass pc = ann.getPathClass();
+                    if (pc == null || pc.isDerivedClass()) continue;
+                    ROI roi = ann.getROI();
+                    if (roi == null) continue;
+                    double presence = roi.isLine() ? roi.getLength() * strokeWidth : roi.getArea();
+                    if (presence <= 0) continue;
+                    areas.merge(pc.getName(), presence, Double::sum);
+                }
+            } catch (Exception e) {
+                logger.debug("Limited-data scan: could not read hierarchy for '{}': {}",
+                        entry.getImageName(), e.getMessage());
+            }
+            inputs.add(new ImageClassCoverageSplitter.ImageInput<>(entry, areas));
+        }
+        return ImageClassCoverageSplitter.detectLimitedDataClasses(inputs);
+    }
+
     private static String getDefaultClassColor(int classIndex) {
         String[] palette = {
             "#FF0000", "#00AA00", "#0000FF", "#FFFF00",

@@ -144,6 +144,14 @@ public class TrainingConfig {
     // Passed to Python so it survives in checkpoints for recovery.
     private String classifierName;
 
+    // Transient runtime field: set of class names with too few source slides
+    // (see ImageClassCoverageSplitter.LIMITED_DATA_SLIDE_FLOOR). The Python
+    // training loop excludes these classes from best-epoch / early-stopping
+    // selection because their per-class val IoU is single-slide noise. Set
+    // by TrainingWorkflow right before invoking the backend; not part of
+    // the Builder because it's auto-detected, not user-configurable.
+    private java.util.Set<String> limitedDataClasses = java.util.Set.of();
+
     // Transient runtime overrides for whole-image mode.
     // When set (> 0), these override the builder-configured values so that
     // downstream code (backend, serialization) automatically uses the safe values.
@@ -726,6 +734,25 @@ public class TrainingConfig {
      */
     public void setClassifierName(String classifierName) {
         this.classifierName = classifierName;
+    }
+
+    /**
+     * Returns the set of classes with fewer than
+     * {@link qupath.ext.dlclassifier.utilities.ImageClassCoverageSplitter#LIMITED_DATA_SLIDE_FLOOR}
+     * source slides. Forwarded to Python as {@code limited_data_classes}.
+     * Never null; empty set when no detection has run or no classes qualify.
+     */
+    public java.util.Set<String> getLimitedDataClasses() {
+        return limitedDataClasses;
+    }
+
+    /**
+     * Sets the limited-data class set. Called by TrainingWorkflow just
+     * before launching the backend, with the set computed by
+     * {@link qupath.ext.dlclassifier.utilities.ImageClassCoverageSplitter#detectLimitedDataClasses}.
+     */
+    public void setLimitedDataClasses(java.util.Set<String> classes) {
+        this.limitedDataClasses = classes == null ? java.util.Set.of() : java.util.Set.copyOf(classes);
     }
 
     /**

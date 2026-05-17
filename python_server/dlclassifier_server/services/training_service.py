@@ -2142,6 +2142,20 @@ class TrainingService:
                 logger.info(f"  Min IoU threshold: {focus_class_min_iou:.2f} "
                            f"-- early stopping suppressed until reached")
 
+        # Limited-data classes: those with too few source slides for their
+        # val IoU to be a reliable signal (see ImageClassCoverageSplitter
+        # on the Java side). They are still trained and reported per-epoch,
+        # but excluded from the "selection mIoU" that drives best-epoch,
+        # early stopping, and ReduceLROnPlateau. Without this exclusion a
+        # single-slide val IoU swing yanks the selection metric epoch to
+        # epoch and best-epoch ends up wherever the limited class got
+        # lucky -- not where the overall model is best.
+        _ldc_raw = training_params.get("limited_data_classes") or []
+        limited_data_classes = set(_ldc_raw) if isinstance(_ldc_raw, (list, tuple, set)) else set()
+        if limited_data_classes:
+            logger.info(f"Limited-data classes excluded from best-epoch / early-stopping "
+                       f"selection: {sorted(limited_data_classes)}")
+
         if training_params.get("early_stopping", True):
             # Early-stopping mode follows the ES metric, NOT focus_class.
             # mean_iou is "max" (higher better); val_loss is "min".
@@ -2482,9 +2496,13 @@ class TrainingService:
         best_model_state = None
         training_history = []
 
-        # Training diagnostics: automated checks for common issues
+        # Training diagnostics: automated checks for common issues. Pass
+        # limited_data_classes so checks like "never learned" don't fire
+        # false positives -- those classes were already flagged at split
+        # time and have a known data-availability ceiling.
         from .training_diagnostics import TrainingDiagnostics
-        _diagnostics = TrainingDiagnostics(classes=classes)
+        _diagnostics = TrainingDiagnostics(
+            classes=classes, limited_data_classes=limited_data_classes)
 
         def _is_best(current, best):
             if best_score_mode == "max":
@@ -3257,6 +3275,22 @@ class TrainingService:
             mean_iou = sum(iou_values) / len(iou_values) if iou_values else 0.0
             mean_iou = round(mean_iou, 4)
 
+            # Selection mIoU: mean over classes NOT marked limited-data.
+            # mean_iou is still the user-visible metric (logged each epoch,
+            # written to training_history, passed to progress_callback);
+            # selection_mean_iou is internal-only and drives best-epoch /
+            # ES / plateau decisions. Falls back to mean_iou when no
+            # classes are limited or when all are (degenerate -- can't
+            # exclude everything; report fully).
+            if limited_data_classes:
+                sel_values = [v for k, v in per_class_iou.items()
+                              if k not in limited_data_classes]
+                selection_mean_iou = (sum(sel_values) / len(sel_values)
+                                      if sel_values else mean_iou)
+                selection_mean_iou = round(selection_mean_iou, 4)
+            else:
+                selection_mean_iou = mean_iou
+
             # Record history
             training_history.append({
                 "epoch": epoch + 1,
@@ -3298,7 +3332,9 @@ class TrainingService:
                     # the scheduler reduces LR exactly when ES would consider
                     # the run "not improving". Decoupled from focus_class --
                     # focus_class only drives best-model selection now.
-                    plateau_metric = mean_iou if early_stopping_metric == "mean_iou" else val_loss
+                    # Use selection_mean_iou so plateau detection ignores
+                    # limited-data classes whose IoU is single-slide noise.
+                    plateau_metric = selection_mean_iou if early_stopping_metric == "mean_iou" else val_loss
                     scheduler.step(plateau_metric)
                 elif isinstance(scheduler, CosineAnnealingWarmRestarts):
                     scheduler.step(epoch + 1)
@@ -3317,9 +3353,12 @@ class TrainingService:
             if focus_class and focus_class in per_class_iou:
                 current_metric = per_class_iou[focus_class]
             elif focus_class:
-                current_metric = mean_iou
+                # focus_class is missing from per_class_iou this epoch (rare
+                # class not yet present in val); fall back to selection mIoU
+                # which already excludes limited-data classes.
+                current_metric = selection_mean_iou
             else:
-                current_metric = mean_iou if early_stopping_metric == "mean_iou" else val_loss
+                current_metric = selection_mean_iou if early_stopping_metric == "mean_iou" else val_loss
             if _is_best(current_metric, best_score):
                 best_score = current_metric
                 best_epoch = epoch + 1
@@ -3329,6 +3368,8 @@ class TrainingService:
                 best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 if focus_class:
                     metric_name = f"{focus_class} IoU"
+                elif limited_data_classes and early_stopping_metric == "mean_iou":
+                    metric_name = "selection mIoU"
                 else:
                     metric_name = "mIoU" if early_stopping_metric == "mean_iou" else "loss"
                 logger.info(f"  New best model at epoch {epoch+1} ({metric_name}={current_metric:.4f})")
@@ -3365,7 +3406,9 @@ class TrainingService:
             # Check early stopping. The ES metric is independent of
             # focus_class -- focus_class only drives best-model selection.
             if early_stopping is not None:
-                es_value = mean_iou if early_stopping_metric == "mean_iou" else val_loss
+                # Use selection_mean_iou so ES counter does not reset on a
+                # noisy single-slide IoU swing for a limited-data class.
+                es_value = selection_mean_iou if early_stopping_metric == "mean_iou" else val_loss
 
                 # Suppress early stopping if focus class hasn't reached minimum IoU.
                 # This is a separate gate: the ES metric may be plateauing on

@@ -106,27 +106,38 @@ public class ImageClassCoverageSplitterTest {
 
     @Test
     public void warnsWhenClassIsRareByProjectPercentage() {
-        // 'adipose' is in 2 of 14 images (14%) -- under the 15% threshold,
-        // so the rare-class warning should fire. The splitter still puts
-        // one in each split structurally, but val IoU on a single slide is
-        // too thin to be a reliable signal.
+        // 'adipose' is in 4 of 30 images (13%) -- under the 15% threshold,
+        // but at/above the 4-slide limited-data floor. The "rare" warning
+        // should fire ('noisy between epochs') without the limited-data
+        // warning ('excluded from best-epoch') -- they're distinct branches.
         List<ImageInput<String>> inputs = new ArrayList<>();
-        for (int i = 0; i < 12; i++) {
+        for (int i = 0; i < 26; i++) {
             inputs.add(img("img" + i, "mucosa", 100.0, "muscle", 100.0));
         }
         inputs.add(img("imgA", "adipose", 100.0, "mucosa", 100.0));
         inputs.add(img("imgB", "adipose", 100.0, "muscle", 100.0));
+        inputs.add(img("imgC", "adipose", 100.0, "mucosa", 100.0));
+        inputs.add(img("imgD", "adipose", 100.0, "muscle", 100.0));
         SplitResult<String> result = ImageClassCoverageSplitter.split(inputs, 0.25, 0L);
         assertTrue(
                 result.warnings().stream().anyMatch(w -> w.contains("adipose") && w.contains("rare")),
                 "Expected a rare-class warning for 'adipose', got: " + result.warnings());
+        assertTrue(
+                result.warnings().stream().noneMatch(w -> w.contains("adipose") && w.contains("limited-data")
+                        || (w.contains("adipose") && w.contains("only") && w.contains("source slides"))),
+                "Should NOT also flag adipose as limited-data at 4 slides, got: " + result.warnings());
+        assertTrue(
+                !result.limitedDataClasses().contains("adipose"),
+                "adipose should not be in limitedDataClasses with 4 source slides");
     }
 
     @Test
     public void doesNotWarnRareWhenSmallProjectKeepsPercentageHigh() {
-        // 'adipose' is in 2 of 8 images (25%) -- above the 15% threshold,
-        // so no rare-class warning should fire. In a small project, two
-        // slides is a reasonable fraction.
+        // 'adipose' is in 2 of 8 images (25%) -- above the 15% rare-percentage
+        // threshold so no rare-class warning fires, but BELOW the 4-slide
+        // limited-data floor so the limited-data warning DOES fire. This
+        // test asserts both: the no-rare guard, plus the limited-data
+        // detection (since 2 slides is too thin for the val signal).
         List<ImageInput<String>> inputs = List.of(
                 img("img1", "mucosa", 100.0, "muscle", 100.0),
                 img("img2", "mucosa", 100.0, "muscle", 100.0),
@@ -140,6 +151,49 @@ public class ImageClassCoverageSplitterTest {
         assertTrue(
                 result.warnings().stream().noneMatch(w -> w.contains("adipose") && w.contains("rare")),
                 "Should not warn about adipose at 25% project share, got: " + result.warnings());
+        assertTrue(
+                result.limitedDataClasses().contains("adipose"),
+                "adipose (2/8 slides) should be flagged limited-data: " + result.limitedDataClasses());
+    }
+
+    @Test
+    public void limitedDataClassesPopulatedAtBoundary() {
+        // The 'mucosa' class is in all 8 images; 'rare3' is in 3 (< floor=4
+        // limited); 'enough4' is in 4 (== floor, NOT limited).
+        List<ImageInput<String>> inputs = List.of(
+                img("img1", "mucosa", 100.0, "rare3", 100.0),
+                img("img2", "mucosa", 100.0, "rare3", 100.0),
+                img("img3", "mucosa", 100.0, "rare3", 100.0),
+                img("img4", "mucosa", 100.0, "enough4", 100.0),
+                img("img5", "mucosa", 100.0, "enough4", 100.0),
+                img("img6", "mucosa", 100.0, "enough4", 100.0),
+                img("img7", "mucosa", 100.0, "enough4", 100.0),
+                img("img8", "mucosa", 100.0));
+        SplitResult<String> result = ImageClassCoverageSplitter.split(inputs, 0.25, 0L);
+        assertTrue(result.limitedDataClasses().contains("rare3"),
+                "rare3 (3 slides) should be limited-data: " + result.limitedDataClasses());
+        assertTrue(!result.limitedDataClasses().contains("enough4"),
+                "enough4 (4 slides) should NOT be limited-data: " + result.limitedDataClasses());
+        assertTrue(!result.limitedDataClasses().contains("mucosa"),
+                "mucosa (8 slides) should NOT be limited-data: " + result.limitedDataClasses());
+    }
+
+    @Test
+    public void detectLimitedDataClassesStaticHelperMatches() {
+        // The static helper must produce the same set as split() does --
+        // training launch uses the helper when the user assigned roles
+        // manually and we never ran a full split.
+        List<ImageInput<String>> inputs = List.of(
+                img("img1", "common", 100.0, "rare", 100.0),
+                img("img2", "common", 100.0, "rare", 100.0),
+                img("img3", "common", 100.0),
+                img("img4", "common", 100.0),
+                img("img5", "common", 100.0));
+        var fromHelper = ImageClassCoverageSplitter.detectLimitedDataClasses(inputs);
+        var fromSplit = ImageClassCoverageSplitter.split(inputs, 0.4, 0L).limitedDataClasses();
+        assertEquals(fromHelper, fromSplit, "Helper and split() must agree on limited-data set");
+        assertTrue(fromHelper.contains("rare"), "rare (2 slides) should be limited-data");
+        assertTrue(!fromHelper.contains("common"), "common (5 slides) should NOT be limited-data");
     }
 
     @Test

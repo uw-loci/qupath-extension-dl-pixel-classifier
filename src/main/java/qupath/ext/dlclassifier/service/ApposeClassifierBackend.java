@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.function.Consumer;
@@ -379,6 +380,16 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         if (trainingConfig.getFocusClass() != null) {
             trainingParams.put("focus_class", trainingConfig.getFocusClass());
             trainingParams.put("focus_class_min_iou", trainingConfig.getFocusClassMinIoU());
+        }
+
+        // Classes with too few source slides are excluded from best-epoch /
+        // early-stopping selection on the Python side. They are still trained
+        // and their per-class IoU is still reported -- they just don't drive
+        // model selection because their val signal is single-slide noise.
+        // See ImageClassCoverageSplitter.LIMITED_DATA_SLIDE_FLOOR.
+        Set<String> limitedDataClasses = trainingConfig.getLimitedDataClasses();
+        if (limitedDataClasses != null && !limitedDataClasses.isEmpty()) {
+            trainingParams.put("limited_data_classes", new ArrayList<>(limitedDataClasses));
         }
 
         Map<String, Object> inputs = new HashMap<>();

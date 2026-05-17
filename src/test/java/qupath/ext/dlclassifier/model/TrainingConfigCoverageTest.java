@@ -68,6 +68,7 @@ class TrainingConfigCoverageTest {
             "runtimeBatchSize", // Whole-image runtime override
             "runtimeGradAccumSteps", // Whole-image runtime override
             "hasPerImageSplitRoles", // Derived from per-image UI state
+            "limitedDataClasses", // Auto-detected at launch from selected images, not user input
             "augmentationParams" // Optional advanced sub-map; default-filled in Python
             );
 
@@ -85,6 +86,7 @@ class TrainingConfigCoverageTest {
             "runtimeBatchSize",
             "runtimeGradAccumSteps",
             "hasPerImageSplitRoles",
+            "limitedDataClasses", // Auto-detected; surfaced in training log, not persisted as a setting
             // Top-level metadata fields, not part of the hyperparameters map
             "modelType",
             "backbone",
@@ -120,6 +122,7 @@ class TrainingConfigCoverageTest {
             "runtimeBatchSize",
             "runtimeGradAccumSteps",
             "hasPerImageSplitRoles",
+            "limitedDataClasses", // Auto-detected; behavior documented in TROUBLESHOOTING under limited-slide guidance
             "augmentationParams", // "Augmentation Config" section
             "ohemSchedule", // "OHEM" loss subsection
             "boundaryWMin", // "boundary_ce" loss family

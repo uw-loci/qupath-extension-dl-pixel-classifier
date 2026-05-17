@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,6 +60,23 @@ public final class ImageClassCoverageSplitter {
      */
     public static final double RARE_CLASS_FRACTION = 0.15;
 
+    /**
+     * Absolute lower bound: a class present in fewer than this many source
+     * slides is "limited-data" -- regardless of percentage. The percentage
+     * check misses cases like 2 of 8 slides (25% -- above the rare floor)
+     * where the tissue genuinely only exists on a couple of slides and
+     * cannot be annotated onto more. For those classes:
+     *   - val IoU is single-slide noise, so it must not drive best-epoch
+     *     selection or early stopping (the training loop excludes them);
+     *   - the model will overfit to the visual content of the few source
+     *     slides regardless of augmentation -- this is a data ceiling,
+     *     not something the splitter or trainer can lift.
+     * The training pipeline reads {@link SplitResult#limitedDataClasses()}
+     * and forwards it to the Python training loop so the selection metric
+     * skips these classes.
+     */
+    public static final int LIMITED_DATA_SLIDE_FLOOR = 4;
+
     private ImageClassCoverageSplitter() {
         // Static utility class
     }
@@ -99,10 +117,45 @@ public final class ImageClassCoverageSplitter {
 
     /**
      * Result of a split: per-image assignments plus a per-class coverage
-     * report and a list of human-readable warnings the caller can surface.
+     * report, human-readable warnings, and the set of class names that
+     * have fewer than {@link #LIMITED_DATA_SLIDE_FLOOR} source slides
+     * (excluded from best-epoch selection by the training loop).
      */
     public record SplitResult<T>(
-            List<ImageAssignment<T>> assignments, Map<String, ClassCoverage> coverage, List<String> warnings) {}
+            List<ImageAssignment<T>> assignments,
+            Map<String, ClassCoverage> coverage,
+            List<String> warnings,
+            Set<String> limitedDataClasses) {
+        public SplitResult {
+            limitedDataClasses = limitedDataClasses == null ? Set.of() : Set.copyOf(limitedDataClasses);
+        }
+    }
+
+    /**
+     * Compute the set of "limited-data" class names from a project's
+     * per-image class areas, independent of any actual split. Used at
+     * training launch when callers need the list without running the
+     * full split (e.g. when the user assigned train/val roles manually).
+     */
+    public static Set<String> detectLimitedDataClasses(List<? extends ImageInput<?>> images) {
+        Map<String, Integer> slideCounts = new HashMap<>();
+        for (ImageInput<?> input : images) {
+            Map<String, Double> areas = input.classAreas();
+            if (areas == null) continue;
+            for (Map.Entry<String, Double> e : areas.entrySet()) {
+                if (e.getValue() != null && e.getValue() > 0) {
+                    slideCounts.merge(e.getKey(), 1, Integer::sum);
+                }
+            }
+        }
+        Set<String> limited = new TreeSet<>();
+        for (Map.Entry<String, Integer> e : slideCounts.entrySet()) {
+            if (e.getValue() < LIMITED_DATA_SLIDE_FLOOR) {
+                limited.add(e.getKey());
+            }
+        }
+        return limited;
+    }
 
     /**
      * Run the split with default {@value #DEFAULT_ATTEMPTS} attempts.
@@ -123,7 +176,7 @@ public final class ImageClassCoverageSplitter {
     public static <T> SplitResult<T> split(List<ImageInput<T>> images, double valFraction, long seed, int numAttempts) {
         int n = images.size();
         if (n == 0) {
-            return new SplitResult<>(List.of(), Map.of(), List.of());
+            return new SplitResult<>(List.of(), Map.of(), List.of(), Set.of());
         }
         if (n == 1) {
             // Single image: cannot split; put it in train and warn.
@@ -132,7 +185,8 @@ public final class ImageClassCoverageSplitter {
             return new SplitResult<>(
                     single,
                     buildCoverage(images, single),
-                    List.of("Only one image selected -- cannot split. Assigned to train."));
+                    List.of("Only one image selected -- cannot split. Assigned to train."),
+                    detectLimitedDataClasses(images));
         }
 
         int targetVal = Math.max(1, Math.min(n - 1, (int) Math.round(n * valFraction)));
@@ -277,11 +331,31 @@ public final class ImageClassCoverageSplitter {
                         "Class '%s' could not be placed in train (in %d images, all on val side). "
                                 + "Move one of its images to train manually.",
                         cc.className(), cc.imagesContaining()));
+            } else if (cc.imagesContaining() < LIMITED_DATA_SLIDE_FLOOR) {
+                // Limited-data class: structurally covered but val IoU is a
+                // single-slide signal and the model will overfit to the few
+                // source slides regardless of augmentation. We exclude these
+                // classes from best-epoch / early-stopping selection on the
+                // Python side; warn so the user knows the per-class IoU
+                // column for them is informational only, not a training
+                // signal to chase.
+                warnings.add(String.format(
+                        "Class '%s' has only %d source slides (%d train / %d val) -- "
+                                + "below the %d-slide floor. Validation IoU for it will be "
+                                + "single-slide noise and is EXCLUDED from best-epoch / "
+                                + "early-stopping selection. Per-epoch numbers in this column "
+                                + "are informational only.",
+                        cc.className(),
+                        cc.imagesContaining(),
+                        cc.inTrain(),
+                        cc.inVal(),
+                        LIMITED_DATA_SLIDE_FLOOR));
             } else if ((double) cc.imagesContaining() / n < RARE_CLASS_FRACTION) {
-                // Structurally covered but statistically thin: val IoU is
-                // computed on so few slides that the per-epoch number is
-                // noisy and the post-training "never learned" hint can fire
-                // even when the model is fine.
+                // Structurally covered AND above the limited-data floor, but
+                // statistically thin: val IoU is computed on enough slides
+                // to be in the best-epoch metric, yet the per-epoch number
+                // is still noisy and the post-training "never learned" hint
+                // can fire even when the model is fine.
                 warnings.add(String.format(
                         "Class '%s' is rare (in %d of %d images, %.0f%%; %d train / %d val). "
                                 + "Validation IoU for it will be noisy between epochs -- treat "
@@ -295,6 +369,8 @@ public final class ImageClassCoverageSplitter {
                         cc.inVal()));
             }
         }
+
+        Set<String> limitedDataClasses = detectLimitedDataClasses(images);
 
         if (logger.isInfoEnabled()) {
             long nTrain =
@@ -320,7 +396,7 @@ public final class ImageClassCoverageSplitter {
             }
         }
 
-        return new SplitResult<>(assignments, coverage, warnings);
+        return new SplitResult<>(assignments, coverage, warnings, limitedDataClasses);
     }
 
     /** Builds the per-class coverage report from a final assignment. */
