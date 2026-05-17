@@ -25,7 +25,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from torch.optim.lr_scheduler import (
-    CosineAnnealingWarmRestarts, StepLR, OneCycleLR, ReduceLROnPlateau
+    CosineAnnealingWarmRestarts,
+    StepLR,
+    OneCycleLR,
+    ReduceLROnPlateau,
 )
 from torch.nn.utils import clip_grad_norm_
 from PIL import Image
@@ -33,9 +36,7 @@ from PIL import Image
 from .gpu_manager import GPUManager, get_gpu_manager
 from ..utils.normalization import normalize as normalize_image
 from ..utils.normalization import compute_dataset_stats
-from ..utils.batchrenorm import (
-    replace_bn_with_batchrenorm, set_batchrenorm_limits
-)
+from ..utils.batchrenorm import replace_bn_with_batchrenorm, set_batchrenorm_limits
 
 from ..utils.spatial import (
     get_spatial_divisor,
@@ -45,10 +46,13 @@ from ..utils.spatial import (
 
 logger = logging.getLogger(__name__)
 
-# Try to import albumentations for augmentation
+# Try to import albumentations for augmentation. ToTensorV2 is probed
+# as an import-time availability check (gates ALBUMENTATIONS_AVAILABLE);
+# the symbol itself is not referenced later, hence the F401 suppression.
 try:
     import albumentations as A
-    from albumentations.pytorch import ToTensorV2
+    from albumentations.pytorch import ToTensorV2  # noqa: F401
+
     ALBUMENTATIONS_AVAILABLE = True
 except ImportError:
     ALBUMENTATIONS_AVAILABLE = False
@@ -58,6 +62,7 @@ except ImportError:
 # the training path silently falls back to CPU albumentations.
 try:
     import kornia.augmentation as K  # noqa: N814
+
     KORNIA_AVAILABLE = True
 except ImportError:
     KORNIA_AVAILABLE = False
@@ -71,8 +76,9 @@ class PerChannelIntensityJitter(A.ImageOnlyTransform):
     built-in transforms which assume RGB correlation.
     """
 
-    def __init__(self, brightness_limit=0.2, contrast_limit=0.2,
-                 always_apply=False, p=0.5):
+    def __init__(
+        self, brightness_limit=0.2, contrast_limit=0.2, always_apply=False, p=0.5
+    ):
         super().__init__(always_apply, p)
         self.brightness_limit = brightness_limit
         self.contrast_limit = contrast_limit
@@ -82,9 +88,11 @@ class PerChannelIntensityJitter(A.ImageOnlyTransform):
         num_ch = img.shape[2] if img.ndim == 3 else 1
         for c in range(num_ch):
             brightness = 1.0 + np.random.uniform(
-                -self.brightness_limit, self.brightness_limit)
+                -self.brightness_limit, self.brightness_limit
+            )
             contrast = 1.0 + np.random.uniform(
-                -self.contrast_limit, self.contrast_limit)
+                -self.contrast_limit, self.contrast_limit
+            )
             if img.ndim == 3:
                 ch = result[:, :, c]
             else:
@@ -92,7 +100,9 @@ class PerChannelIntensityJitter(A.ImageOnlyTransform):
             mean_val = ch.mean()
             ch[:] = np.clip(
                 (ch - mean_val) * contrast + mean_val * brightness,
-                0, 255 if img.dtype == np.uint8 else ch.max() * 2)
+                0,
+                255 if img.dtype == np.uint8 else ch.max() * 2,
+            )
         return result.astype(img.dtype)
 
     def get_transform_init_args_names(self):
@@ -159,70 +169,76 @@ def get_training_augmentation(
         A.HorizontalFlip(p=p_flip),
         A.VerticalFlip(p=p_flip),
         A.RandomRotate90(p=p_rotate),
-
         # Rotation with interpolation (fills with reflection)
         A.Rotate(
             limit=45,
             interpolation=1,  # INTER_LINEAR
-            border_mode=2,    # BORDER_REFLECT
-            p=p_rotate * 0.5
+            border_mode=2,  # BORDER_REFLECT
+            p=p_rotate * 0.5,
         ),
-
         # Elastic deformation - good for biological tissue
         A.ElasticTransform(
-            alpha=elastic_alpha,
-            sigma=elastic_alpha * elastic_sigma_ratio,
-            p=p_elastic
+            alpha=elastic_alpha, sigma=elastic_alpha * elastic_sigma_ratio, p=p_elastic
         ),
-
         # Grid distortion - another spatial augmentation
-        A.GridDistortion(
-            num_steps=5,
-            distort_limit=0.3,
-            p=p_elastic * 0.5
-        ),
+        A.GridDistortion(num_steps=5, distort_limit=0.3, p=p_elastic * 0.5),
     ]
 
     # Intensity transforms -- mode-dependent
     if intensity_mode == "brightfield":
         # RGB-correlated brightness/contrast/gamma (standard for H&E)
-        transforms.append(A.OneOf([
-            A.RandomBrightnessContrast(
-                brightness_limit=brightness_limit,
-                contrast_limit=contrast_limit,
-                p=1.0
-            ),
-            A.RandomGamma(gamma_limit=(gamma_lo, gamma_hi), p=1.0),
-        ], p=p_color))
+        transforms.append(
+            A.OneOf(
+                [
+                    A.RandomBrightnessContrast(
+                        brightness_limit=brightness_limit,
+                        contrast_limit=contrast_limit,
+                        p=1.0,
+                    ),
+                    A.RandomGamma(gamma_limit=(gamma_lo, gamma_hi), p=1.0),
+                ],
+                p=p_color,
+            )
+        )
     elif intensity_mode == "fluorescence":
         # Per-channel independent intensity jitter (for fluorescence/multi-spectral)
-        transforms.append(PerChannelIntensityJitter(
-            brightness_limit=brightness_limit,
-            contrast_limit=contrast_limit,
-            p=p_color))
+        transforms.append(
+            PerChannelIntensityJitter(
+                brightness_limit=brightness_limit,
+                contrast_limit=contrast_limit,
+                p=p_color,
+            )
+        )
     elif intensity_mode == "generic":
         # Modality-agnostic ColorJitter: brightness/contrast/saturation
         # variation without brightfield- or fluorescence-specific shape.
         # Recommended default for non-histology imagery (e.g. fly wings)
         # where cross-batch white-balance / exposure shift is the main
         # form of acquisition variation.
-        transforms.append(A.ColorJitter(
-            brightness=brightness_limit,
-            contrast=contrast_limit,
-            saturation=brightness_limit,
-            hue=0.0,
-            p=p_color))
+        transforms.append(
+            A.ColorJitter(
+                brightness=brightness_limit,
+                contrast=contrast_limit,
+                saturation=brightness_limit,
+                hue=0.0,
+                p=p_color,
+            )
+        )
 
-    transforms.extend([
-        # Blur - simulates slight defocus
-        A.OneOf([
-            A.GaussianBlur(blur_limit=(3, 5), p=1.0),
-            A.MedianBlur(blur_limit=3, p=1.0),
-        ], p=0.1),
-
-        # Noise - std_range is fraction of image max value
-        A.GaussNoise(std_range=(noise_lo, noise_hi), p=p_noise),
-    ])
+    transforms.extend(
+        [
+            # Blur - simulates slight defocus
+            A.OneOf(
+                [
+                    A.GaussianBlur(blur_limit=(3, 5), p=1.0),
+                    A.MedianBlur(blur_limit=3, p=1.0),
+                ],
+                p=0.1,
+            ),
+            # Noise - std_range is fraction of image max value
+            A.GaussNoise(std_range=(noise_lo, noise_hi), p=p_noise),
+        ]
+    )
 
     # Scale jitter: trains the model to tolerate pixel-size mismatch
     # between training and inference. Random scale within +/- limit, then
@@ -231,20 +247,22 @@ def get_training_augmentation(
     if scale_jitter_limit and scale_jitter_limit > 0.0:
         scale_lo = max(0.05, 1.0 - scale_jitter_limit)
         scale_hi = 1.0 + scale_jitter_limit
-        transforms.extend([
-            A.RandomScale(
-                scale_limit=(scale_lo - 1.0, scale_hi - 1.0),
-                interpolation=1,  # INTER_LINEAR
-                p=p_scale_jitter,
-            ),
-            A.PadIfNeeded(
-                min_height=image_size,
-                min_width=image_size,
-                border_mode=2,  # BORDER_REFLECT
-                p=1.0,
-            ),
-            A.RandomCrop(height=image_size, width=image_size, p=1.0),
-        ])
+        transforms.extend(
+            [
+                A.RandomScale(
+                    scale_limit=(scale_lo - 1.0, scale_hi - 1.0),
+                    interpolation=1,  # INTER_LINEAR
+                    p=p_scale_jitter,
+                ),
+                A.PadIfNeeded(
+                    min_height=image_size,
+                    min_width=image_size,
+                    border_mode=2,  # BORDER_REFLECT
+                    p=1.0,
+                ),
+                A.RandomCrop(height=image_size, width=image_size, p=1.0),
+            ]
+        )
 
     return A.Compose(transforms, additional_targets={})
 
@@ -297,7 +315,9 @@ def build_gpu_augmentation(aug_config: Optional[Dict[str, Any]]):
     p_noise = float(cfg.get("p_noise", 0.2))
     brightness_limit = float(cfg.get("brightness_limit", 0.2))
     contrast_limit = float(cfg.get("contrast_limit", 0.2))
-    noise_std_min = float(cfg.get("noise_std_min", 0.04))
+    # noise_std_min parsed for parity with CPU augmentation config; kornia's
+    # RandomGaussianNoise uses a single std so we only feed the upper bound.
+    noise_std_min = float(cfg.get("noise_std_min", 0.04))  # noqa: F841
     noise_std_max = float(cfg.get("noise_std_max", 0.2))
     intensity_mode = cfg.get("intensity_mode", "none")
 
@@ -307,8 +327,9 @@ def build_gpu_augmentation(aug_config: Optional[Dict[str, Any]]):
         K.RandomHorizontalFlip(p=p_flip),
         K.RandomVerticalFlip(p=p_flip),
         # 90-degree rotation -- pick uniformly from {0, 90, 180, 270} per sample.
-        K.RandomRotation(degrees=[0.0, 270.0], p=p_rotate,
-                         resample="nearest", align_corners=False),
+        K.RandomRotation(
+            degrees=[0.0, 270.0], p=p_rotate, resample="nearest", align_corners=False
+        ),
     ]
 
     # Intensity augmentation (image only -- kornia handles the mask skip).
@@ -318,31 +339,43 @@ def build_gpu_augmentation(aug_config: Optional[Dict[str, Any]]):
     # brightness+contrast via RandomBrightness + RandomContrast which both
     # operate on arbitrary channel counts.
     if intensity_mode == "brightfield":
-        augs.append(K.ColorJitter(
-            brightness=brightness_limit,
-            contrast=contrast_limit,
-            p=p_color,
-        ))
+        augs.append(
+            K.ColorJitter(
+                brightness=brightness_limit,
+                contrast=contrast_limit,
+                p=p_color,
+            )
+        )
     else:
         # Works for 1-N channel inputs; brightness/contrast independently.
-        augs.append(K.RandomBrightness(
-            brightness=(max(0.0, 1.0 - brightness_limit),
-                        1.0 + brightness_limit),
-            p=p_color,
-        ))
-        augs.append(K.RandomContrast(
-            contrast=(max(0.0, 1.0 - contrast_limit),
-                      1.0 + contrast_limit),
-            p=p_color,
-        ))
+        augs.append(
+            K.RandomBrightness(
+                brightness=(max(0.0, 1.0 - brightness_limit), 1.0 + brightness_limit),
+                p=p_color,
+            )
+        )
+        augs.append(
+            K.RandomContrast(
+                contrast=(max(0.0, 1.0 - contrast_limit), 1.0 + contrast_limit),
+                p=p_color,
+            )
+        )
 
     # Low-probability blur and noise -- cheap regularization.
-    augs.append(K.RandomGaussianBlur(
-        kernel_size=(3, 3), sigma=(0.1, 1.5), p=0.1,
-    ))
-    augs.append(K.RandomGaussianNoise(
-        mean=0.0, std=noise_std_max, p=p_noise,
-    ))
+    augs.append(
+        K.RandomGaussianBlur(
+            kernel_size=(3, 3),
+            sigma=(0.1, 1.5),
+            p=0.1,
+        )
+    )
+    augs.append(
+        K.RandomGaussianNoise(
+            mean=0.0,
+            std=noise_std_max,
+            p=p_noise,
+        )
+    )
     # noise_std_min is informational for the CPU path (range); kornia's
     # RandomGaussianNoise uses a single std, so we use the upper bound.
 
@@ -369,7 +402,7 @@ class EarlyStopping:
         patience: int = 10,
         min_delta: float = 0.0,
         restore_best_weights: bool = True,
-        mode: str = "min"
+        mode: str = "min",
     ):
         self.patience = patience
         self.min_delta = min_delta
@@ -406,19 +439,27 @@ class EarlyStopping:
 
             if self.restore_best_weights:
                 # Save best model state
-                self.best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                self.best_state = {
+                    k: v.cpu().clone() for k, v in model.state_dict().items()
+                }
 
-            logger.debug(f"Early stopping: new best {metric_value:.4f} at epoch {epoch}")
+            logger.debug(
+                f"Early stopping: new best {metric_value:.4f} at epoch {epoch}"
+            )
             return False
         else:
             # No improvement
             self.counter += 1
-            logger.debug(f"Early stopping: no improvement for {self.counter}/{self.patience} epochs")
+            logger.debug(
+                f"Early stopping: no improvement for {self.counter}/{self.patience} epochs"
+            )
 
             if self.counter >= self.patience:
                 self.should_stop = True
-                logger.info(f"Early stopping triggered at epoch {epoch}. "
-                           f"Best score: {self.best_score:.4f} at epoch {self.best_epoch}")
+                logger.info(
+                    f"Early stopping triggered at epoch {epoch}. "
+                    f"Best score: {self.best_score:.4f} at epoch {self.best_epoch}"
+                )
                 return True
 
         return False
@@ -504,12 +545,14 @@ class DiceLoss(nn.Module):
         probs = F.softmax(inputs, dim=1)
 
         # Create valid pixel mask
-        valid_mask = (targets != self.ignore_index)
+        valid_mask = targets != self.ignore_index
 
         # One-hot encode targets (only valid pixels)
         targets_safe = targets.clone()
         targets_safe[~valid_mask] = 0
-        targets_one_hot = F.one_hot(targets_safe, num_classes).permute(0, 3, 1, 2).float()
+        targets_one_hot = (
+            F.one_hot(targets_safe, num_classes).permute(0, 3, 1, 2).float()
+        )
 
         # Zero out invalid pixels
         valid_mask_expanded = valid_mask.unsqueeze(1).float()
@@ -521,7 +564,9 @@ class DiceLoss(nn.Module):
         intersection = (probs * targets_one_hot).sum(dim=dims)
         cardinality = probs.sum(dim=dims) + targets_one_hot.sum(dim=dims)
 
-        dice_per_class = (2.0 * intersection + self.smooth) / (cardinality + self.smooth)
+        dice_per_class = (2.0 * intersection + self.smooth) / (
+            cardinality + self.smooth
+        )
 
         return 1.0 - dice_per_class.mean()
 
@@ -545,12 +590,11 @@ class CombinedCEDiceLoss(nn.Module):
         class_weights: Optional[torch.Tensor] = None,
         ignore_index: int = 255,
         ce_weight: float = 0.5,
-        dice_weight: float = 0.5
+        dice_weight: float = 0.5,
     ):
         super().__init__()
         self.ce_loss = nn.CrossEntropyLoss(
-            weight=class_weights,
-            ignore_index=ignore_index
+            weight=class_weights, ignore_index=ignore_index
         )
         self.dice_loss = DiceLoss(ignore_index=ignore_index)
         self.ce_weight = ce_weight
@@ -781,9 +825,7 @@ class OHEMCrossEntropyLoss(nn.Module):
                 remaining = valid_losses.clone()
                 remaining[selected_mask] = -1.0  # exclude already-selected
                 fill_k = k - int(selected_count)
-                _, fill_indices = torch.topk(
-                    remaining, min(fill_k, remaining.numel())
-                )
+                _, fill_indices = torch.topk(remaining, min(fill_k, remaining.numel()))
                 selected_mask[fill_indices] = True
 
         return valid_losses[selected_mask].mean()
@@ -960,7 +1002,8 @@ class CombinedCELovaszLoss(nn.Module):
     ):
         super().__init__()
         self.ce_loss = nn.CrossEntropyLoss(
-            weight=class_weights, ignore_index=ignore_index,
+            weight=class_weights,
+            ignore_index=ignore_index,
         )
         self.lovasz_loss = LovaszSoftmaxLoss(
             ignore_index=ignore_index,
@@ -1216,7 +1259,7 @@ class SegmentationDataset(Dataset):
         input_config: Dict[str, Any],
         augment: bool = True,
         augmentation_config: Optional[Dict[str, Any]] = None,
-        context_dir: Optional[str] = None
+        context_dir: Optional[str] = None,
     ):
         self.images_dir = Path(images_dir)
         self.masks_dir = Path(masks_dir)
@@ -1225,10 +1268,12 @@ class SegmentationDataset(Dataset):
         self.context_dir = Path(context_dir) if context_dir else None
 
         # Find all images (including raw float32 files from N-channel export)
-        self.image_files = sorted(list(self.images_dir.glob("*.tiff")) +
-                                  list(self.images_dir.glob("*.tif")) +
-                                  list(self.images_dir.glob("*.png")) +
-                                  list(self.images_dir.glob("*.raw")))
+        self.image_files = sorted(
+            list(self.images_dir.glob("*.tiff"))
+            + list(self.images_dir.glob("*.tif"))
+            + list(self.images_dir.glob("*.png"))
+            + list(self.images_dir.glob("*.raw"))
+        )
         logger.info(f"Found {len(self.image_files)} images in {images_dir}")
         # When Java reports export success but the directory is empty or
         # missing, something went wrong on the Java side (annotations
@@ -1241,7 +1286,8 @@ class SegmentationDataset(Dataset):
                     "Training images directory does not exist: %s "
                     "(the Java-side exporter did not write here -- check "
                     "QuPath's log pane for the export step)",
-                    self.images_dir)
+                    self.images_dir,
+                )
             else:
                 other = sorted(p.name for p in self.images_dir.iterdir())
                 logger.error(
@@ -1250,7 +1296,8 @@ class SegmentationDataset(Dataset):
                     "Check QuPath's log pane for the Java exporter's "
                     "'Exported N training patches' and 'Found N annotations' "
                     "lines.",
-                    other if other else "(empty)")
+                    other if other else "(empty)",
+                )
         if self.context_dir:
             logger.info(f"Multi-scale context enabled from {context_dir}")
 
@@ -1260,8 +1307,7 @@ class SegmentationDataset(Dataset):
             intensity_mode = aug_config.get("intensity_mode", "none")
             # Set color probability based on intensity mode
             p_color = 0.3 if intensity_mode != "none" else 0.0
-            scale_jitter_limit = float(
-                aug_config.get("scale_jitter_limit", 0.0))
+            scale_jitter_limit = float(aug_config.get("scale_jitter_limit", 0.0))
             self.transform = get_training_augmentation(
                 image_size=aug_config.get("image_size", 512),
                 p_flip=aug_config.get("p_flip", 0.5),
@@ -1293,7 +1339,9 @@ class SegmentationDataset(Dataset):
         else:
             self.transform = None
             if augment and not ALBUMENTATIONS_AVAILABLE:
-                logger.warning("Augmentation requested but albumentations not available")
+                logger.warning(
+                    "Augmentation requested but albumentations not available"
+                )
 
     def __len__(self):
         return len(self.image_files)
@@ -1315,8 +1363,12 @@ class SegmentationDataset(Dataset):
                 if ctx_array.ndim == 2:
                     ctx_array = ctx_array[..., np.newaxis]
                 # Resize context tile if spatial dims don't match (edge tiles near image boundary)
-                if ctx_array.shape[0] != img_array.shape[0] or ctx_array.shape[1] != img_array.shape[1]:
+                if (
+                    ctx_array.shape[0] != img_array.shape[0]
+                    or ctx_array.shape[1] != img_array.shape[1]
+                ):
                     from PIL import Image as _PILResize
+
                     h, w = img_array.shape[:2]
                     resized = []
                     for c in range(ctx_array.shape[2]):
@@ -1327,7 +1379,9 @@ class SegmentationDataset(Dataset):
                 # Concatenate detail + context along channel axis: (H,W,C) + (H,W,C) -> (H,W,2C)
                 img_array = np.concatenate([img_array, ctx_array], axis=2)
             else:
-                logger.warning(f"Context tile not found: {ctx_path}, duplicating detail tile")
+                logger.warning(
+                    f"Context tile not found: {ctx_path}, duplicating detail tile"
+                )
                 img_array = np.concatenate([img_array, img_array], axis=2)
 
         # Normalize BEFORE augmentation
@@ -1377,15 +1431,16 @@ class SegmentationDataset(Dataset):
         - .png and others: Standard formats via PIL
         """
         suffix = img_path.suffix.lower()
-        if suffix == '.raw':
-            with open(img_path, 'rb') as f:
+        if suffix == ".raw":
+            with open(img_path, "rb") as f:
                 header = np.frombuffer(f.read(12), dtype=np.int32)
                 h, w, c = int(header[0]), int(header[1]), int(header[2])
                 data = np.frombuffer(f.read(), dtype=np.float32)
             return data.reshape(h, w, c).copy()
-        if suffix in ('.tif', '.tiff'):
+        if suffix in (".tif", ".tiff"):
             try:
                 import tifffile
+
                 arr = tifffile.imread(str(img_path)).astype(np.float32)
                 # tifffile may return (C,H,W) for multi-channel; convert to HWC
                 if arr.ndim == 3 and arr.shape[0] < arr.shape[2]:
@@ -1405,8 +1460,10 @@ def _validate_mae_architecture(pretrained_path, architecture, log):
     """
     meta_path = Path(pretrained_path).parent / "metadata.json"
     if not meta_path.exists():
-        log.info("No metadata.json next to pretrained model -- "
-                 "skipping architecture validation")
+        log.info(
+            "No metadata.json next to pretrained model -- "
+            "skipping architecture validation"
+        )
         return
     try:
         with open(meta_path) as f:
@@ -1417,38 +1474,51 @@ def _validate_mae_architecture(pretrained_path, architecture, log):
     mae_arch = mae_meta.get("architecture", {})
     # Compare model_config
     mae_cfg = mae_arch.get("model_config", "")
-    seg_cfg = architecture.get("model_config",
-                               architecture.get("backbone", ""))
+    seg_cfg = architecture.get("model_config", architecture.get("backbone", ""))
     if mae_cfg and seg_cfg and mae_cfg != seg_cfg:
-        log.warning("MAE pretrained with model_config='%s' but "
-                    "segmentation uses '%s'. Layer counts differ -- "
-                    "encoder weights may not transfer.",
-                    mae_cfg, seg_cfg)
+        log.warning(
+            "MAE pretrained with model_config='%s' but "
+            "segmentation uses '%s'. Layer counts differ -- "
+            "encoder weights may not transfer.",
+            mae_cfg,
+            seg_cfg,
+        )
     # Compare patch_size
     mae_ps = mae_arch.get("patch_size")
     seg_ps = architecture.get("patch_size")
     if mae_ps and seg_ps and int(mae_ps) != int(seg_ps):
-        log.warning("MAE pretrained with patch_size=%d but "
-                    "segmentation uses %d.", int(mae_ps), int(seg_ps))
+        log.warning(
+            "MAE pretrained with patch_size=%d but " "segmentation uses %d.",
+            int(mae_ps),
+            int(seg_ps),
+        )
     # Compare level_scales
     mae_ls = str(mae_arch.get("level_scales", ""))
     seg_ls = str(architecture.get("level_scales", ""))
     if mae_ls and seg_ls and mae_ls != seg_ls:
-        log.warning("MAE pretrained with level_scales='%s' but "
-                    "segmentation uses '%s'.", mae_ls, seg_ls)
+        log.warning(
+            "MAE pretrained with level_scales='%s' but " "segmentation uses '%s'.",
+            mae_ls,
+            seg_ls,
+        )
     # Compare input_channels
     mae_ch = mae_arch.get("input_channels")
-    seg_ch = architecture.get("input_channels",
-                              architecture.get("num_channels"))
+    seg_ch = architecture.get("input_channels", architecture.get("num_channels"))
     if mae_ch and seg_ch and int(mae_ch) != int(seg_ch):
-        log.warning("MAE pretrained with %d channels but "
-                    "segmentation uses %d.", int(mae_ch), int(seg_ch))
+        log.warning(
+            "MAE pretrained with %d channels but " "segmentation uses %d.",
+            int(mae_ch),
+            int(seg_ch),
+        )
     # Compare rope_mode
     mae_rope = mae_arch.get("rope_mode")
     seg_rope = architecture.get("rope_mode")
     if mae_rope and seg_rope and mae_rope != seg_rope:
-        log.warning("MAE pretrained with rope_mode='%s' but "
-                    "segmentation uses '%s'.", mae_rope, seg_rope)
+        log.warning(
+            "MAE pretrained with rope_mode='%s' but " "segmentation uses '%s'.",
+            mae_rope,
+            seg_rope,
+        )
 
 
 class TrainingService:
@@ -1465,11 +1535,7 @@ class TrainingService:
     - Support for CUDA, Apple MPS, and CPU
     """
 
-    def __init__(
-        self,
-        device: str = "auto",
-        gpu_manager: Optional[GPUManager] = None
-    ):
+    def __init__(self, device: str = "auto", gpu_manager: Optional[GPUManager] = None):
         """Initialize training service.
 
         Args:
@@ -1500,7 +1566,7 @@ class TrainingService:
         checkpoint_path: Optional[str] = None,
         start_epoch: int = 0,
         setup_callback: Optional[Callable] = None,
-        pretrained_model_path: Optional[str] = None
+        pretrained_model_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Train a model.
 
@@ -1557,7 +1623,7 @@ class TrainingService:
                 checkpoint_path=checkpoint_path,
                 start_epoch=start_epoch,
                 setup_callback=setup_callback,
-                pretrained_model_path=pretrained_model_path
+                pretrained_model_path=pretrained_model_path,
             )
         except BaseException as exc:
             # On CUDA OOM, the exception's traceback keeps _run_training()'s
@@ -1567,6 +1633,7 @@ class TrainingService:
             # For non-OOM errors, just do normal cleanup and re-raise.
             if "OutOfMemory" in type(exc).__name__:
                 import traceback as _tb
+
                 error_text = _tb.format_exc()
                 exc.__traceback__ = None
                 self._cleanup_training_memory()
@@ -1586,6 +1653,7 @@ class TrainingService:
         can delete its own local variables.
         """
         import gc
+
         gc.collect()
         self.gpu_manager.clear_cache()
         self.gpu_manager.log_memory_status(prefix="Training cleanup: ")
@@ -1605,7 +1673,7 @@ class TrainingService:
         checkpoint_path: Optional[str] = None,
         start_epoch: int = 0,
         setup_callback: Optional[Callable] = None,
-        pretrained_model_path: Optional[str] = None
+        pretrained_model_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Internal training implementation. Called by train() with cleanup guarantee."""
 
@@ -1613,6 +1681,7 @@ class TrainingService:
         seed = training_params.get("seed", None)
         if seed is not None:
             import random
+
             random.seed(seed)
             np.random.seed(seed)
             torch.manual_seed(seed)
@@ -1635,17 +1704,21 @@ class TrainingService:
         base_channels = input_config["num_channels"]
         effective_channels = base_channels * 2 if context_scale > 1 else base_channels
         if effective_channels != base_channels:
-            logger.info(f"Context scale {context_scale}: model input channels "
-                        f"{base_channels} -> {effective_channels} (detail + context)")
+            logger.info(
+                f"Context scale {context_scale}: model input channels "
+                f"{base_channels} -> {effective_channels} (detail + context)"
+            )
 
         # Log context padding if present (real-data border around training tiles)
         context_padding = input_config.get("context_padding", 0)
         if context_padding > 0:
             patch_size = architecture.get("input_size", [512, 512])[0]
-            logger.info("Context padding: %dpx per side (effective tile: %dx%d)",
-                        context_padding,
-                        patch_size + 2 * context_padding,
-                        patch_size + 2 * context_padding)
+            logger.info(
+                "Context padding: %dpx per side (effective tile: %dx%d)",
+                context_padding,
+                patch_size + 2 * context_padding,
+                patch_size + 2 * context_padding,
+            )
 
         # Create model with optional frozen layers.
         #
@@ -1659,10 +1732,11 @@ class TrainingService:
             model_type=model_type,
             architecture=architecture,
             num_channels=effective_channels,
-            num_classes=len(classes)
+            num_classes=len(classes),
         )
         if frozen_layers:
             from .pretrained_models import get_pretrained_service
+
             pretrained_service = get_pretrained_service()
             pretrained_service.apply_frozen_layers(
                 model, frozen_layers, effective_channels
@@ -1687,7 +1761,8 @@ class TrainingService:
         logger.info(
             "Spatial auto-pad divisor for %s: %d (tile+context will be "
             "reflection-padded to the next multiple if necessary)",
-            model_type, spatial_divisor,
+            model_type,
+            spatial_divisor,
         )
 
         # torch.compile (opt-in, experimental).  Gated on Linux + CUDA +
@@ -1707,15 +1782,19 @@ class TrainingService:
             try:
                 pt_path = Path(pretrained_model_path)
                 if not pt_path.exists():
-                    logger.warning("Pretrained model not found: %s -- "
-                                   "training from scratch.",
-                                   pretrained_model_path)
+                    logger.warning(
+                        "Pretrained model not found: %s -- " "training from scratch.",
+                        pretrained_model_path,
+                    )
                 else:
-                    logger.info("Loading pretrained weights from: %s",
-                                pretrained_model_path)
-                    saved = torch.load(pretrained_model_path,
-                                       map_location=self.device,
-                                       weights_only=True)
+                    logger.info(
+                        "Loading pretrained weights from: %s", pretrained_model_path
+                    )
+                    saved = torch.load(
+                        pretrained_model_path,
+                        map_location=self.device,
+                        weights_only=True,
+                    )
 
                     # Handle both bare state_dict and
                     # {"model_state_dict": ...} checkpoint format
@@ -1728,19 +1807,19 @@ class TrainingService:
                     # encoder keys (mae.encoder.* -> encoder.*) match the
                     # MuViTSegmentation model's state_dict.
                     mae_prefix = "mae."
-                    has_mae_keys = any(
-                        k.startswith(mae_prefix) for k in state_dict)
+                    has_mae_keys = any(k.startswith(mae_prefix) for k in state_dict)
                     if has_mae_keys:
                         logger.info(
                             "Detected MAE checkpoint -- stripping 'mae.' "
-                            "prefix for encoder weight transfer.")
+                            "prefix for encoder weight transfer."
+                        )
                         state_dict = {
-                            (k[len(mae_prefix):]
-                             if k.startswith(mae_prefix) else k): v
+                            (k[len(mae_prefix) :] if k.startswith(mae_prefix) else k): v
                             for k, v in state_dict.items()
                         }
                         _validate_mae_architecture(
-                            pretrained_model_path, architecture, logger)
+                            pretrained_model_path, architecture, logger
+                        )
 
                     # Shape-aware key matching
                     model_state = model.state_dict()
@@ -1755,22 +1834,27 @@ class TrainingService:
                                 logger.warning(
                                     "  Shape mismatch '%s': "
                                     "pretrained=%s vs model=%s -- skipping",
-                                    key, list(state_dict[key].shape),
-                                    list(model_state[key].shape))
+                                    key,
+                                    list(state_dict[key].shape),
+                                    list(model_state[key].shape),
+                                )
 
                     # Build filtered state dict with only shape-compatible keys
                     filtered_state = {k: state_dict[k] for k in matched_keys}
                     model.load_state_dict(filtered_state, strict=False)
 
                     # Diagnostics
-                    enc_loaded = sum(
-                        1 for k in matched_keys if k.startswith("encoder"))
+                    enc_loaded = sum(1 for k in matched_keys if k.startswith("encoder"))
                     logger.info(
                         "Loaded %d/%d weight tensors (%d encoder keys)",
-                        len(matched_keys), len(model_state), enc_loaded)
+                        len(matched_keys),
+                        len(model_state),
+                        enc_loaded,
+                    )
                     if mismatched_keys:
-                        logger.info("  Skipped %d shape-mismatched keys",
-                                    len(mismatched_keys))
+                        logger.info(
+                            "  Skipped %d shape-mismatched keys", len(mismatched_keys)
+                        )
 
                     # Critical warning if encoder transfer failed
                     if enc_loaded == 0:
@@ -1779,7 +1863,8 @@ class TrainingService:
                             "model! ***  The pretrained weights were NOT "
                             "applied to the encoder. Check that architecture "
                             "configs match. Training will proceed from "
-                            "random initialization.")
+                            "random initialization."
+                        )
                     elif not architecture.get("use_pretrained", False):
                         # Defense in depth: if any pretrained encoder weights
                         # were successfully loaded, make sure the downstream
@@ -1792,11 +1877,14 @@ class TrainingService:
                         logger.info(
                             "Pretrained weights loaded successfully; "
                             "forcing use_pretrained=True so discriminative "
-                            "LRs are applied during optimizer setup.")
+                            "LRs are applied during optimizer setup."
+                        )
                         architecture["use_pretrained"] = True
             except Exception as e:
-                logger.warning("Failed to load pretrained weights: %s -- "
-                               "training from scratch", e)
+                logger.warning(
+                    "Failed to load pretrained weights: %s -- " "training from scratch",
+                    e,
+                )
 
         # Create datasets
         _report_setup("loading_data")
@@ -1811,11 +1899,7 @@ class TrainingService:
         # InferenceService which uses a torch.device instance.
         use_gpu_aug = bool(training_params.get("gpu_augmentation", False))
         device_str = self.device if isinstance(self.device, str) else self.device.type
-        gpu_augment_on_cuda = (
-            use_gpu_aug
-            and KORNIA_AVAILABLE
-            and device_str == "cuda"
-        )
+        gpu_augment_on_cuda = use_gpu_aug and KORNIA_AVAILABLE and device_str == "cuda"
         if use_gpu_aug and not KORNIA_AVAILABLE:
             logger.warning(
                 "gpu_augmentation requested but kornia is not installed; "
@@ -1829,8 +1913,7 @@ class TrainingService:
                 self.device,
             )
         gpu_augment = (
-            build_gpu_augmentation(augmentation_config)
-            if gpu_augment_on_cuda else None
+            build_gpu_augmentation(augmentation_config) if gpu_augment_on_cuda else None
         )
         if gpu_augment is not None:
             logger.info(
@@ -1848,13 +1931,14 @@ class TrainingService:
                 train_context_dir = str(train_ctx)
                 logger.info(f"Multi-scale context enabled (scale={context_scale})")
             else:
-                logger.warning(f"context_scale={context_scale} but no context/ directory found")
+                logger.warning(
+                    f"context_scale={context_scale} but no context/ directory found"
+                )
             if val_ctx.exists():
                 val_context_dir = str(val_ctx)
 
         cpu_augment_enabled = (
-            training_params.get("augmentation", True)
-            and gpu_augment is None
+            training_params.get("augmentation", True) and gpu_augment is None
         )
         train_dataset = SegmentationDataset(
             images_dir=str(data_path / "train" / "images"),
@@ -1862,7 +1946,7 @@ class TrainingService:
             input_config=input_config,
             augment=cpu_augment_enabled,
             augmentation_config=augmentation_config,
-            context_dir=train_context_dir
+            context_dir=train_context_dir,
         )
 
         val_dataset = SegmentationDataset(
@@ -1870,7 +1954,7 @@ class TrainingService:
             masks_dir=str(data_path / "validation" / "masks"),
             input_config=input_config,
             augment=False,  # Never augment validation
-            context_dir=val_context_dir
+            context_dir=val_context_dir,
         )
 
         # Validate datasets before proceeding
@@ -1921,7 +2005,7 @@ class TrainingService:
                 "BatchNorm statistics will be very noisy. "
                 "Consider batch_size >= 4, or use pretrained weights "
                 "(which freeze encoder BN to pretrained running stats).",
-                batch_size_requested
+                batch_size_requested,
             )
         if batch_size_requested <= 2 and _accum > 1:
             logger.warning(
@@ -1930,8 +2014,9 @@ class TrainingService:
                 "forward pass (batch_size=%d), not per optimizer step "
                 "(effective_batch=%d). Consider increasing batch_size "
                 "instead of accumulation_steps for better BN stats.",
-                _accum, batch_size_requested,
-                batch_size_requested * _accum
+                _accum,
+                batch_size_requested,
+                batch_size_requested * _accum,
             )
 
         # Compute dataset-level normalization statistics for consistent inference
@@ -1951,8 +2036,12 @@ class TrainingService:
                         if ctx_arr.ndim == 2:
                             ctx_arr = ctx_arr[..., np.newaxis]
                         # Resize context if spatial dims differ (edge tiles)
-                        if ctx_arr.shape[0] != img_arr.shape[0] or ctx_arr.shape[1] != img_arr.shape[1]:
+                        if (
+                            ctx_arr.shape[0] != img_arr.shape[0]
+                            or ctx_arr.shape[1] != img_arr.shape[1]
+                        ):
                             from PIL import Image as _PILResize
+
                             h, w = img_arr.shape[:2]
                             resized = []
                             for c in range(ctx_arr.shape[2]):
@@ -1964,22 +2053,36 @@ class TrainingService:
                 train_images.append(img_arr)
 
             # Use actual channel count (includes context channels if present)
-            stats_channels = train_images[0].shape[2] if train_images else input_config["num_channels"]
+            stats_channels = (
+                train_images[0].shape[2]
+                if train_images
+                else input_config["num_channels"]
+            )
             dataset_norm_stats = compute_dataset_stats(
                 train_images, num_channels=stats_channels
             )
-            logger.info(f"Computed dataset normalization stats from "
-                        f"{len(train_images)} training patches ({stats_channels} channels)")
+            logger.info(
+                f"Computed dataset normalization stats from "
+                f"{len(train_images)} training patches ({stats_channels} channels)"
+            )
         except Exception as e:
-            logger.warning(f"Failed to compute dataset normalization stats: {e}. "
-                           f"Using default [0, 255] range stats.")
+            logger.warning(
+                f"Failed to compute dataset normalization stats: {e}. "
+                f"Using default [0, 255] range stats."
+            )
             # Provide default stats so metadata always has normalization_stats.
             # Consumers need this to build the model correctly; a missing field
             # causes silent failures in external programs.
             num_ch = effective_channels
             dataset_norm_stats = [
-                {"p1": 0.0, "p99": 255.0, "min": 0.0, "max": 255.0,
-                 "mean": 127.5, "std": 73.9}
+                {
+                    "p1": 0.0,
+                    "p99": 255.0,
+                    "min": 0.0,
+                    "max": 255.0,
+                    "mean": 127.5,
+                    "std": 73.9,
+                }
                 for _ in range(num_ch)
             ]
 
@@ -1999,15 +2102,15 @@ class TrainingService:
         # (section 6 of the 2026-04-19 interaction table) documents
         # this; InMemoryCacheWorkersWatcher reports the downgrade to
         # users via the GUI.
-        _cache_mode = str(training_params.get(
-            "in_memory_dataset", "auto")).lower()
+        _cache_mode = str(training_params.get("in_memory_dataset", "auto")).lower()
         if _cache_mode in ("auto", "on") and dl_workers > 0:
             logger.info(
                 "Forcing data_loader_workers=0 because in-memory "
                 "dataset cache is active (requested %d workers). On "
                 "Windows/Appose each worker would pickle a copy of "
                 "the cache, multiplying RAM usage. Disable the cache "
-                "if you need multiple workers.", dl_workers,
+                "if you need multiple workers.",
+                dl_workers,
             )
             dl_workers = 0
         train_loader = DataLoader(
@@ -2033,11 +2136,11 @@ class TrainingService:
             _class_patch_counts = np.zeros(len(classes), dtype=np.int64)
             _sample_count = min(len(train_dataset), 500)
             for _i in range(_sample_count):
-                _mask_path = (train_dataset.masks_dir /
-                              train_dataset.image_files[_i].name)
+                _mask_path = (
+                    train_dataset.masks_dir / train_dataset.image_files[_i].name
+                )
                 if _mask_path.exists():
-                    _mask = np.array(
-                        SegmentationDataset._load_patch(_mask_path))
+                    _mask = np.array(SegmentationDataset._load_patch(_mask_path))
                     for _c in range(len(classes)):
                         _px = int((_mask == _c).sum())
                         _class_pixel_counts[_c] += _px
@@ -2048,9 +2151,11 @@ class TrainingService:
                 _class_dist = {
                     classes[c]: {
                         "pixel_pct": round(
-                            100.0 * _class_pixel_counts[c] / _total_px, 1),
+                            100.0 * _class_pixel_counts[c] / _total_px, 1
+                        ),
                         "patch_pct": round(
-                            100.0 * _class_patch_counts[c] / _sample_count, 1),
+                            100.0 * _class_patch_counts[c] / _sample_count, 1
+                        ),
                     }
                     for c in range(len(classes))
                 }
@@ -2065,8 +2170,10 @@ class TrainingService:
         total_params = sum(p.numel() for p in model.parameters())
         trainable_count = sum(p.numel() for p in trainable_params)
 
-        logger.info(f"Model parameters: {total_params:,} total, {trainable_count:,} trainable "
-                   f"({100*trainable_count/total_params:.1f}%)")
+        logger.info(
+            f"Model parameters: {total_params:,} total, {trainable_count:,} trainable "
+            f"({100*trainable_count/total_params:.1f}%)"
+        )
 
         learning_rate = training_params.get("learning_rate", 0.0001)
         weight_decay = training_params.get("weight_decay", 0.01)
@@ -2081,9 +2188,11 @@ class TrainingService:
             "discriminative_lr_ratio",
             architecture.get("discriminative_lr_ratio", 0.1),
         )
-        param_groups = self._create_param_groups(
-            model, learning_rate, discriminative_lr_ratio
-        ) if (use_pretrained or has_frozen) else None
+        param_groups = (
+            self._create_param_groups(model, learning_rate, discriminative_lr_ratio)
+            if (use_pretrained or has_frozen)
+            else None
+        )
 
         # Fused AdamW: single CUDA kernel for the param update, saves 2-5 ms/step
         # on tiny models. Safe since PyTorch 2.0 but requires all params on the
@@ -2102,25 +2211,31 @@ class TrainingService:
         if param_groups:
             optimizer = torch.optim.AdamW(
                 param_groups,
-                betas=(0.9, 0.99), eps=1e-5,
+                betas=(0.9, 0.99),
+                eps=1e-5,
                 weight_decay=weight_decay,
                 **fused_kwargs,
             )
             lr_parts = " ".join(
                 f"{g.get('group_name', '?')}={g['lr']:.6f}" for g in param_groups
             )
-            logger.info(f"Using AdamW with discriminative LRs (ratio={discriminative_lr_ratio}, "
-                       f"fused={use_fused}): {lr_parts}")
+            logger.info(
+                f"Using AdamW with discriminative LRs (ratio={discriminative_lr_ratio}, "
+                f"fused={use_fused}): {lr_parts}"
+            )
         else:
             optimizer = torch.optim.AdamW(
                 trainable_params,
                 lr=learning_rate,
-                betas=(0.9, 0.99), eps=1e-5,
+                betas=(0.9, 0.99),
+                eps=1e-5,
                 weight_decay=weight_decay,
                 **fused_kwargs,
             )
-            logger.info(f"Using AdamW optimizer (lr={learning_rate}, wd={weight_decay}, "
-                       f"betas=(0.9, 0.99), eps=1e-5, fused={use_fused})")
+            logger.info(
+                f"Using AdamW optimizer (lr={learning_rate}, wd={weight_decay}, "
+                f"betas=(0.9, 0.99), eps=1e-5, fused={use_fused})"
+            )
 
         # Scheduler setup is deferred until after criterion is created (LR finder needs it)
         epochs = training_params.get("epochs", 50)
@@ -2136,11 +2251,15 @@ class TrainingService:
         focus_class = training_params.get("focus_class", None)
         focus_class_min_iou = training_params.get("focus_class_min_iou", 0.0)
         if focus_class:
-            logger.info(f"Focus class '{focus_class}' IoU will be used for "
-                       f"best-model checkpoint selection")
+            logger.info(
+                f"Focus class '{focus_class}' IoU will be used for "
+                f"best-model checkpoint selection"
+            )
             if focus_class_min_iou > 0:
-                logger.info(f"  Min IoU threshold: {focus_class_min_iou:.2f} "
-                           f"-- early stopping suppressed until reached")
+                logger.info(
+                    f"  Min IoU threshold: {focus_class_min_iou:.2f} "
+                    f"-- early stopping suppressed until reached"
+                )
 
         # Limited-data classes: those with too few source slides for their
         # val IoU to be a reliable signal (see ImageClassCoverageSplitter
@@ -2151,10 +2270,14 @@ class TrainingService:
         # epoch and best-epoch ends up wherever the limited class got
         # lucky -- not where the overall model is best.
         _ldc_raw = training_params.get("limited_data_classes") or []
-        limited_data_classes = set(_ldc_raw) if isinstance(_ldc_raw, (list, tuple, set)) else set()
+        limited_data_classes = (
+            set(_ldc_raw) if isinstance(_ldc_raw, (list, tuple, set)) else set()
+        )
         if limited_data_classes:
-            logger.info(f"Limited-data classes excluded from best-epoch / early-stopping "
-                       f"selection: {sorted(limited_data_classes)}")
+            logger.info(
+                f"Limited-data classes excluded from best-epoch / early-stopping "
+                f"selection: {sorted(limited_data_classes)}"
+            )
 
         if training_params.get("early_stopping", True):
             # Early-stopping mode follows the ES metric, NOT focus_class.
@@ -2164,10 +2287,12 @@ class TrainingService:
                 patience=training_params.get("early_stopping_patience", 15),
                 min_delta=training_params.get("early_stopping_min_delta", 0.001),
                 restore_best_weights=True,
-                mode=es_mode
+                mode=es_mode,
             )
-            logger.info(f"Early stopping enabled: metric={early_stopping_metric}, "
-                       f"mode={es_mode}, patience={early_stopping.patience}")
+            logger.info(
+                f"Early stopping enabled: metric={early_stopping_metric}, "
+                f"mode={es_mode}, patience={early_stopping.patience}"
+            )
 
         # Load class weights and unlabeled index from exported config
         unlabeled_index = 255
@@ -2179,7 +2304,9 @@ class TrainingService:
             unlabeled_index = export_config.get("unlabeled_index", 255)
             weights_list = export_config.get("class_weights", None)
             if weights_list:
-                class_weights = torch.tensor(weights_list, dtype=torch.float32).to(self.device)
+                class_weights = torch.tensor(weights_list, dtype=torch.float32).to(
+                    self.device
+                )
                 logger.info(f"Using class weights: {weights_list}")
 
         loss_function = training_params.get("loss_function", "ce_dice")
@@ -2196,7 +2323,8 @@ class TrainingService:
         # skip the warm-up phase when continuing from an existing model that
         # has already learned easy pixels.
         ohem_hard_ratio_start = training_params.get(
-            "ohem_hard_ratio_start", ohem_hard_ratio)
+            "ohem_hard_ratio_start", ohem_hard_ratio
+        )
         # Back-compat: old "fixed"/"anneal" schedule param still honored if
         # ohem_hard_ratio_start was not explicitly provided.  The default
         # anneal behavior used to start at 100% regardless of start value.
@@ -2211,8 +2339,7 @@ class TrainingService:
         # lets hard pixels concentrate on the worst-performing class (usually
         # the minority) while guaranteeing every class keeps some signal.
         # Default False preserves the legacy per-class proportional behavior.
-        ohem_adaptive_floor = bool(training_params.get(
-            "ohem_adaptive_floor", False))
+        ohem_adaptive_floor = bool(training_params.get("ohem_adaptive_floor", False))
 
         # Build the base pixel-level loss
         dice = DiceLoss(ignore_index=unlabeled_index)
@@ -2234,8 +2361,7 @@ class TrainingService:
             logger.info(f"Using Focal loss (gamma={focal_gamma})")
         elif loss_function == "ce_dice":
             criterion = CombinedCEDiceLoss(
-                class_weights=class_weights,
-                ignore_index=unlabeled_index
+                class_weights=class_weights, ignore_index=unlabeled_index
             )
             logger.info("Using Combined CE + Dice loss")
         elif loss_function == "boundary_ce":
@@ -2247,7 +2373,8 @@ class TrainingService:
             )
             logger.info(
                 "Using Boundary-softened CE (sigma=%.2f, w_min=%.2f)",
-                boundary_sigma, boundary_w_min,
+                boundary_sigma,
+                boundary_w_min,
             )
         elif loss_function == "boundary_ce_dice":
             criterion = BoundarySoftenedCEDiceLoss(
@@ -2258,7 +2385,8 @@ class TrainingService:
             )
             logger.info(
                 "Using Boundary-softened CE + Dice (sigma=%.2f, w_min=%.2f)",
-                boundary_sigma, boundary_w_min,
+                boundary_sigma,
+                boundary_w_min,
             )
         elif loss_function == "lovasz":
             criterion = LovaszSoftmaxLoss(
@@ -2277,8 +2405,7 @@ class TrainingService:
             logger.info("Using Combined CE + Lovasz-Softmax loss")
         else:
             criterion = nn.CrossEntropyLoss(
-                weight=class_weights,
-                ignore_index=unlabeled_index
+                weight=class_weights, ignore_index=unlabeled_index
             )
             logger.info("Using CrossEntropy loss")
 
@@ -2298,7 +2425,8 @@ class TrainingService:
             logger.info(
                 "OHEM disabled: loss_function=%s (Lovasz) is a sorted-"
                 "errors surrogate and does not compose with hard-pixel "
-                "selection.", loss_function,
+                "selection.",
+                loss_function,
             )
         if ohem_hard_ratio < 1.0 and not _ohem_incompatible:
             if _ohem_boundary:
@@ -2317,27 +2445,37 @@ class TrainingService:
                     criterion = ohem_pixel
                 sched_note = ""
                 if _ohem_anneals:
-                    sched_note = (f" [anneal: {ohem_hard_ratio_start * 100:.0f}%"
-                                  f" -> {ohem_hard_ratio * 100:.0f}%"
-                                  f" over first 75% of epochs]")
+                    sched_note = (
+                        f" [anneal: {ohem_hard_ratio_start * 100:.0f}%"
+                        f" -> {ohem_hard_ratio * 100:.0f}%"
+                        f" over first 75% of epochs]"
+                    )
                     ohem_pixel.hard_ratio = ohem_hard_ratio_start
                 mode_note = " (adaptive per-class floor)" if ohem_adaptive_floor else ""
                 logger.info(
                     "OHEM + boundary softening active: keeping hardest "
                     "%.0f%%%% of boundary-weighted losses "
                     "(sigma=%.2f, w_min=%.2f)%s%s",
-                    ohem_hard_ratio * 100, boundary_sigma, boundary_w_min,
-                    mode_note, sched_note,
+                    ohem_hard_ratio * 100,
+                    boundary_sigma,
+                    boundary_w_min,
+                    mode_note,
+                    sched_note,
                 )
             elif isinstance(criterion, (_CombinedPixelDiceLoss, CombinedCEDiceLoss)):
                 # Replace the pixel-loss component with OHEM-wrapped version.
                 # For Focal variants, use OHEMFocalLoss so focal_gamma is
                 # preserved inside the top-K selection (weight-first,
                 # then select).
+                # inner_pixel is currently unused; OHEMFocalLoss /
+                # OHEMCrossEntropyLoss build their own per-pixel loss
+                # internally rather than wrapping the criterion's existing
+                # one. Kept here as documentation of which inner loss the
+                # OHEM wrapper conceptually replaces.
                 if isinstance(criterion, _CombinedPixelDiceLoss):
-                    inner_pixel = criterion.pixel_loss
+                    inner_pixel = criterion.pixel_loss  # noqa: F841
                 else:
-                    inner_pixel = criterion.ce_loss
+                    inner_pixel = criterion.ce_loss  # noqa: F841
                 if loss_function in ("focal", "focal_dice"):
                     ohem_pixel = OHEMFocalLoss(
                         gamma=focal_gamma,
@@ -2356,9 +2494,11 @@ class TrainingService:
                 criterion = _CombinedPixelDiceLoss(ohem_pixel, dice)
                 sched_note = ""
                 if _ohem_anneals:
-                    sched_note = (f" [anneal: {ohem_hard_ratio_start * 100:.0f}%"
-                                  f" -> {ohem_hard_ratio * 100:.0f}%"
-                                  f" over first 75% of epochs]")
+                    sched_note = (
+                        f" [anneal: {ohem_hard_ratio_start * 100:.0f}%"
+                        f" -> {ohem_hard_ratio * 100:.0f}%"
+                        f" over first 75% of epochs]"
+                    )
                     # Seed the OHEM module at the start value so the first
                     # epoch actually begins at ohem_hard_ratio_start rather
                     # than the configured end value.
@@ -2392,9 +2532,11 @@ class TrainingService:
                     criterion.hard_ratio = ohem_hard_ratio_start
                 sched_note = ""
                 if _ohem_anneals:
-                    sched_note = (f" [anneal: {ohem_hard_ratio_start * 100:.0f}%"
-                                  f" -> {ohem_hard_ratio * 100:.0f}%"
-                                  f" over first 75% of epochs]")
+                    sched_note = (
+                        f" [anneal: {ohem_hard_ratio_start * 100:.0f}%"
+                        f" -> {ohem_hard_ratio * 100:.0f}%"
+                        f" over first 75% of epochs]"
+                    )
                 mode_note = " (adaptive per-class floor)" if ohem_adaptive_floor else ""
                 logger.info(
                     f"OHEM active: keeping hardest {ohem_hard_ratio * 100:.0f}%%"
@@ -2412,9 +2554,13 @@ class TrainingService:
         # we use a heuristic max_lr = base_lr * sqrt(batch_size / 8) so OneCycleLR
         # has a reasonable peak.  Saves ~10s of presweep time for tiny models.
         use_lr_finder = training_params.get("use_lr_finder", True)
-        if (scheduler_type == "onecycle" and checkpoint_path is None
-                and not use_lr_finder):
+        if (
+            scheduler_type == "onecycle"
+            and checkpoint_path is None
+            and not use_lr_finder
+        ):
             import math as _math
+
             heuristic_lr = learning_rate * _math.sqrt(
                 max(1, training_params.get("batch_size", 8)) / 8.0
             )
@@ -2422,17 +2568,17 @@ class TrainingService:
             logger.info(
                 "LR Finder disabled, using heuristic max_lr=%.6f (base_lr=%.6f, "
                 "batch_size=%d)",
-                heuristic_lr, learning_rate,
+                heuristic_lr,
+                learning_rate,
                 training_params.get("batch_size", 8),
             )
 
-        if (scheduler_type == "onecycle" and checkpoint_path is None
-                and use_lr_finder):
+        if scheduler_type == "onecycle" and checkpoint_path is None and use_lr_finder:
             _report_setup("finding_learning_rate")
             try:
                 suggested_lr, finder_lrs, finder_losses = self.find_learning_rate(
-                    model, train_loader, criterion,
-                    spatial_divisor=spatial_divisor)
+                    model, train_loader, criterion, spatial_divisor=spatial_divisor
+                )
                 # Guard rails: reject suggestions that are too small or too large.
                 # Cap at both an absolute ceiling (0.01) and a relative ceiling
                 # (10x the user's specified lr).  The relative cap prevents the
@@ -2446,7 +2592,10 @@ class TrainingService:
                             "LR Finder suggested lr=%.4f which exceeds "
                             "safety ceiling (%.4f). Capping to %.4f to "
                             "prevent divergence.",
-                            suggested_lr, max_reasonable_lr, max_reasonable_lr)
+                            suggested_lr,
+                            max_reasonable_lr,
+                            max_reasonable_lr,
+                        )
                         suggested_lr = max_reasonable_lr
                     logger.info(f"LR Finder suggested lr={suggested_lr:.6f}")
                     scheduler_config["max_lr"] = suggested_lr
@@ -2454,7 +2603,8 @@ class TrainingService:
                     logger.warning(
                         f"LR Finder suggested lr={suggested_lr:.2e} is below"
                         f" floor ({min_reasonable_lr:.0e}), using base lr"
-                        f" {learning_rate:.6f} instead")
+                        f" {learning_rate:.6f} instead"
+                    )
                 else:
                     logger.info("LR Finder could not suggest LR, using default max_lr")
             except Exception as e:
@@ -2476,14 +2626,15 @@ class TrainingService:
 
         # Setup mixed precision training with BF16 auto-detection
         use_mixed_precision = (
-            training_params.get("mixed_precision", True)
-            and self.device == "cuda"
+            training_params.get("mixed_precision", True) and self.device == "cuda"
         )
         use_bf16 = use_mixed_precision and torch.cuda.is_bf16_supported()
         amp_dtype = torch.bfloat16 if use_bf16 else torch.float16
         # BF16 doesn't need a GradScaler (wider dynamic range avoids underflow)
-        scaler = None if use_bf16 else (
-            torch.amp.GradScaler("cuda") if use_mixed_precision else None
+        scaler = (
+            None
+            if use_bf16
+            else (torch.amp.GradScaler("cuda") if use_mixed_precision else None)
         )
         if use_mixed_precision:
             dtype_name = "BF16" if use_bf16 else "FP16"
@@ -2491,7 +2642,9 @@ class TrainingService:
 
         # Determine best-model tracking mode (same metric as early stopping)
         # When focus class is set, always use "max" mode (higher IoU is better)
-        best_score_mode = "max" if (focus_class or early_stopping_metric == "mean_iou") else "min"
+        best_score_mode = (
+            "max" if (focus_class or early_stopping_metric == "mean_iou") else "min"
+        )
         best_score = float("-inf") if best_score_mode == "max" else float("inf")
         best_model_state = None
         training_history = []
@@ -2501,8 +2654,10 @@ class TrainingService:
         # false positives -- those classes were already flagged at split
         # time and have a known data-availability ceiling.
         from .training_diagnostics import TrainingDiagnostics
+
         _diagnostics = TrainingDiagnostics(
-            classes=classes, limited_data_classes=limited_data_classes)
+            classes=classes, limited_data_classes=limited_data_classes
+        )
 
         def _is_best(current, best):
             if best_score_mode == "max":
@@ -2512,7 +2667,9 @@ class TrainingService:
         # Restore from checkpoint if resuming
         if checkpoint_path:
             _report_setup("loading_checkpoint")
-            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+            checkpoint = torch.load(
+                checkpoint_path, map_location=self.device, weights_only=False
+            )
             model.load_state_dict(checkpoint["model_state_dict"])
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
@@ -2525,7 +2682,8 @@ class TrainingService:
                     if remaining_steps > 0:
                         resume_config = training_params.get("scheduler_config", {})
                         max_lr = resume_config.get(
-                            "max_lr", optimizer.param_groups[0]["lr"] * 10)
+                            "max_lr", optimizer.param_groups[0]["lr"] * 10
+                        )
                         scheduler = OneCycleLR(
                             optimizer,
                             max_lr=max_lr,
@@ -2533,7 +2691,7 @@ class TrainingService:
                             pct_start=resume_config.get("pct_start", 0.3),
                             anneal_strategy=resume_config.get("anneal_strategy", "cos"),
                             div_factor=resume_config.get("div_factor", 25.0),
-                            final_div_factor=resume_config.get("final_div_factor", 1e4)
+                            final_div_factor=resume_config.get("final_div_factor", 1e4),
                         )
                 elif "scheduler_state_dict" in checkpoint:
                     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
@@ -2586,11 +2744,15 @@ class TrainingService:
                         param.requires_grad = False
                         frozen_count += 1
                 if frozen_count > 0:
-                    logger.info(f"Re-froze {frozen_count} parameters after "
-                                f"checkpoint resume ({len(frozen_layers)} layer groups)")
+                    logger.info(
+                        f"Re-froze {frozen_count} parameters after "
+                        f"checkpoint resume ({len(frozen_layers)} layer groups)"
+                    )
 
-            logger.info(f"Resumed from checkpoint at epoch {start_epoch}, "
-                       f"best_score={best_score:.4f}")
+            logger.info(
+                f"Resumed from checkpoint at epoch {start_epoch}, "
+                f"best_score={best_score:.4f}"
+            )
 
         # Progressive resizing: train at half-resolution first, then full
         progressive_resize = training_params.get("progressive_resize", False)
@@ -2599,9 +2761,11 @@ class TrainingService:
             phase1_end_epoch = max(1, int(epochs * 0.4))
             input_size = architecture.get("input_size", [512, 512])
             small_size = max(input_size[0] // 2, 64)
-            logger.info(f"Progressive resizing: phase 1 (epochs 1-{phase1_end_epoch}) "
-                       f"at {small_size}x{small_size}, phase 2 at "
-                       f"{input_size[0]}x{input_size[1]}")
+            logger.info(
+                f"Progressive resizing: phase 1 (epochs 1-{phase1_end_epoch}) "
+                f"at {small_size}x{small_size}, phase 2 at "
+                f"{input_size[0]}x{input_size[1]}"
+            )
 
             # Create half-resolution datasets using torchvision transforms
             from torchvision.transforms import InterpolationMode
@@ -2609,6 +2773,7 @@ class TrainingService:
 
             class ResizedDataset(Dataset):
                 """Wrapper that resizes images and masks to a target size."""
+
                 def __init__(self, base_dataset, target_size):
                     self.base = base_dataset
                     self.target_size = target_size
@@ -2619,25 +2784,35 @@ class TrainingService:
                 def __getitem__(self, idx):
                     image, mask = self.base[idx]
                     # image: (C, H, W), mask: (H, W)
-                    image = TF.resize(image, [self.target_size, self.target_size],
-                                      interpolation=InterpolationMode.BILINEAR,
-                                      antialias=True)
-                    mask = TF.resize(mask.unsqueeze(0),
-                                     [self.target_size, self.target_size],
-                                     interpolation=InterpolationMode.NEAREST
-                                     ).squeeze(0)
+                    image = TF.resize(
+                        image,
+                        [self.target_size, self.target_size],
+                        interpolation=InterpolationMode.BILINEAR,
+                        antialias=True,
+                    )
+                    mask = TF.resize(
+                        mask.unsqueeze(0),
+                        [self.target_size, self.target_size],
+                        interpolation=InterpolationMode.NEAREST,
+                    ).squeeze(0)
                     return image, mask
 
             small_train_dataset = ResizedDataset(train_dataset, small_size)
             small_val_dataset = ResizedDataset(val_dataset, small_size)
             small_train_loader = DataLoader(
-                small_train_dataset, batch_size=batch_size,
-                shuffle=True, num_workers=dl_workers,
-                persistent_workers=dl_workers > 0)
+                small_train_dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                num_workers=dl_workers,
+                persistent_workers=dl_workers > 0,
+            )
             small_val_loader = DataLoader(
-                small_val_dataset, batch_size=batch_size,
-                shuffle=False, num_workers=dl_workers,
-                persistent_workers=dl_workers > 0)
+                small_val_dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=dl_workers,
+                persistent_workers=dl_workers > 0,
+            )
 
             # Start with small loaders
             active_train_loader = small_train_loader
@@ -2650,22 +2825,26 @@ class TrainingService:
         try:
             backbone = architecture.get("backbone", "resnet34")
             input_size = architecture.get("input_size", [512, 512])
-            tile_size_str = (f"{input_size[0]}x{input_size[1]}"
-                            if isinstance(input_size, (list, tuple))
-                            else str(input_size))
+            tile_size_str = (
+                f"{input_size[0]}x{input_size[1]}"
+                if isinstance(input_size, (list, tuple))
+                else str(input_size)
+            )
 
             # Optimizer description
             if param_groups and len(param_groups) > 1:
-                optimizer_desc = (f"AdamW (wd={weight_decay}, betas=0.9/0.99)"
-                                  " [discriminative LRs]")
+                optimizer_desc = (
+                    f"AdamW (wd={weight_decay}, betas=0.9/0.99)" " [discriminative LRs]"
+                )
                 # Read live LRs from optimizer (scheduler may have changed them)
                 disc_lr_parts = ", ".join(
                     f"{g.get('group_name', '?')}={g['lr']:.6f}"
                     for g in optimizer.param_groups
                 )
             else:
-                optimizer_desc = (f"AdamW (lr={learning_rate}, wd={weight_decay},"
-                                  f" betas=0.9/0.99)")
+                optimizer_desc = (
+                    f"AdamW (lr={learning_rate}, wd={weight_decay}," f" betas=0.9/0.99)"
+                )
                 disc_lr_parts = None
 
             # Scheduler description
@@ -2675,16 +2854,21 @@ class TrainingService:
                 sched_desc = "OneCycleLR"
             elif scheduler_type == "cosine":
                 sc = scheduler_config if isinstance(scheduler_config, dict) else {}
-                sched_desc = (f"CosineAnnealingWarmRestarts"
-                              f" (T_0={sc.get('T_0', '?')})")
+                sched_desc = (
+                    f"CosineAnnealingWarmRestarts" f" (T_0={sc.get('T_0', '?')})"
+                )
             elif scheduler_type == "step":
                 sc = scheduler_config if isinstance(scheduler_config, dict) else {}
-                sched_desc = (f"StepLR (step_size={sc.get('step_size', '?')},"
-                              f" gamma={sc.get('gamma', 0.1)})")
+                sched_desc = (
+                    f"StepLR (step_size={sc.get('step_size', '?')},"
+                    f" gamma={sc.get('gamma', 0.1)})"
+                )
             elif scheduler_type == "plateau":
                 sc = scheduler_config if isinstance(scheduler_config, dict) else {}
-                sched_desc = (f"ReduceOnPlateau (factor={sc.get('factor', 0.5)},"
-                              f" patience={sc.get('patience', 10)})")
+                sched_desc = (
+                    f"ReduceOnPlateau (factor={sc.get('factor', 0.5)},"
+                    f" patience={sc.get('patience', 10)})"
+                )
             else:
                 sched_desc = scheduler_type
 
@@ -2701,15 +2885,18 @@ class TrainingService:
                 norm_method = norm_config_val.get("strategy", "percentile_99")
                 per_channel = norm_config_val.get("per_channel", False)
             else:
-                norm_method = str(norm_config_val) if norm_config_val else "percentile_99"
+                norm_method = (
+                    str(norm_config_val) if norm_config_val else "percentile_99"
+                )
                 per_channel = input_config.get("per_channel", False)
             norm_desc = f"{norm_method} (per_channel={per_channel})"
 
             # Augmentation list
             aug_enabled = training_params.get("augmentation", True)
             if aug_enabled and augmentation_config:
-                aug_items = [k for k, v in augmentation_config.items()
-                             if v and k != "enabled"]
+                aug_items = [
+                    k for k, v in augmentation_config.items() if v and k != "enabled"
+                ]
                 aug_desc = ", ".join(aug_items) if aug_items else "default"
             elif aug_enabled:
                 aug_desc = "default"
@@ -2718,8 +2905,9 @@ class TrainingService:
 
             # Early stopping
             if early_stopping is not None:
-                es_desc = (f"{early_stopping_metric}"
-                           f" (patience={early_stopping.patience})")
+                es_desc = (
+                    f"{early_stopping_metric}" f" (patience={early_stopping.patience})"
+                )
                 if focus_class:
                     es_desc += f", focus={focus_class}"
                     if focus_class_min_iou > 0:
@@ -2732,15 +2920,23 @@ class TrainingService:
                 "Optimizer": optimizer_desc,
                 "Scheduler": sched_desc,
                 "Loss": self._format_loss_desc(
-                    loss_function, focal_gamma, ohem_hard_ratio, ohem_schedule,
-                    ohem_hard_ratio_start, ohem_adaptive_floor),
-                "Batch Size": (f"{batch_size} (accumulation={accumulation_steps},"
-                               f" effective={batch_size * accumulation_steps})"),
+                    loss_function,
+                    focal_gamma,
+                    ohem_hard_ratio,
+                    ohem_schedule,
+                    ohem_hard_ratio_start,
+                    ohem_adaptive_floor,
+                ),
+                "Batch Size": (
+                    f"{batch_size} (accumulation={accumulation_steps},"
+                    f" effective={batch_size * accumulation_steps})"
+                ),
                 "Tile Size": tile_size_str,
                 "Mixed Precision": mp_desc,
                 "Classes": f"{len(classes)} ({', '.join(classes)})",
-                "Training Patches": (f"{len(train_dataset)} train /"
-                                     f" {len(val_dataset)} val"),
+                "Training Patches": (
+                    f"{len(train_dataset)} train /" f" {len(val_dataset)} val"
+                ),
                 "Normalization": norm_desc,
                 "Channels": str(effective_channels),
                 "Early Stopping": es_desc,
@@ -2751,15 +2947,19 @@ class TrainingService:
             # Conditional entries
             if disc_lr_parts:
                 config_summary["Discriminative LRs"] = disc_lr_parts
-            if (scheduler_type == "onecycle" and checkpoint_path is None
-                    and scheduler_config.get("max_lr") is not None):
+            if (
+                scheduler_type == "onecycle"
+                and checkpoint_path is None
+                and scheduler_config.get("max_lr") is not None
+            ):
                 lr_val = scheduler_config["max_lr"]
                 if isinstance(lr_val, (int, float)):
                     finder_note = f"max_lr={lr_val:.6f}"
                     if lr_val != learning_rate:
                         finder_note += (
                             f" (user lr={learning_rate:.6f}, "
-                            f"finder override: {lr_val/learning_rate:.0f}x)")
+                            f"finder override: {lr_val/learning_rate:.0f}x)"
+                        )
                     config_summary["LR Finder"] = finder_note
                     # Show effective peak LRs per param group so the user
                     # sees what OneCycleLR will actually ramp to
@@ -2781,15 +2981,18 @@ class TrainingService:
                 for cname, cinfo in _class_dist.items():
                     dist_parts.append(
                         f"{cname}={cinfo['pixel_pct']}% pixels, "
-                        f"in {cinfo['patch_pct']}% of patches")
+                        f"in {cinfo['patch_pct']}% of patches"
+                    )
                 config_summary["Class Distribution"] = "; ".join(dist_parts)
 
                 # Class weight info if set
                 weights_list = export_config.get("class_weights", None)
                 if weights_list:
-                    w_parts = [f"{classes[i]}={w:.2f}"
-                               for i, w in enumerate(weights_list)
-                               if i < len(classes)]
+                    w_parts = [
+                        f"{classes[i]}={w:.2f}"
+                        for i, w in enumerate(weights_list)
+                        if i < len(classes)
+                    ]
                     config_summary["Class Weights"] = ", ".join(w_parts)
 
             _report_setup("training_config", config_summary)
@@ -2818,7 +3021,11 @@ class TrainingService:
                     act_multiplier *= 1.5
                 tiles_per_batch = batch_size
                 tile_pixels = architecture.get("input_size", [512, 512])
-                tile_area = tile_pixels[0] * tile_pixels[1] if isinstance(tile_pixels, (list, tuple)) else 512 * 512
+                tile_area = (
+                    tile_pixels[0] * tile_pixels[1]
+                    if isinstance(tile_pixels, (list, tuple))
+                    else 512 * 512
+                )
                 # If progressive resizing is active, estimate for the LARGER
                 # phase 2 tile size (that's where OOM would actually occur)
                 if progressive_resize:
@@ -2829,17 +3036,23 @@ class TrainingService:
                     phase_note = ""
                 # Scale activation estimate by tile area relative to 256x256 baseline
                 area_scale = effective_area / (256 * 256)
-                estimated_mb = model_mb * (1 + 3 + act_multiplier * area_scale * tiles_per_batch)
+                estimated_mb = model_mb * (
+                    1 + 3 + act_multiplier * area_scale * tiles_per_batch
+                )
                 if estimated_mb > free_mb * 0.9:
                     logger.warning(
                         "VRAM estimate: %.0f MB needed vs %.0f MB free%s -- "
                         "OOM likely. Reduce batch size, tile size, or model size.",
-                        estimated_mb, free_mb, phase_note
+                        estimated_mb,
+                        free_mb,
+                        phase_note,
                     )
                 else:
                     logger.info(
                         "VRAM estimate: %.0f MB needed, %.0f MB free%s -- OK",
-                        estimated_mb, free_mb, phase_note
+                        estimated_mb,
+                        free_mb,
+                        phase_note,
                     )
         except Exception:
             pass  # Never let estimation break training
@@ -2869,8 +3082,10 @@ class TrainingService:
                 _encoder_prefix = candidate + "."
                 break
         if _encoder_prefix is None and model_type != "muvit":
-            logger.debug("Could not detect encoder prefix on model; "
-                         "encoder BN freezing will be skipped")
+            logger.debug(
+                "Could not detect encoder prefix on model; "
+                "encoder BN freezing will be skipped"
+            )
 
         # BatchRenorm warmup: linearly increase rmax/dmax over first 20% of
         # epochs from BatchNorm-equivalent (1, 0) to full BatchRenorm (3, 5).
@@ -2879,21 +3094,31 @@ class TrainingService:
         # standard BatchNorm behavior and destabilize validation.
         brenorm_rmax_target = 3.0
         brenorm_dmax_target = 5.0
-        has_pretrained_weights = (pretrained_model_path or checkpoint_path
-                                  or (frozen_layers and len(frozen_layers) > 0)
-                                  or architecture.get("use_pretrained", False))
+        has_pretrained_weights = (
+            pretrained_model_path
+            or checkpoint_path
+            or (frozen_layers and len(frozen_layers) > 0)
+            or architecture.get("use_pretrained", False)
+        )
         if has_pretrained_weights:
             brenorm_warmup_epochs = 0
-            set_batchrenorm_limits(model, rmax=brenorm_rmax_target,
-                                  dmax=brenorm_dmax_target)
+            set_batchrenorm_limits(
+                model, rmax=brenorm_rmax_target, dmax=brenorm_dmax_target
+            )
             logger.info("BatchRenorm warmup skipped (pretrained encoder weights)")
         else:
             brenorm_warmup_epochs = max(1, int(epochs * 0.2))
 
         for epoch in range(start_epoch, epochs):
             # Progressive resizing: switch to full resolution at phase boundary
-            if progressive_resize and epoch == phase1_end_epoch and checkpoint_path is None:
-                logger.info(f"Progressive resize: switching to full resolution at epoch {epoch+1}")
+            if (
+                progressive_resize
+                and epoch == phase1_end_epoch
+                and checkpoint_path is None
+            ):
+                logger.info(
+                    f"Progressive resize: switching to full resolution at epoch {epoch+1}"
+                )
                 active_train_loader = train_loader
                 active_val_loader = val_loader
                 # Temporarily boost BatchRenorm running stat momentum so stats
@@ -2904,22 +3129,27 @@ class TrainingService:
                 if model_type != "muvit":
                     _bn_original_momentum = 0.01
                     from ..utils.batchrenorm import BatchRenorm2d as _BRN
+
                     for m in model.modules():
                         if isinstance(m, _BRN):
                             _bn_original_momentum = m.momentum
                             m.momentum = min(0.1, _bn_original_momentum * 10)
-                    logger.info("Boosted BatchRenorm momentum %.3f -> %.3f "
-                                "for resolution adaptation (1 epoch)",
-                                _bn_original_momentum,
-                                min(0.1, _bn_original_momentum * 10))
+                    logger.info(
+                        "Boosted BatchRenorm momentum %.3f -> %.3f "
+                        "for resolution adaptation (1 epoch)",
+                        _bn_original_momentum,
+                        min(0.1, _bn_original_momentum * 10),
+                    )
                 # Recreate OneCycleLR for remaining epochs
                 if isinstance(scheduler, OneCycleLR):
                     remaining_epochs = epochs - phase1_end_epoch
                     remaining_steps = remaining_epochs * (
-                        -(-len(train_loader) // accumulation_steps))
+                        -(-len(train_loader) // accumulation_steps)
+                    )
                     remaining_steps = max(remaining_steps, 1)
                     max_lr = scheduler_config.get(
-                        "max_lr", optimizer.param_groups[0]["lr"] * 10)
+                        "max_lr", optimizer.param_groups[0]["lr"] * 10
+                    )
                     scheduler = OneCycleLR(
                         optimizer,
                         max_lr=max_lr,
@@ -2927,18 +3157,23 @@ class TrainingService:
                         pct_start=scheduler_config.get("pct_start", 0.3),
                         anneal_strategy=scheduler_config.get("anneal_strategy", "cos"),
                         div_factor=scheduler_config.get("div_factor", 25.0),
-                        final_div_factor=scheduler_config.get("final_div_factor", 1e4)
+                        final_div_factor=scheduler_config.get("final_div_factor", 1e4),
                     )
             # Restore BatchRenorm momentum after progressive resize adaptation
-            if (progressive_resize and model_type != "muvit"
-                    and epoch == phase1_end_epoch + 1
-                    and checkpoint_path is None):
+            if (
+                progressive_resize
+                and model_type != "muvit"
+                and epoch == phase1_end_epoch + 1
+                and checkpoint_path is None
+            ):
                 from ..utils.batchrenorm import BatchRenorm2d as _BRN
+
                 for m in model.modules():
                     if isinstance(m, _BRN):
                         m.momentum = _bn_original_momentum
-                logger.info("Restored BatchRenorm momentum to %.3f",
-                            _bn_original_momentum)
+                logger.info(
+                    "Restored BatchRenorm momentum to %.3f", _bn_original_momentum
+                )
 
             # Check for cancellation
             if cancel_flag and cancel_flag.is_set():
@@ -2949,7 +3184,9 @@ class TrainingService:
             self.gpu_manager.clear_cache()
 
             # Log memory status at start of epoch
-            self.gpu_manager.log_memory_status(prefix=f"Epoch {epoch+1}/{epochs} start: ")
+            self.gpu_manager.log_memory_status(
+                prefix=f"Epoch {epoch+1}/{epochs} start: "
+            )
 
             # Get current learning rate
             current_lr = optimizer.param_groups[0]["lr"]
@@ -2964,11 +3201,13 @@ class TrainingService:
                     logger.info(
                         f"BatchRenorm warmup: {brenorm_warmup_epochs} epochs "
                         f"(rmax 1->{brenorm_rmax_target}, "
-                        f"dmax 0->{brenorm_dmax_target})")
+                        f"dmax 0->{brenorm_dmax_target})"
+                    )
             elif epoch == brenorm_warmup_epochs:
                 # Ensure final values are set exactly
                 set_batchrenorm_limits(
-                    model, rmax=brenorm_rmax_target, dmax=brenorm_dmax_target)
+                    model, rmax=brenorm_rmax_target, dmax=brenorm_dmax_target
+                )
 
             # OHEM anneal: linearly decrease hard_ratio from
             # ohem_hard_ratio_start to ohem_hard_ratio over the first 75% of
@@ -2986,8 +3225,10 @@ class TrainingService:
                     anneal_end = max(1, int(epochs * 0.75))
                     if epoch < anneal_end:
                         progress = epoch / anneal_end
-                        cur_ratio = (ohem_hard_ratio_start
-                                     - (ohem_hard_ratio_start - ohem_hard_ratio) * progress)
+                        cur_ratio = (
+                            ohem_hard_ratio_start
+                            - (ohem_hard_ratio_start - ohem_hard_ratio) * progress
+                        )
                     else:
                         cur_ratio = ohem_hard_ratio
                     _ohem_module.hard_ratio = cur_ratio
@@ -2995,11 +3236,14 @@ class TrainingService:
                         logger.info(
                             "OHEM anneal: %.0f%% -> %.0f%% over %d epochs",
                             ohem_hard_ratio_start * 100,
-                            ohem_hard_ratio * 100, anneal_end)
+                            ohem_hard_ratio * 100,
+                            anneal_end,
+                        )
                     elif epoch == anneal_end:
                         logger.info(
                             "OHEM anneal complete: hard_ratio=%.0f%%",
-                            ohem_hard_ratio * 100)
+                            ohem_hard_ratio * 100,
+                        )
 
             # Train epoch
             model.train()
@@ -3019,10 +3263,13 @@ class TrainingService:
                         module.eval()
                         frozen_bn_count += 1
                 if epoch == start_epoch and frozen_bn_count > 0:
-                    logger.info("Set %d %s* modules to eval mode "
-                                "(BN uses pretrained running stats, "
-                                "weights still trainable)",
-                                frozen_bn_count, _encoder_prefix)
+                    logger.info(
+                        "Set %d %s* modules to eval mode "
+                        "(BN uses pretrained running stats, "
+                        "weights still trainable)",
+                        frozen_bn_count,
+                        _encoder_prefix,
+                    )
 
             train_loss = 0.0
 
@@ -3083,7 +3330,9 @@ class TrainingService:
                     scaled_loss.backward()
 
                 # Step optimizer every accumulation_steps batches (or on last batch)
-                if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(active_train_loader):
+                if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(
+                    active_train_loader
+                ):
                     if scaler is not None:
                         scaler.unscale_(optimizer)
                         clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -3103,22 +3352,23 @@ class TrainingService:
                 # (and first batch after progressive resize switch) to show
                 # actual VRAM usage vs the pre-flight estimate.
                 if batch_idx == 0 and self.device == "cuda":
-                    is_first_epoch = (epoch == start_epoch)
-                    is_phase2_start = (progressive_resize
-                                       and epoch == phase1_end_epoch)
+                    is_first_epoch = epoch == start_epoch
+                    is_phase2_start = progressive_resize and epoch == phase1_end_epoch
                     if is_first_epoch or is_phase2_start:
-                        phase_label = ("Phase 2 (full-res) " if is_phase2_start
-                                       else "")
+                        phase_label = "Phase 2 (full-res) " if is_phase2_start else ""
                         self.gpu_manager.log_memory_status(
                             prefix=f"  {phase_label}After first batch: ",
-                            include_peak=True)
+                            include_peak=True,
+                        )
                         peak_mb = self.gpu_manager.get_peak_allocated_mb()
                         total_gpu = self.gpu_manager.get_memory_mb()
                         headroom = total_gpu - peak_mb
                         if headroom > peak_mb * 0.5:
                             logger.info(
                                 "  %.0f MB headroom -- a larger batch size "
-                                "may train faster", headroom)
+                                "may train faster",
+                                headroom,
+                            )
 
                 # Periodic batch progress logging
                 if (batch_idx + 1) % log_interval == 0 or batch_idx == 0:
@@ -3133,25 +3383,32 @@ class TrainingService:
                         eta_str = ""
                     logger.info(
                         f"  Epoch {epoch+1} batch {batches_done}/{total_batches} "
-                        f"loss={avg_loss:.4f} ({elapsed:.0f}s elapsed{eta_str})")
+                        f"loss={avg_loss:.4f} ({elapsed:.0f}s elapsed{eta_str})"
+                    )
                     # Report batch-level progress to Java UI via setup_callback
                     if setup_callback:
                         try:
-                            setup_callback("training_batch", {
-                                "epoch": epoch + 1,
-                                "total_epochs": epochs,
-                                "batch": batches_done,
-                                "total_batches": total_batches,
-                                "batch_loss": avg_loss,
-                                "elapsed_seconds": round(elapsed, 1),
-                            })
+                            setup_callback(
+                                "training_batch",
+                                {
+                                    "epoch": epoch + 1,
+                                    "total_epochs": epochs,
+                                    "batch": batches_done,
+                                    "total_batches": total_batches,
+                                    "batch_loss": avg_loss,
+                                    "elapsed_seconds": round(elapsed, 1),
+                                },
+                            )
                         except Exception:
                             pass
 
                 # Check cancellation between batches
                 if cancel_flag and cancel_flag.is_set():
-                    logger.info("Training cancelled mid-epoch at batch %d/%d",
-                                batch_idx + 1, total_batches)
+                    logger.info(
+                        "Training cancelled mid-epoch at batch %d/%d",
+                        batch_idx + 1,
+                        total_batches,
+                    )
                     break
 
             train_loss /= max(len(active_train_loader), 1)
@@ -3160,7 +3417,7 @@ class TrainingService:
             # the learning rate is too high.  Continuing wastes GPU time on
             # a model that will never recover.
             if math.isnan(train_loss):
-                _nan_epoch_count = getattr(self, '_nan_epoch_count', 0) + 1
+                _nan_epoch_count = getattr(self, "_nan_epoch_count", 0) + 1
                 self._nan_epoch_count = _nan_epoch_count
                 if _nan_epoch_count >= 2:
                     logger.error(
@@ -3168,12 +3425,14 @@ class TrainingService:
                         "Aborting -- the learning rate is likely too high. "
                         "Try a lower learning rate or use ReduceOnPlateau "
                         "scheduler instead of OneCycleLR.",
-                        _nan_epoch_count)
+                        _nan_epoch_count,
+                    )
                     raise RuntimeError(
                         f"Training diverged: loss is NaN for "
                         f"{_nan_epoch_count} consecutive epochs. "
                         f"The learning rate (max_lr={scheduler_config.get('max_lr', '?')}) "
-                        f"is likely too high.")
+                        f"is likely too high."
+                    )
             else:
                 self._nan_epoch_count = 0
 
@@ -3236,8 +3495,8 @@ class TrainingService:
                     # Per-class loss (unreduced, must include ignore_index
                     # to avoid CUDA assertion on unlabeled pixels)
                     per_pixel_loss = F.cross_entropy(
-                        outputs, masks, reduction='none',
-                        ignore_index=unlabeled_index)
+                        outputs, masks, reduction="none", ignore_index=unlabeled_index
+                    )
                     # Clamp to prevent Infinity from -log(0) when model is
                     # very confident but wrong, which would poison the mean
                     per_pixel_loss = torch.clamp(per_pixel_loss, max=100.0)
@@ -3254,7 +3513,8 @@ class TrainingService:
                         logger.info(
                             f"  Epoch {epoch+1} val batch "
                             f"{val_batch_idx+1}/{val_total_batches} "
-                            f"({val_elapsed:.0f}s elapsed)")
+                            f"({val_elapsed:.0f}s elapsed)"
+                        )
 
             val_loss /= max(len(active_val_loader), 1)
             accuracy = correct / max(total, 1)
@@ -3283,25 +3543,29 @@ class TrainingService:
             # classes are limited or when all are (degenerate -- can't
             # exclude everything; report fully).
             if limited_data_classes:
-                sel_values = [v for k, v in per_class_iou.items()
-                              if k not in limited_data_classes]
-                selection_mean_iou = (sum(sel_values) / len(sel_values)
-                                      if sel_values else mean_iou)
+                sel_values = [
+                    v for k, v in per_class_iou.items() if k not in limited_data_classes
+                ]
+                selection_mean_iou = (
+                    sum(sel_values) / len(sel_values) if sel_values else mean_iou
+                )
                 selection_mean_iou = round(selection_mean_iou, 4)
             else:
                 selection_mean_iou = mean_iou
 
             # Record history
-            training_history.append({
-                "epoch": epoch + 1,
-                "train_loss": train_loss,
-                "val_loss": val_loss,
-                "accuracy": accuracy,
-                "learning_rate": current_lr,
-                "per_class_iou": per_class_iou,
-                "per_class_loss": per_class_loss,
-                "mean_iou": mean_iou
-            })
+            training_history.append(
+                {
+                    "epoch": epoch + 1,
+                    "train_loss": train_loss,
+                    "val_loss": val_loss,
+                    "accuracy": accuracy,
+                    "learning_rate": current_lr,
+                    "per_class_iou": per_class_iou,
+                    "per_class_loss": per_class_loss,
+                    "mean_iou": mean_iou,
+                }
+            )
 
             # Run training diagnostics periodically to detect common issues
             _hist_len = len(training_history)
@@ -3312,18 +3576,29 @@ class TrainingService:
             # Use scientific notation for very small train_loss to avoid
             # misleading 0.0000 display when loss < 0.00005 (common when
             # overfitting a small training set).
-            tl_fmt = f"{train_loss:.2e}" if 0 < train_loss < 0.0001 else f"{train_loss:.4f}"
-            logger.info(f"Epoch {epoch+1}/{epochs}: train_loss={tl_fmt}, "
-                       f"val_loss={val_loss:.4f}, acc={accuracy:.4f}, "
-                       f"mIoU={mean_iou:.4f}, lr={current_lr:.6f}")
+            tl_fmt = (
+                f"{train_loss:.2e}" if 0 < train_loss < 0.0001 else f"{train_loss:.4f}"
+            )
+            logger.info(
+                f"Epoch {epoch+1}/{epochs}: train_loss={tl_fmt}, "
+                f"val_loss={val_loss:.4f}, acc={accuracy:.4f}, "
+                f"mIoU={mean_iou:.4f}, lr={current_lr:.6f}"
+            )
             iou_parts = " ".join(f"{k}={v:.3f}" for k, v in per_class_iou.items())
             loss_parts = " ".join(f"{k}={v:.4f}" for k, v in per_class_loss.items())
             logger.info(f"  IoU: {iou_parts}")
             logger.info(f"  Loss: {loss_parts}")
 
             if progress_callback:
-                progress_callback(epoch + 1, train_loss, val_loss, accuracy,
-                                  per_class_iou, per_class_loss, mean_iou)
+                progress_callback(
+                    epoch + 1,
+                    train_loss,
+                    val_loss,
+                    accuracy,
+                    per_class_iou,
+                    per_class_loss,
+                    mean_iou,
+                )
 
             # Step scheduler (for epoch-based schedulers)
             if scheduler is not None and not isinstance(scheduler, OneCycleLR):
@@ -3334,7 +3609,11 @@ class TrainingService:
                     # focus_class only drives best-model selection now.
                     # Use selection_mean_iou so plateau detection ignores
                     # limited-data classes whose IoU is single-slide noise.
-                    plateau_metric = selection_mean_iou if early_stopping_metric == "mean_iou" else val_loss
+                    plateau_metric = (
+                        selection_mean_iou
+                        if early_stopping_metric == "mean_iou"
+                        else val_loss
+                    )
                     scheduler.step(plateau_metric)
                 elif isinstance(scheduler, CosineAnnealingWarmRestarts):
                     scheduler.step(epoch + 1)
@@ -3358,21 +3637,31 @@ class TrainingService:
                 # which already excludes limited-data classes.
                 current_metric = selection_mean_iou
             else:
-                current_metric = selection_mean_iou if early_stopping_metric == "mean_iou" else val_loss
+                current_metric = (
+                    selection_mean_iou
+                    if early_stopping_metric == "mean_iou"
+                    else val_loss
+                )
             if _is_best(current_metric, best_score):
                 best_score = current_metric
                 best_epoch = epoch + 1
                 best_loss = val_loss
                 best_accuracy = accuracy
                 best_mean_iou = mean_iou
-                best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                best_model_state = {
+                    k: v.cpu().clone() for k, v in model.state_dict().items()
+                }
                 if focus_class:
                     metric_name = f"{focus_class} IoU"
                 elif limited_data_classes and early_stopping_metric == "mean_iou":
                     metric_name = "selection mIoU"
                 else:
-                    metric_name = "mIoU" if early_stopping_metric == "mean_iou" else "loss"
-                logger.info(f"  New best model at epoch {epoch+1} ({metric_name}={current_metric:.4f})")
+                    metric_name = (
+                        "mIoU" if early_stopping_metric == "mean_iou" else "loss"
+                    )
+                logger.info(
+                    f"  New best model at epoch {epoch+1} ({metric_name}={current_metric:.4f})"
+                )
                 # Persist full checkpoint to disk for crash recovery.
                 # If training is interrupted, this file supports both model
                 # recovery (finalize_training.py) and training resume.
@@ -3400,23 +3689,32 @@ class TrainingService:
             # Log focus class status
             if focus_class:
                 fc_iou = per_class_iou.get(focus_class, 0.0)
-                logger.info(f"  Focus class '{focus_class}' IoU={fc_iou:.4f}"
-                           f" (min threshold={focus_class_min_iou:.2f})")
+                logger.info(
+                    f"  Focus class '{focus_class}' IoU={fc_iou:.4f}"
+                    f" (min threshold={focus_class_min_iou:.2f})"
+                )
 
             # Check early stopping. The ES metric is independent of
             # focus_class -- focus_class only drives best-model selection.
             if early_stopping is not None:
                 # Use selection_mean_iou so ES counter does not reset on a
                 # noisy single-slide IoU swing for a limited-data class.
-                es_value = selection_mean_iou if early_stopping_metric == "mean_iou" else val_loss
+                es_value = (
+                    selection_mean_iou
+                    if early_stopping_metric == "mean_iou"
+                    else val_loss
+                )
 
                 # Suppress early stopping if focus class hasn't reached minimum IoU.
                 # This is a separate gate: the ES metric may be plateauing on
                 # mean_iou or val_loss while the focus class is still ramping up,
                 # in which case we don't want to stop.
-                if (focus_class and focus_class_min_iou > 0
-                        and focus_class in per_class_iou
-                        and per_class_iou[focus_class] < focus_class_min_iou):
+                if (
+                    focus_class
+                    and focus_class_min_iou > 0
+                    and focus_class in per_class_iou
+                    and per_class_iou[focus_class] < focus_class_min_iou
+                ):
                     # Reset early stopping counter -- don't stop yet
                     early_stopping.counter = 0
 
@@ -3430,8 +3728,10 @@ class TrainingService:
                 # Run diagnostics at pause
                 pause_warnings = _diagnostics.run_all_checks(training_history)
                 if pause_warnings:
-                    logger.info("=== Training Diagnostics (%d warnings) ===",
-                                len(pause_warnings))
+                    logger.info(
+                        "=== Training Diagnostics (%d warnings) ===",
+                        len(pause_warnings),
+                    )
                 checkpoint_save_path = self._save_checkpoint(
                     model=model,
                     optimizer=optimizer,
@@ -3480,7 +3780,8 @@ class TrainingService:
                     pause_result["focus_class_iou"] = best_score
                     pause_result["focus_class_target_met"] = (
                         best_score >= focus_class_min_iou
-                        if focus_class_min_iou > 0 else True
+                        if focus_class_min_iou > 0
+                        else True
                     )
                     pause_result["focus_class_min_iou"] = focus_class_min_iou
                 return pause_result
@@ -3488,20 +3789,29 @@ class TrainingService:
         # Handle cancellation: save both best-epoch and last-epoch models
         # so Java can let the user choose which to keep (or discard both).
         # The pause check above already returned for paused training.
-        was_cancelled = (cancel_flag and cancel_flag.is_set()
-                         and not (pause_flag and pause_flag.is_set()))
+        was_cancelled = (
+            cancel_flag
+            and cancel_flag.is_set()
+            and not (pause_flag and pause_flag.is_set())
+        )
         if was_cancelled:
             logger.info("Saving progress after cancellation...")
             cancel_checkpoint = self._save_checkpoint(
-                model=model, optimizer=optimizer, scheduler=scheduler,
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
                 early_stopping=early_stopping,
                 training_history=training_history,
-                best_score=best_score, best_score_mode=best_score_mode,
-                best_model_state=best_model_state, model_type=model_type,
+                best_score=best_score,
+                best_score_mode=best_score_mode,
+                best_model_state=best_model_state,
+                model_type=model_type,
                 training_config={
-                    "model_type": model_type, "architecture": architecture,
+                    "model_type": model_type,
+                    "architecture": architecture,
                     "input_config": input_config,
-                    "training_params": training_params, "classes": classes,
+                    "training_params": training_params,
+                    "classes": classes,
                 },
                 normalization_stats=dataset_norm_stats,
                 criterion=criterion,
@@ -3509,44 +3819,53 @@ class TrainingService:
             # Save last-epoch model (current model state)
             _cls_name = training_params.get("classifier_name")
             cancel_last_model_path = self._save_model(
-                model=model, model_type=model_type,
-                architecture=architecture, input_config=input_config,
-                classes=classes, data_path=str(data_path),
+                model=model,
+                model_type=model_type,
+                architecture=architecture,
+                input_config=input_config,
+                classes=classes,
+                data_path=str(data_path),
                 training_history=training_history,
                 normalization_stats=dataset_norm_stats,
                 classifier_name=_cls_name,
-                training_pixel_size_um=training_params.get(
-                    "training_pixel_size_um"),
-                training_tile_size_px=training_params.get(
-                    "training_tile_size_px"),
+                training_pixel_size_um=training_params.get("training_pixel_size_um"),
+                training_tile_size_px=training_params.get("training_tile_size_px"),
             )
-            logger.info("Saved last-epoch model after cancel: %s",
-                        cancel_last_model_path)
+            logger.info(
+                "Saved last-epoch model after cancel: %s", cancel_last_model_path
+            )
             # Save best-epoch model if we have a separate best state
             cancel_best_model_path = ""
             if best_model_state is not None and best_epoch != len(training_history):
                 model.load_state_dict(best_model_state)
                 model = model.to(self.device)
                 cancel_best_model_path = self._save_model(
-                    model=model, model_type=model_type,
-                    architecture=architecture, input_config=input_config,
-                    classes=classes, data_path=str(data_path),
+                    model=model,
+                    model_type=model_type,
+                    architecture=architecture,
+                    input_config=input_config,
+                    classes=classes,
+                    data_path=str(data_path),
                     training_history=training_history,
                     normalization_stats=dataset_norm_stats,
                     classifier_name=_cls_name,
                     training_pixel_size_um=training_params.get(
-                        "training_pixel_size_um"),
-                    training_tile_size_px=training_params.get(
-                        "training_tile_size_px"),
+                        "training_pixel_size_um"
+                    ),
+                    training_tile_size_px=training_params.get("training_tile_size_px"),
                 )
-                logger.info("Saved best model (epoch %d) after cancel: %s",
-                            best_epoch, cancel_best_model_path)
+                logger.info(
+                    "Saved best model (epoch %d) after cancel: %s",
+                    best_epoch,
+                    cancel_best_model_path,
+                )
             else:
                 # Best epoch IS the last epoch -- same model
                 cancel_best_model_path = cancel_last_model_path
             # Clean up in-progress best model (proper models saved above)
             self._cleanup_best_in_progress(
-                model_type, training_params.get("classifier_name"))
+                model_type, training_params.get("classifier_name")
+            )
             # Free GPU memory
             model = model.cpu()
             self.gpu_manager.clear_cache()
@@ -3569,7 +3888,9 @@ class TrainingService:
                 cancel_result["focus_class_name"] = focus_class
                 cancel_result["focus_class_iou"] = best_score
                 cancel_result["focus_class_target_met"] = (
-                    best_score >= focus_class_min_iou if focus_class_min_iou > 0 else True
+                    best_score >= focus_class_min_iou
+                    if focus_class_min_iou > 0
+                    else True
                 )
                 cancel_result["focus_class_min_iou"] = focus_class_min_iou
             return cancel_result
@@ -3580,19 +3901,27 @@ class TrainingService:
         # Run all diagnostic checks at completion
         completion_warnings = _diagnostics.run_all_checks(training_history)
         if completion_warnings:
-            logger.info("=== Training Diagnostics (%d warnings) ===",
-                        len(completion_warnings))
+            logger.info(
+                "=== Training Diagnostics (%d warnings) ===", len(completion_warnings)
+            )
 
         # Save checkpoint for potential "continue training" (before restoring best weights).
         # This preserves the last-epoch model/optimizer/scheduler state for seamless resume.
         completion_checkpoint_path = self._save_checkpoint(
-            model=model, optimizer=optimizer, scheduler=scheduler,
-            early_stopping=early_stopping, training_history=training_history,
-            best_score=best_score, best_score_mode=best_score_mode,
-            best_model_state=best_model_state, model_type=model_type,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            early_stopping=early_stopping,
+            training_history=training_history,
+            best_score=best_score,
+            best_score_mode=best_score_mode,
+            best_model_state=best_model_state,
+            model_type=model_type,
             training_config={
-                "model_type": model_type, "architecture": architecture,
-                "input_config": input_config, "training_params": training_params,
+                "model_type": model_type,
+                "architecture": architecture,
+                "input_config": input_config,
+                "training_params": training_params,
                 "classes": classes,
             },
             normalization_stats=dataset_norm_stats,
@@ -3628,7 +3957,8 @@ class TrainingService:
 
         # Clean up in-progress best model (final model saved above)
         self._cleanup_best_in_progress(
-            model_type, training_params.get("classifier_name"))
+            model_type, training_params.get("classifier_name")
+        )
 
         # Report focus class IoU so Java can warn when target not met
         result = {
@@ -3647,7 +3977,9 @@ class TrainingService:
         }
         if focus_class:
             result["focus_class_name"] = focus_class
-            result["focus_class_iou"] = best_score  # best_score IS focus class IoU when focus_class is set
+            result["focus_class_iou"] = (
+                best_score  # best_score IS focus class IoU when focus_class is set
+            )
             result["focus_class_target_met"] = (
                 best_score >= focus_class_min_iou if focus_class_min_iou > 0 else True
             )
@@ -3655,12 +3987,16 @@ class TrainingService:
             if best_score < focus_class_min_iou and focus_class_min_iou > 0:
                 logger.warning(
                     "Focus class '%s' IoU %.4f did not meet target %.4f",
-                    focus_class, best_score, focus_class_min_iou)
+                    focus_class,
+                    best_score,
+                    focus_class_min_iou,
+                )
                 if best_score == 0.0:
                     logger.warning(
                         "Focus class '%s' had 0.0 IoU -- check that this class "
                         "has sufficient samples in the validation split",
-                        focus_class)
+                        focus_class,
+                    )
         return result
 
     def _create_scheduler(
@@ -3690,17 +4026,20 @@ class TrainingService:
 
         if scheduler_type == "cosine":
             # Cosine annealing with warm restarts
-            T_0 = scheduler_config.get("T_0", max(epochs // 3, 1))  # Restart every T_0 epochs
-            T_mult = scheduler_config.get("T_mult", 2)  # Double period after each restart
+            T_0 = scheduler_config.get(
+                "T_0", max(epochs // 3, 1)
+            )  # Restart every T_0 epochs
+            T_mult = scheduler_config.get(
+                "T_mult", 2
+            )  # Double period after each restart
             eta_min = scheduler_config.get("eta_min", 1e-6)  # Minimum learning rate
 
             scheduler = CosineAnnealingWarmRestarts(
-                optimizer,
-                T_0=T_0,
-                T_mult=T_mult,
-                eta_min=eta_min
+                optimizer, T_0=T_0, T_mult=T_mult, eta_min=eta_min
             )
-            logger.info(f"Using CosineAnnealingWarmRestarts scheduler (T_0={T_0}, T_mult={T_mult})")
+            logger.info(
+                f"Using CosineAnnealingWarmRestarts scheduler (T_0={T_0}, T_mult={T_mult})"
+            )
             return scheduler
 
         elif scheduler_type == "step":
@@ -3709,7 +4048,9 @@ class TrainingService:
             gamma = scheduler_config.get("gamma", 0.1)
 
             scheduler = StepLR(optimizer, step_size=step_size, gamma=gamma)
-            logger.info(f"Using StepLR scheduler (step_size={step_size}, gamma={gamma})")
+            logger.info(
+                f"Using StepLR scheduler (step_size={step_size}, gamma={gamma})"
+            )
             return scheduler
 
         elif scheduler_type == "onecycle":
@@ -3734,8 +4075,11 @@ class TrainingService:
                     # No finder result -- default to 10x each group's initial LR
                     max_lr = [g["lr"] * 10 for g in optimizer.param_groups]
             else:
-                max_lr = config_max_lr if isinstance(config_max_lr, (int, float)) \
+                max_lr = (
+                    config_max_lr
+                    if isinstance(config_max_lr, (int, float))
                     else optimizer.param_groups[0]["lr"] * 10
+                )
 
             accumulation_steps = scheduler_config.get("accumulation_steps", 1)
             total_steps = epochs * -(-steps_per_epoch // accumulation_steps)
@@ -3749,9 +4093,11 @@ class TrainingService:
                 pct_start=scheduler_config.get("pct_start", 0.3),
                 anneal_strategy=scheduler_config.get("anneal_strategy", "cos"),
                 div_factor=scheduler_config.get("div_factor", 25.0),
-                final_div_factor=scheduler_config.get("final_div_factor", 1e4)
+                final_div_factor=scheduler_config.get("final_div_factor", 1e4),
             )
-            logger.info(f"Using OneCycleLR scheduler (max_lr={max_lr}, total_steps={total_steps})")
+            logger.info(
+                f"Using OneCycleLR scheduler (max_lr={max_lr}, total_steps={total_steps})"
+            )
             return scheduler
 
         elif scheduler_type == "plateau":
@@ -3783,14 +4129,12 @@ class TrainingService:
             min_lr = scheduler_config.get("min_lr", 1e-7)
 
             scheduler = ReduceLROnPlateau(
-                optimizer,
-                mode=mode,
-                factor=factor,
-                patience=patience,
-                min_lr=min_lr
+                optimizer, mode=mode, factor=factor, patience=patience, min_lr=min_lr
             )
-            logger.info(f"Using ReduceLROnPlateau scheduler (mode={mode}, "
-                       f"factor={factor}, patience={patience}, min_lr={min_lr})")
+            logger.info(
+                f"Using ReduceLROnPlateau scheduler (mode={mode}, "
+                f"factor={factor}, patience={patience}, min_lr={min_lr})"
+            )
             return scheduler
 
         else:
@@ -3828,23 +4172,21 @@ class TrainingService:
 
         groups = []
         if encoder_params:
-            groups.append({
-                "params": encoder_params,
-                "lr": learning_rate * discriminative_lr_ratio,
-                "group_name": "encoder"
-            })
+            groups.append(
+                {
+                    "params": encoder_params,
+                    "lr": learning_rate * discriminative_lr_ratio,
+                    "group_name": "encoder",
+                }
+            )
         if decoder_params:
-            groups.append({
-                "params": decoder_params,
-                "lr": learning_rate,
-                "group_name": "decoder"
-            })
+            groups.append(
+                {"params": decoder_params, "lr": learning_rate, "group_name": "decoder"}
+            )
         if head_params:
-            groups.append({
-                "params": head_params,
-                "lr": learning_rate,
-                "group_name": "head"
-            })
+            groups.append(
+                {"params": head_params, "lr": learning_rate, "group_name": "head"}
+            )
 
         # Return groups only when there are at least two kinds (encoder vs
         # decoder/head), so a discriminative LR actually does something.
@@ -3855,7 +4197,9 @@ class TrainingService:
 
     @staticmethod
     def _format_loss_desc(
-        loss_function: str, focal_gamma: float, ohem_hard_ratio: float,
+        loss_function: str,
+        focal_gamma: float,
+        ohem_hard_ratio: float,
         ohem_schedule: str = "fixed",
         ohem_hard_ratio_start: float = None,
         ohem_adaptive_floor: bool = False,
@@ -3865,19 +4209,32 @@ class TrainingService:
         if loss_function in ("focal_dice", "focal"):
             desc += f" (gamma={focal_gamma})"
         if ohem_hard_ratio < 1.0:
-            start = ohem_hard_ratio_start if ohem_hard_ratio_start is not None else ohem_hard_ratio
+            start = (
+                ohem_hard_ratio_start
+                if ohem_hard_ratio_start is not None
+                else ohem_hard_ratio
+            )
             anneals = start > ohem_hard_ratio
             mode = "adaptive floor" if ohem_adaptive_floor else "per-class proportional"
             if anneals:
-                desc += (f" + OHEM (anneal {start * 100:.0f}%"
-                         f" -> {ohem_hard_ratio * 100:.0f}%, {mode})")
+                desc += (
+                    f" + OHEM (anneal {start * 100:.0f}%"
+                    f" -> {ohem_hard_ratio * 100:.0f}%, {mode})"
+                )
             else:
                 desc += f" + OHEM (keep {ohem_hard_ratio * 100:.0f}%, {mode})"
         return desc
 
-    def find_learning_rate(self, model, train_loader, criterion,
-                           start_lr=1e-7, end_lr=10, num_iter=100,
-                           spatial_divisor: int = 1):
+    def find_learning_rate(
+        self,
+        model,
+        train_loader,
+        criterion,
+        start_lr=1e-7,
+        end_lr=10,
+        num_iter=100,
+        spatial_divisor: int = 1,
+    ):
         """Fast.ai-style LR range test.
 
         Exponentially increases LR from start_lr to end_lr over num_iter steps,
@@ -3899,13 +4256,15 @@ class TrainingService:
 
         optimizer = torch.optim.AdamW(
             [p for p in model.parameters() if p.requires_grad],
-            lr=start_lr, weight_decay=0.01)
+            lr=start_lr,
+            weight_decay=0.01,
+        )
 
         gamma = (end_lr / start_lr) ** (1 / num_iter)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
 
         lrs, losses = [], []
-        best_loss = float('inf')
+        best_loss = float("inf")
         smoothed_loss = 0
         # Lighter smoothing for short sweeps -- 0.98 needs hundreds of steps
         # to settle; 0.9 responds in ~10 steps, better for 100-iter sweeps
@@ -3927,9 +4286,7 @@ class TrainingService:
             optimizer.zero_grad()
             # Same spatial auto-pad as the main training loop. See
             # claude-reports/2026-04-17_input-size-divisibility.md.
-            images_padded, pad_h, pad_w = pad_to_multiple(
-                images, spatial_divisor
-            )
+            images_padded, pad_h, pad_w = pad_to_multiple(images, spatial_divisor)
             outputs = model(images_padded)
             outputs = crop_to_original(outputs, pad_h, pad_w)
             loss = criterion(outputs, masks)
@@ -3943,7 +4300,7 @@ class TrainingService:
             if corrected > 4 * best_loss and i > 5:
                 break  # Diverging
 
-            lrs.append(optimizer.param_groups[0]['lr'])
+            lrs.append(optimizer.param_groups[0]["lr"])
             losses.append(corrected)
 
             loss.backward()
@@ -3997,7 +4354,8 @@ class TrainingService:
         if loss_range < 0.05 * losses[0]:
             logger.info(
                 f"LR finder: loss curve is flat (range {loss_range:.4f},"
-                f" start {losses[0]:.4f}) -- no reliable suggestion")
+                f" start {losses[0]:.4f}) -- no reliable suggestion"
+            )
             return None
 
         # Also reject if the steepest descent is positive (loss only goes up)
@@ -4035,9 +4393,9 @@ class TrainingService:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         import re
+
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        cls_name = training_config.get("training_params", {}).get(
-            "classifier_name", "")
+        cls_name = training_config.get("training_params", {}).get("classifier_name", "")
         if cls_name:
             safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", cls_name).lower()
             checkpoint_path = checkpoint_dir / f"checkpoint_{safe_name}_{timestamp}.pt"
@@ -4105,7 +4463,8 @@ class TrainingService:
                 "epochs_completed": len(training_history),
                 "best_score": best_score,
                 "classifier_name": training_config.get("training_params", {}).get(
-                    "classifier_name", ""),
+                    "classifier_name", ""
+                ),
             }
             meta_path = checkpoint_path.with_suffix(".json")
             with open(meta_path, "w") as f:
@@ -4128,7 +4487,7 @@ class TrainingService:
         best_score_mode: str,
         training_config: Dict[str, Any],
         training_history: List[Dict[str, Any]],
-        normalization_stats: Optional[List[Dict[str, float]]] = None
+        normalization_stats: Optional[List[Dict[str, float]]] = None,
     ) -> str:
         """Save a full training checkpoint to disk for crash recovery.
 
@@ -4151,8 +4510,8 @@ class TrainingService:
         # Use classifier_name for unique per-model checkpoint filenames.
         # Falls back to model_type if classifier_name is not available.
         import re
-        cls_name = training_config.get("training_params", {}).get(
-            "classifier_name", "")
+
+        cls_name = training_config.get("training_params", {}).get("classifier_name", "")
         if cls_name:
             safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", cls_name).lower()
             save_path = checkpoint_dir / f"best_in_progress_{safe_name}.pt"
@@ -4185,17 +4544,21 @@ class TrainingService:
             }
 
         torch.save(data, str(save_path))
-        logger.info(f"  Best checkpoint saved to disk (epoch {best_epoch}): {save_path}")
+        logger.info(
+            f"  Best checkpoint saved to disk (epoch {best_epoch}): {save_path}"
+        )
         return str(save_path)
 
-    def _cleanup_best_in_progress(self, model_type: str,
-                                   classifier_name: Optional[str] = None) -> None:
+    def _cleanup_best_in_progress(
+        self, model_type: str, classifier_name: Optional[str] = None
+    ) -> None:
         """Remove the in-progress best model file after training completes normally.
 
         Called after successful completion or cancellation, when the final model
         has been saved properly via _save_model().
         """
         import re
+
         checkpoint_dir = Path(os.path.expanduser("~/.dlclassifier/checkpoints"))
         if classifier_name:
             safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", classifier_name).lower()
@@ -4206,8 +4569,9 @@ class TrainingService:
             save_path.unlink()
             logger.debug(f"Cleaned up in-progress best model: {save_path}")
 
-    def _try_training_compile(self, model, model_type: str,
-                              architecture: Dict[str, Any]):
+    def _try_training_compile(
+        self, model, model_type: str, architecture: Dict[str, Any]
+    ):
         """Attempt to wrap a training model with torch.compile().
 
         Experimental and opt-in.  Requires Linux + CUDA + sm_70+ + Triton.
@@ -4227,13 +4591,16 @@ class TrainingService:
         import platform
 
         if not hasattr(torch, "compile"):
-            logger.info("torch.compile unavailable in this PyTorch build; "
-                        "using eager mode.")
+            logger.info(
+                "torch.compile unavailable in this PyTorch build; " "using eager mode."
+            )
             return model
         if platform.system() != "Linux":
-            logger.info("torch.compile is Linux-gated in this build "
-                        "(Windows/macOS: Triton support is incomplete); "
-                        "using eager mode.")
+            logger.info(
+                "torch.compile is Linux-gated in this build "
+                "(Windows/macOS: Triton support is incomplete); "
+                "using eager mode."
+            )
             return model
         # self.device is a string in TrainingService.
         _compile_device_str = (
@@ -4248,7 +4615,8 @@ class TrainingService:
                 logger.info(
                     "torch.compile skipped: GPU capability %d.%d < 7.0 "
                     "(Triton Inductor requires Volta or newer).",
-                    cap[0], cap[1],
+                    cap[0],
+                    cap[1],
                 )
                 return model
         except Exception as e:
@@ -4256,15 +4624,15 @@ class TrainingService:
         try:
             import triton  # noqa: F401
         except ImportError:
-            logger.info("torch.compile requires triton -- not installed. "
-                        "Falling back to eager mode.")
+            logger.info(
+                "torch.compile requires triton -- not installed. "
+                "Falling back to eager mode."
+            )
             return model
 
         # Warn about known problematic combinations.
-        brn_risk = (
-            model_type != "muvit"
-            and not (model_type == "tiny-unet"
-                     and str(architecture.get("norm", "brn")) == "gn")
+        brn_risk = model_type != "muvit" and not (
+            model_type == "tiny-unet" and str(architecture.get("norm", "brn")) == "gn"
         )
         if brn_risk:
             logger.warning(
@@ -4272,14 +4640,16 @@ class TrainingService:
                 "(model_type=%s, norm=%s). Expect graph-breaks around the "
                 "BRN buffer updates; the speedup may be limited. For the "
                 "best result, use tiny-unet with norm=gn.",
-                model_type, architecture.get("norm", "brn"),
+                model_type,
+                architecture.get("norm", "brn"),
             )
 
         try:
-            compiled = torch.compile(model, mode="reduce-overhead",
-                                     dynamic=False)
-            logger.info("Training model wrapped with torch.compile "
-                        "(mode=reduce-overhead, dynamic=False)")
+            compiled = torch.compile(model, mode="reduce-overhead", dynamic=False)
+            logger.info(
+                "Training model wrapped with torch.compile "
+                "(mode=reduce-overhead, dynamic=False)"
+            )
             return compiled
         except Exception as e:
             logger.warning(
@@ -4293,19 +4663,24 @@ class TrainingService:
         model_type: str,
         architecture: Dict[str, Any],
         num_channels: int,
-        num_classes: int
+        num_classes: int,
     ):
         """Create a segmentation model."""
         try:
             import segmentation_models_pytorch as smp
-            from .pretrained_models import PretrainedModelsService, get_pretrained_service
+            from .pretrained_models import (
+                PretrainedModelsService,
+                get_pretrained_service,
+            )
 
             encoder_name = architecture.get("backbone", "resnet34")
             # Default to False (no pretrained weights) for safety -- callers
             # must explicitly opt in.  Java always sets this via the
             # architecture dict; the default only matters if a new code path
             # omits it.  Matches the default in the training code (~line 1200).
-            encoder_weights = "imagenet" if architecture.get("use_pretrained", False) else None
+            encoder_weights = (
+                "imagenet" if architecture.get("use_pretrained", False) else None
+            )
 
             # Map model types to smp classes
             model_map = {
@@ -4324,6 +4699,7 @@ class TrainingService:
             # training on simple 2-5 class tasks. Defaults to BatchRenorm.
             if model_type == "tiny-unet":
                 from ..models.tiny_unet import TinyUNet
+
                 model = TinyUNet(
                     in_channels=num_channels,
                     n_classes=num_classes,
@@ -4345,12 +4721,8 @@ class TrainingService:
             # a scaled-down decoder.  Intended for small RGB H&E datasets
             # where ImageNet priors are worth keeping.
             if model_type == "fast-pretrained":
-                fp_encoder = architecture.get(
-                    "backbone", "timm-tf_efficientnet_lite0"
-                )
-                fp_decoder = architecture.get(
-                    "decoder_channels", [128, 64, 32, 16, 8]
-                )
+                fp_encoder = architecture.get("backbone", "timm-tf_efficientnet_lite0")
+                fp_decoder = architecture.get("decoder_channels", [128, 64, 32, 16, 8])
                 model = smp.Unet(
                     encoder_name=fp_encoder,
                     encoder_weights=encoder_weights,
@@ -4361,48 +4733,59 @@ class TrainingService:
                 logger.info(
                     "Created Fast Pretrained UNet (encoder=%s, decoder=%s, "
                     "pretrained=%s, in_channels=%d, classes=%d)",
-                    fp_encoder, fp_decoder,
+                    fp_encoder,
+                    fp_decoder,
                     encoder_weights is not None,
-                    num_channels, num_classes,
+                    num_channels,
+                    num_classes,
                 )
                 return model
 
             # MuViT transformer: delegate to dedicated factory
             if model_type == "muvit":
                 from .muvit_model import create_muvit_model
+
                 model = create_muvit_model(
                     architecture=architecture,
                     num_channels=num_channels,
                     num_classes=num_classes,
                 )
-                cfg = architecture.get("model_config",
-                                      architecture.get("backbone", "muvit-base"))
+                cfg = architecture.get(
+                    "model_config", architecture.get("backbone", "muvit-base")
+                )
                 logger.info("Created MuViT model (config=%s)", cfg)
                 return model
 
             if model_type not in model_map:
-                raise ValueError(f"Unknown model type: {model_type}. "
-                               f"Available: {list(model_map.keys()) + ['muvit']}")
+                raise ValueError(
+                    f"Unknown model type: {model_type}. "
+                    f"Available: {list(model_map.keys()) + ['muvit']}"
+                )
 
             # Check if this is a histology-pretrained encoder
             if encoder_name in PretrainedModelsService.HISTOLOGY_ENCODERS:
-                smp_encoder, hub_id = PretrainedModelsService.HISTOLOGY_ENCODERS[encoder_name]
+                smp_encoder, hub_id = PretrainedModelsService.HISTOLOGY_ENCODERS[
+                    encoder_name
+                ]
 
                 # Create model with imagenet weights first (correct architecture)
                 model = model_map[model_type](
                     encoder_name=smp_encoder,
                     encoder_weights="imagenet",
                     in_channels=num_channels,
-                    classes=num_classes
+                    classes=num_classes,
                 )
 
                 # Replace encoder weights with histology-pretrained weights
                 pretrained_service = get_pretrained_service()
                 pretrained_service._load_histology_weights(
-                    model, hub_id, smp_encoder, num_channels)
+                    model, hub_id, smp_encoder, num_channels
+                )
 
-                logger.info(f"Created {model_type} model with histology encoder "
-                           f"{encoder_name} (weights: {hub_id})")
+                logger.info(
+                    f"Created {model_type} model with histology encoder "
+                    f"{encoder_name} (weights: {hub_id})"
+                )
                 return model
 
             # Check if this is a foundation model encoder (on-demand download from HuggingFace)
@@ -4411,9 +4794,11 @@ class TrainingService:
             if encoder_name in PretrainedModelsService.FOUNDATION_ENCODERS:
                 _, hub_id = PretrainedModelsService.FOUNDATION_ENCODERS[encoder_name]
 
-                logger.info("Loading foundation model encoder: %s "
-                            "(downloading on first use, may require HF_TOKEN for gated models)",
-                            encoder_name)
+                logger.info(
+                    "Loading foundation model encoder: %s "
+                    "(downloading on first use, may require HF_TOKEN for gated models)",
+                    encoder_name,
+                )
 
                 # Use SMP's timm universal encoder (tu-) prefix for foundation model integration.
                 # This uses timm's feature extraction mode to produce multi-scale outputs
@@ -4424,10 +4809,13 @@ class TrainingService:
                         encoder_name=smp_encoder_name,
                         encoder_weights=None,
                         in_channels=num_channels,
-                        classes=num_classes
+                        classes=num_classes,
                     )
-                    logger.info("Created %s model with foundation encoder %s via SMP timm adapter",
-                                model_type, encoder_name)
+                    logger.info(
+                        "Created %s model with foundation encoder %s via SMP timm adapter",
+                        model_type,
+                        encoder_name,
+                    )
                     return model
                 except Exception as e:
                     raise ValueError(
@@ -4445,11 +4833,13 @@ class TrainingService:
                 encoder_name=encoder_name,
                 encoder_weights=encoder_weights,
                 in_channels=num_channels,
-                classes=num_classes
+                classes=num_classes,
             )
 
-            logger.info(f"Created {model_type} model with {encoder_name} encoder "
-                       f"(pretrained={encoder_weights is not None})")
+            logger.info(
+                f"Created {model_type} model with {encoder_name} encoder "
+                f"(pretrained={encoder_weights is not None})"
+            )
 
             return model
 
@@ -4504,7 +4894,9 @@ class TrainingService:
                     actual_channels = model.encoder.conv1.weight.shape[1]
                 except AttributeError:
                     actual_channels = input_config["num_channels"]
-                dummy_input = torch.randn(1, actual_channels, input_size[0], input_size[1])
+                dummy_input = torch.randn(
+                    1, actual_channels, input_size[0], input_size[1]
+                )
                 dummy_input = dummy_input.to(self.device)
 
                 # PyTorch 2.10 changed torch.onnx.export to use the dynamo
@@ -4515,8 +4907,8 @@ class TrainingService:
                 _onnx_export_kwargs = {"dynamo": False}
                 try:
                     import inspect as _inspect
-                    if "dynamo" not in _inspect.signature(
-                            torch.onnx.export).parameters:
+
+                    if "dynamo" not in _inspect.signature(torch.onnx.export).parameters:
                         _onnx_export_kwargs = {}
                 except Exception:
                     _onnx_export_kwargs = {}
@@ -4531,7 +4923,7 @@ class TrainingService:
                     output_names=["output"],
                     dynamic_axes={
                         "input": {0: "batch", 2: "height", 3: "width"},
-                        "output": {0: "batch", 2: "height", 3: "width"}
+                        "output": {0: "batch", 2: "height", 3: "width"},
                     },
                     **_onnx_export_kwargs,
                 )
@@ -4566,15 +4958,21 @@ class TrainingService:
                     "Exported static-shape ONNX model to %s "
                     "(C,H,W fixed at [%d,%d,%d]; batch dynamic)",
                     onnx_static_path,
-                    actual_channels, input_size[0], input_size[1],
+                    actual_channels,
+                    input_size[0],
+                    input_size[1],
                 )
                 onnx_variants["static"] = {
                     "path": "model_static.onnx",
                     # Reserved-batch sentinel: -1 communicates to the
                     # inference service that batch may vary. C,H,W
                     # are fixed at training dimensions.
-                    "shape": [-1, int(actual_channels),
-                              int(input_size[0]), int(input_size[1])],
+                    "shape": [
+                        -1,
+                        int(actual_channels),
+                        int(input_size[0]),
+                        int(input_size[1]),
+                    ],
                 }
             except Exception as e:
                 logger.warning(f"ONNX export (static) failed: {e}")
@@ -4596,8 +4994,7 @@ class TrainingService:
                 import copy
                 from ..utils.batchrenorm import fold_brn_to_bn, BatchRenorm2d
 
-                has_brn = any(isinstance(m, BatchRenorm2d)
-                              for m in model.modules())
+                has_brn = any(isinstance(m, BatchRenorm2d) for m in model.modules())
                 _epochs_trained = len(training_history or [])
                 if has_brn and _epochs_trained < _BRN_FOLD_MIN_EPOCHS:
                     logger.warning(
@@ -4607,7 +5004,8 @@ class TrainingService:
                         "fall back to model_static.onnx at FP16. "
                         "Re-export after a longer training run for "
                         "full INT8 speedup.",
-                        _epochs_trained, _BRN_FOLD_MIN_EPOCHS,
+                        _epochs_trained,
+                        _BRN_FOLD_MIN_EPOCHS,
                     )
                     has_brn = False  # skip the fold block below
                 if has_brn:
@@ -4629,11 +5027,16 @@ class TrainingService:
                     )
                     logger.info(
                         "Exported BN-folded static ONNX to %s for INT8 TRT",
-                        onnx_bn_path)
+                        onnx_bn_path,
+                    )
                     onnx_variants["static_bn"] = {
                         "path": "model_static_bn.onnx",
-                        "shape": [-1, int(actual_channels),
-                                  int(input_size[0]), int(input_size[1])],
+                        "shape": [
+                            -1,
+                            int(actual_channels),
+                            int(input_size[0]),
+                            int(input_size[1]),
+                        ],
                     }
                     del export_model
             except Exception as e:
@@ -4665,8 +5068,9 @@ class TrainingService:
         # because detail + context tiles are concatenated along channel axis.
         # Store this explicitly so any consumer can read the actual model
         # input size without needing to know the context_scale doubling rule.
-        base_ch = int(architecture.get("input_channels",
-                                       input_config.get("num_channels", 3)))
+        base_ch = int(
+            architecture.get("input_channels", input_config.get("num_channels", 3))
+        )
         ctx_scale = int(architecture.get("context_scale", 1))
         effective_ch = base_ch * 2 if ctx_scale > 1 else base_ch
 
@@ -4681,7 +5085,9 @@ class TrainingService:
             saved_norm["channel_stats"] = normalization_stats
             saved_input_config["normalization"] = saved_norm
 
-        display_name = classifier_name if classifier_name else f"{model_type.upper()} Classifier"
+        display_name = (
+            classifier_name if classifier_name else f"{model_type.upper()} Classifier"
+        )
         metadata = {
             "id": model_id,
             "name": display_name,
@@ -4689,10 +5095,10 @@ class TrainingService:
                 "type": model_type,
                 "use_batchrenorm": True,
                 **architecture,
-                "effective_input_channels": effective_ch
+                "effective_input_channels": effective_ch,
             },
             "input_config": saved_input_config,
-            "classes": class_list
+            "classes": class_list,
         }
         # Resolution contract: if pixel size or tile size were provided
         # by the caller, embed them so the inference path (and the
@@ -4702,24 +5108,31 @@ class TrainingService:
         # knows the contract is incomplete.
         if training_tile_size_px is not None and training_tile_size_px > 0:
             metadata["training_tile_size_px"] = int(training_tile_size_px)
-        if (training_pixel_size_um is not None
-                and training_pixel_size_um > 0
-                and not (isinstance(training_pixel_size_um, float)
-                         and training_pixel_size_um != training_pixel_size_um)):
+        if (
+            training_pixel_size_um is not None
+            and training_pixel_size_um > 0
+            and not (
+                isinstance(training_pixel_size_um, float)
+                and training_pixel_size_um != training_pixel_size_um
+            )
+        ):
             metadata["training_pixel_size_um"] = float(training_pixel_size_um)
         else:
             logger.warning(
                 "training_pixel_size_um not available -- model will lack "
                 "the resolution contract. Inference on images with "
                 "different pixel size will not auto-resample. Calibrate "
-                "your QuPath project images to record this.")
+                "your QuPath project images to record this."
+            )
         if onnx_variants:
             metadata["onnx_variants"] = onnx_variants
 
         # Also store normalization_stats at top level for backward compat
         if normalization_stats:
             metadata["normalization_stats"] = normalization_stats
-            logger.info(f"Saved normalization stats for {len(normalization_stats)} channels")
+            logger.info(
+                f"Saved normalization stats for {len(normalization_stats)} channels"
+            )
 
         metadata_path = output_dir / "metadata.json"
         with open(metadata_path, "w") as f:

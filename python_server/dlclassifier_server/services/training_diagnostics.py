@@ -25,19 +25,20 @@ class TrainingDiagnostics:
         diag.run_all_checks(training_history)
     """
 
-    def __init__(self, classes: List[str],
-                 limited_data_classes: Optional[set] = None):
+    def __init__(self, classes: List[str], limited_data_classes: Optional[set] = None):
         self.classes = classes
         # Classes with too few source slides for their val IoU to be
         # meaningful. The "never learned" check skips them because the
         # user has already been warned at training launch and the ceiling
         # is data-availability, not training quality.
-        self.limited_data_classes = (set(limited_data_classes)
-                                     if limited_data_classes else set())
+        self.limited_data_classes = (
+            set(limited_data_classes) if limited_data_classes else set()
+        )
         self._warned: set = set()  # track which warnings have been issued
 
-    def run_checks(self, history: List[Dict[str, Any]],
-                   min_epochs: int = 15) -> List[str]:
+    def run_checks(
+        self, history: List[Dict[str, Any]], min_epochs: int = 15
+    ) -> List[str]:
         """Run periodic checks (lightweight, called every N epochs).
 
         Args:
@@ -125,7 +126,7 @@ class TrainingDiagnostics:
             # Check if spikes cluster around a consistent value
             spike_mean = sum(spikes) / len(spikes)
             spike_variance = sum((s - spike_mean) ** 2 for s in spikes) / len(spikes)
-            spike_std = spike_variance ** 0.5
+            spike_std = spike_variance**0.5
             coefficient_of_variation = spike_std / spike_mean if spike_mean > 0 else 1.0
 
             if coefficient_of_variation < 0.3:  # spikes are consistent
@@ -155,8 +156,7 @@ class TrainingDiagnostics:
         # Find the majority class (highest median IoU)
         class_median_ious = {}
         for cls_name in self.classes:
-            ious = [e.get("per_class_iou", {}).get(cls_name, 0)
-                    for e in history]
+            ious = [e.get("per_class_iou", {}).get(cls_name, 0) for e in history]
             sorted_ious = sorted(ious)
             class_median_ious[cls_name] = sorted_ious[len(sorted_ious) // 2]
 
@@ -168,13 +168,11 @@ class TrainingDiagnostics:
 
         # Count epochs where all minority classes collapse
         collapse_count = 0
-        recent = history[-min(len(history), 20):]
+        recent = history[-min(len(history), 20) :]
         for entry in recent:
             pci = entry.get("per_class_iou", {})
             majority_ok = pci.get(majority_class, 0) > 0.5
-            minorities_collapsed = all(
-                pci.get(c, 0) < 0.05 for c in minority_classes
-            )
+            minorities_collapsed = all(pci.get(c, 0) < 0.05 for c in minority_classes)
             if majority_ok and minorities_collapsed:
                 collapse_count += 1
 
@@ -239,8 +237,7 @@ class TrainingDiagnostics:
             # just doesn't show it reliably.
             if cls_name in self.limited_data_classes:
                 continue
-            ious = [e.get("per_class_iou", {}).get(cls_name, 0)
-                    for e in history]
+            ious = [e.get("per_class_iou", {}).get(cls_name, 0) for e in history]
             max_iou = max(ious) if ious else 0
 
             if max_iou < 0.1:
@@ -323,7 +320,7 @@ class TrainingDiagnostics:
         # Check for high variance (oscillating loss)
         mean_loss = sum(recent) / len(recent)
         variance = sum((x - mean_loss) ** 2 for x in recent) / len(recent)
-        cv = (variance ** 0.5) / mean_loss if mean_loss > 0 else 0
+        cv = (variance**0.5) / mean_loss if mean_loss > 0 else 0
 
         if cv > 0.3:  # coefficient of variation > 30%
             msg = (
@@ -384,11 +381,10 @@ class TrainingDiagnostics:
             return warnings
 
         # Compute median IoU per class over recent epochs
-        recent = history[-min(len(history), 20):]
+        recent = history[-min(len(history), 20) :]
         class_median_ious = {}
         for cls_name in self.classes:
-            ious = sorted([e.get("per_class_iou", {}).get(cls_name, 0)
-                           for e in recent])
+            ious = sorted([e.get("per_class_iou", {}).get(cls_name, 0) for e in recent])
             class_median_ious[cls_name] = ious[len(ious) // 2]
 
         best_class = max(class_median_ious, key=class_median_ious.get)
@@ -428,8 +424,7 @@ class TrainingDiagnostics:
 
         recent = history[-10:]
         count_val_better = sum(
-            1 for e in recent
-            if e.get("val_loss", 999) < e.get("train_loss", 0) * 0.5
+            1 for e in recent if e.get("val_loss", 999) < e.get("train_loss", 0) * 0.5
         )
 
         if count_val_better >= 8:
