@@ -1967,8 +1967,8 @@ public class TrainingDialog {
             grid.setPadding(new Insets(10));
 
             ColumnConstraints labelCol = new ColumnConstraints();
-            labelCol.setMinWidth(140);
-            labelCol.setPrefWidth(150);
+            labelCol.setMinWidth(180);
+            labelCol.setPrefWidth(210);
             ColumnConstraints fieldCol = new ColumnConstraints();
             fieldCol.setHgrow(Priority.ALWAYS);
             grid.getColumnConstraints().addAll(labelCol, fieldCol);
@@ -2594,8 +2594,8 @@ public class TrainingDialog {
             grid.setPadding(new Insets(10));
 
             ColumnConstraints labelCol = new ColumnConstraints();
-            labelCol.setMinWidth(140);
-            labelCol.setPrefWidth(150);
+            labelCol.setMinWidth(180);
+            labelCol.setPrefWidth(210);
             ColumnConstraints fieldCol = new ColumnConstraints();
             fieldCol.setHgrow(Priority.ALWAYS);
             grid.getColumnConstraints().addAll(labelCol, fieldCol);
@@ -3077,8 +3077,12 @@ public class TrainingDialog {
 
         /**
          * Standard two-column GridPane used by every training-related section
-         * (label column ~150px, field column grows). Pulled out so each
-         * section creator stays focused on its own widgets.
+         * (label column ~210px, field column grows). 210px accommodates the
+         * longest labels in use ("Min Annotation Coverage (%):",
+         * "Min Tile Label Fraction (%):", "Gradient Accumulation:",
+         * "Validation Split (%):", "Early Stop Patience:") without truncation
+         * at default fonts. Earlier value was 150px which silently cut these
+         * off as "Min Annotation COvera..." regardless of dialog width.
          */
         private GridPane newParamGrid() {
             GridPane grid = new GridPane();
@@ -3086,8 +3090,8 @@ public class TrainingDialog {
             grid.setVgap(8);
             grid.setPadding(new Insets(10));
             ColumnConstraints labelCol = new ColumnConstraints();
-            labelCol.setMinWidth(140);
-            labelCol.setPrefWidth(150);
+            labelCol.setMinWidth(180);
+            labelCol.setPrefWidth(210);
             ColumnConstraints fieldCol = new ColumnConstraints();
             fieldCol.setHgrow(Priority.ALWAYS);
             grid.getColumnConstraints().addAll(labelCol, fieldCol);
