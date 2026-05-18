@@ -5,6 +5,8 @@
 
 A QuPath extension for deep learning-based pixel classification, supporting both brightfield (RGB) and multi-channel fluorescence/spectral images.
 
+> **Research use only.** This extension is a research tool. It is not a diagnostic device, has not been cleared for clinical use, and produces results that are not validated for patient care. Models trained or loaded with this extension must not drive clinical decisions.
+
 ---
 
 > **WARNING: Hardware Requirements**

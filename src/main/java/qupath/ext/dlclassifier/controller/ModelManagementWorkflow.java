@@ -310,10 +310,9 @@ public class ModelManagementWorkflow {
             addDetailRow(
                     trainingGrid, row++, "Final Accuracy:", String.format("%.1f%%", metadata.getFinalAccuracy() * 100));
 
-            if (metadata.getTrainingImageName() != null
-                    && !metadata.getTrainingImageName().isEmpty()) {
-                addDetailRow(trainingGrid, row++, "Training Image:", metadata.getTrainingImageName());
-            }
+            // (Legacy "Training Image" row removed; the underlying field was
+            // dormant and has been deleted -- see ClassifierMetadata note for
+            // clinical persona m3.)
 
             detailsPane.getChildren().add(trainingGrid);
         }

@@ -48,7 +48,10 @@ public class ClassifierMetadata {
     private final List<ClassInfo> classes;
 
     // Training info
-    private final String trainingImageName;
+    // Removed: trainingImageName / image_name field was dormant -- never set
+    // by any workflow, always serialised as empty string, and semantically
+    // implied PHI capture (clinical persona m3). Loader tolerates either
+    // presence or absence of "image_name" in metadata.json for back-compat.
     private final int trainingEpochs;
     private final double finalLoss;
     private final double finalAccuracy;
@@ -81,7 +84,7 @@ public class ClassifierMetadata {
         this.normalizationStrategy = builder.normalizationStrategy;
         this.bitDepthTrained = builder.bitDepthTrained;
         this.classes = Collections.unmodifiableList(new ArrayList<>(builder.classes));
-        this.trainingImageName = builder.trainingImageName;
+        // trainingImageName removed (clinical persona m3); see comment above.
         this.trainingEpochs = builder.trainingEpochs;
         this.finalLoss = builder.finalLoss;
         this.finalAccuracy = builder.finalAccuracy;
@@ -219,10 +222,6 @@ public class ClassifierMetadata {
         return classes.size();
     }
 
-    public String getTrainingImageName() {
-        return trainingImageName;
-    }
-
     public int getTrainingEpochs() {
         return trainingEpochs;
     }
@@ -318,7 +317,6 @@ public class ClassifierMetadata {
         map.put("classes", classesInfo);
 
         Map<String, Object> training = new HashMap<>();
-        training.put("image_name", trainingImageName);
         training.put("epochs", trainingEpochs);
         training.put("final_loss", finalLoss);
         training.put("final_accuracy", finalAccuracy);
@@ -389,7 +387,7 @@ public class ClassifierMetadata {
                 ChannelConfiguration.NormalizationStrategy.PERCENTILE_99;
         private int bitDepthTrained = 8;
         private List<ClassInfo> classes = new ArrayList<>();
-        private String trainingImageName = "";
+        // trainingImageName removed (clinical persona m3).
         private int trainingEpochs = 0;
         private double finalLoss = 0.0;
         private double finalAccuracy = 0.0;
@@ -481,11 +479,6 @@ public class ClassifierMetadata {
 
         public Builder addClass(int index, String name, String color) {
             this.classes.add(new ClassInfo(index, name, color));
-            return this;
-        }
-
-        public Builder trainingImageName(String imageName) {
-            this.trainingImageName = imageName;
             return this;
         }
 

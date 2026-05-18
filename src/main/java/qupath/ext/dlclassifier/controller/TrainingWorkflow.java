@@ -59,6 +59,7 @@ import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
+import qupath.lib.plugins.workflow.DefaultScriptableWorkflowStep;
 import qupath.lib.projects.ProjectImageEntry;
 import qupath.lib.roi.interfaces.ROI;
 import qupath.lib.scripting.QP;
@@ -1703,6 +1704,37 @@ public class TrainingWorkflow {
             modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()), true, filesInPlace);
             if (progress != null) progress.log("Classifier saved: " + metadata.getId());
 
+            // Workflow-history step so the project remembers this training run
+            // (scientist M-4 / clinical m2). Mirrors the pattern used on the
+            // inference side at InferenceWorkflow.addWorkflowStep. We attach
+            // to the currently-active image because workflow history is
+            // per-image; a multi-image training run only records on the
+            // currently-open one. Best-effort: failures here must not break
+            // the training completion path.
+            try {
+                @SuppressWarnings("unchecked")
+                ImageData<BufferedImage> currentImageData = (ImageData<BufferedImage>) QP.getCurrentImageData();
+                if (currentImageData != null) {
+                    String script = String.format(
+                            "import qupath.ext.dlclassifier.scripting.DLClassifierScripts%n"
+                                    + "// Trained classifier: %s%n"
+                                    + "// Best epoch: %d / %d  best mIoU: %.4f%n"
+                                    + "def classifier = DLClassifierScripts.loadClassifier(\"%s\")",
+                            metadata.getName().replace("\\", "\\\\").replace("\"", "\\\""),
+                            serverResult.bestEpoch(),
+                            serverResult.lastEpoch(),
+                            serverResult.bestMeanIoU(),
+                            metadata.getId().replace("\\", "\\\\").replace("\"", "\\\""));
+                    currentImageData
+                            .getHistoryWorkflow()
+                            .addStep(new DefaultScriptableWorkflowStep(
+                                    "DL Pixel Classifier Training (" + metadata.getName() + ")", script));
+                    logger.info("Added workflow step for training of classifier '{}'", metadata.getName());
+                }
+            } catch (Exception wfErr) {
+                logger.debug("Could not add training workflow step: {}", wfErr.getMessage());
+            }
+
             // Build diagnostic hints from final training metrics
             String completionMessage = "Training completed successfully";
             List<String> hints = new ArrayList<>();
@@ -2573,6 +2605,17 @@ public class TrainingWorkflow {
         if (handlerParams != null && !handlerParams.isEmpty()) {
             settings.put("handler_parameters", handlerParams);
         }
+        // Seven previously-unpersisted fields. Without these, a model
+        // re-train ("Load Settings From Model") came back with a random
+        // seed and a fresh weight decay -- scientist persona M-6.
+        if (config.getSeed() != null) {
+            settings.put("seed", config.getSeed());
+        }
+        settings.put("discriminative_lr_ratio", config.getDiscriminativeLrRatio());
+        settings.put("use_lr_finder", config.isUseLrFinder());
+        settings.put("fused_optimizer", config.isFusedOptimizer());
+        settings.put("gpu_augmentation", config.isGpuAugmentation());
+        settings.put("use_torch_compile", config.isUseTorchCompile());
         return settings;
     }
 

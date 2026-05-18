@@ -167,6 +167,21 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty defaultMixedPrecision =
             PathPrefs.createPersistentPreference("dlclassifier.defaultMixedPrecision", true);
 
+    // Four advanced training toggles that previously had no preference at all
+    // and were re-defaulted on every dialog open. Persisting them closes a
+    // reproducibility gap the scientist persona pass flagged as B-1.
+    private static final BooleanProperty defaultUseLrFinder =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultUseLrFinder", true);
+
+    private static final BooleanProperty defaultFusedOptimizer =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultFusedOptimizer", true);
+
+    private static final BooleanProperty defaultGpuAugmentation =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultGpuAugmentation", false);
+
+    private static final BooleanProperty defaultUseTorchCompile =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultUseTorchCompile", false);
+
     // UI mode
     private static final BooleanProperty advancedMode =
             PathPrefs.createPersistentPreference("dlclassifier.advancedMode", false);
@@ -1087,6 +1102,38 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty defaultMixedPrecisionProperty() {
         return defaultMixedPrecision;
+    }
+
+    public static boolean isDefaultUseLrFinder() {
+        return defaultUseLrFinder.get();
+    }
+
+    public static void setDefaultUseLrFinder(boolean enabled) {
+        defaultUseLrFinder.set(enabled);
+    }
+
+    public static boolean isDefaultFusedOptimizer() {
+        return defaultFusedOptimizer.get();
+    }
+
+    public static void setDefaultFusedOptimizer(boolean enabled) {
+        defaultFusedOptimizer.set(enabled);
+    }
+
+    public static boolean isDefaultGpuAugmentation() {
+        return defaultGpuAugmentation.get();
+    }
+
+    public static void setDefaultGpuAugmentation(boolean enabled) {
+        defaultGpuAugmentation.set(enabled);
+    }
+
+    public static boolean isDefaultUseTorchCompile() {
+        return defaultUseTorchCompile.get();
+    }
+
+    public static void setDefaultUseTorchCompile(boolean enabled) {
+        defaultUseTorchCompile.set(enabled);
     }
 
     public static boolean isAdvancedMode() {

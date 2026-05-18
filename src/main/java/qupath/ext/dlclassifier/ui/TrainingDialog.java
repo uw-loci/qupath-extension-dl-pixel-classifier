@@ -243,6 +243,7 @@ public class TrainingDialog {
         private ComboBox<String> ohemScheduleCombo;
         private Label ohemScheduleLabel;
         private CheckBox earlyStoppingEnabledCheck;
+        private Label epochsHintLabel;
         private ComboBox<String> earlyStoppingMetricCombo;
         private Spinner<Integer> earlyStoppingPatienceSpinner;
         private Button autoDistributeBtn;
@@ -386,7 +387,7 @@ public class TrainingDialog {
             dialog.setAlwaysOnTop(true);
 
             // Create buttons
-            Button copyScriptButton = new Button("Copy as QuPath Script");
+            Button copyScriptButton = new Button("Copy as Groovy Script");
             TooltipHelper.install(
                     copyScriptButton,
                     "Copy current settings as a Groovy script for QuPath's script editor.\n"
@@ -766,6 +767,9 @@ public class TrainingDialog {
             Label subtitleLabel = new Label("Train a deep learning model to classify pixels in your images");
             subtitleLabel.setStyle("-fx-text-fill: #666;");
 
+            Label ruoLabel = new Label("Research use only -- not for clinical or diagnostic use.");
+            ruoLabel.setStyle("-fx-text-fill: #888; -fx-font-size: 11px; -fx-font-style: italic;");
+
             // Basic mode hint (hidden in advanced)
             Label basicHint = new Label("Select images, load classes, choose an encoder, pick classes, "
                     + "name your classifier, and click Start Training. "
@@ -801,7 +805,7 @@ public class TrainingDialog {
 
             headerBox
                     .getChildren()
-                    .addAll(titleRow, subtitleLabel, basicHint, advancedSettingsWarning, new Separator());
+                    .addAll(titleRow, subtitleLabel, ruoLabel, basicHint, advancedSettingsWarning, new Separator());
             return headerBox;
         }
 
@@ -885,7 +889,12 @@ public class TrainingDialog {
 
             maeEncoderPathField = new TextField();
             maeEncoderPathField.setEditable(false);
-            maeEncoderPathField.setPromptText("Select MAE encoder .pt file...");
+            maeEncoderPathField.setFocusTraversable(false);
+            maeEncoderPathField.setMouseTransparent(true);
+            maeEncoderPathField.setStyle(
+                    "-fx-control-inner-background: #f4f4f4; -fx-text-fill: #555; -fx-background-insets: 0; "
+                            + "-fx-background-radius: 2;");
+            maeEncoderPathField.setPromptText("(no file selected -- click Browse to choose)");
             maeEncoderPathField.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(maeEncoderPathField, Priority.ALWAYS);
 
@@ -966,7 +975,12 @@ public class TrainingDialog {
 
             sslEncoderPathField = new TextField();
             sslEncoderPathField.setEditable(false);
-            sslEncoderPathField.setPromptText("Select SSL encoder .pt file...");
+            sslEncoderPathField.setFocusTraversable(false);
+            sslEncoderPathField.setMouseTransparent(true);
+            sslEncoderPathField.setStyle(
+                    "-fx-control-inner-background: #f4f4f4; -fx-text-fill: #555; -fx-background-insets: 0; "
+                            + "-fx-background-radius: 2;");
+            sslEncoderPathField.setPromptText("(no file selected -- click Browse to choose)");
             sslEncoderPathField.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(sslEncoderPathField, Priority.ALWAYS);
 
@@ -1717,6 +1731,38 @@ public class TrainingDialog {
                     minTileLabelFractionPctSpinner.getValueFactory().setValue(frac * 100.0);
                 }
 
+                // Reproducibility: previously these fields were not round-tripped
+                // (scientist persona M-6). Restore them so "Load Settings From
+                // Model" actually reproduces the original training conditions.
+                if (ts.containsKey("seed") && seedSpinner != null) {
+                    Object seedVal = ts.get("seed");
+                    if (seedVal instanceof Number n) {
+                        seedSpinner.getValueFactory().setValue(n.intValue());
+                    }
+                }
+                if (ts.containsKey("discriminative_lr_ratio") && discriminativeLrSpinner != null) {
+                    discriminativeLrSpinner
+                            .getValueFactory()
+                            .setValue(((Number) ts.get("discriminative_lr_ratio")).doubleValue());
+                }
+                if (ts.containsKey("weight_decay") && weightDecaySpinner != null) {
+                    weightDecaySpinner.getValueFactory().setValue(((Number) ts.get("weight_decay")).doubleValue());
+                }
+                if (ts.containsKey("use_lr_finder") && useLrFinderCheck != null) {
+                    useLrFinderCheck.setSelected(Boolean.TRUE.equals(ts.get("use_lr_finder")));
+                }
+                if (ts.containsKey("fused_optimizer") && fusedOptimizerCheck != null) {
+                    fusedOptimizerCheck.setSelected(Boolean.TRUE.equals(ts.get("fused_optimizer")));
+                }
+                if (ts.containsKey("gpu_augmentation") && gpuAugmentationCheck != null) {
+                    gpuAugmentationCheck.setSelected(Boolean.TRUE.equals(ts.get("gpu_augmentation")));
+                }
+                if (ts.containsKey("use_torch_compile")
+                        && useTorchCompileCheck != null
+                        && !useTorchCompileCheck.isDisable()) {
+                    useTorchCompileCheck.setSelected(Boolean.TRUE.equals(ts.get("use_torch_compile")));
+                }
+
                 // Pretrained weights -> weight init radio
                 if (ts.containsKey("use_pretrained_weights") && Boolean.TRUE.equals(ts.get("use_pretrained_weights"))) {
                     selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
@@ -2199,11 +2245,13 @@ public class TrainingDialog {
 
             HBox imageButtonBox = new HBox(10, selectAllImagesBtn, selectNoneImagesBtn, autoDistributeBtn, allBothBtn);
 
-            tileEstimateLabel = new Label();
+            tileEstimateLabel = new Label("Tile count will appear after 'Load Classes from Selected Images'.");
             tileEstimateLabel.setWrapText(true);
-            tileEstimateLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
-            tileEstimateLabel.setVisible(false);
-            tileEstimateLabel.setManaged(false);
+            tileEstimateLabel.setStyle("-fx-text-fill: #555; -fx-font-size: 11px; -fx-font-style: italic;");
+            // Visible from the start as a placeholder; updateTileEstimateLabel()
+            // overrides with the real estimate once classes load.
+            tileEstimateLabel.setVisible(true);
+            tileEstimateLabel.setManaged(true);
 
             // Basic-mode-only summary of the auto-assigned train/val/both split.
             // The per-image Train/Val dropdowns and the Auto-Distribute /
@@ -3271,14 +3319,19 @@ public class TrainingDialog {
             // Epochs hint (basic mode only)
             Label epochsHint = new Label("Training passes over all data. Early stopping halts if no improvement.");
             epochsHint.setWrapText(true);
-            epochsHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11px;");
+            epochsHint.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
             epochsHint.visibleProperty().bind(advancedMode.not());
             epochsHint.managedProperty().bind(advancedMode.not());
+            // Reactive hint: text flips based on whether ES is enabled. Wired
+            // up below where earlyStoppingEnabledCheck is constructed.
+            this.epochsHintLabel = epochsHint;
             grid.add(epochsHint, 0, row, 2, 1);
             row++;
 
-            // Early stopping status (basic mode only)
-            earlyStoppingStatusLabel = new Label("Early stopping enabled (patience: 15, metric: Mean IoU)");
+            // Early stopping status (basic mode only). Initialised lazily after
+            // construction so the first paint matches the user's stored prefs
+            // instead of a hard-coded "patience: 15, metric: Mean IoU".
+            earlyStoppingStatusLabel = new Label();
             earlyStoppingStatusLabel.setWrapText(true);
             earlyStoppingStatusLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
             earlyStoppingStatusLabel.visibleProperty().bind(advancedMode.not());
@@ -3326,7 +3379,7 @@ public class TrainingDialog {
             // per-image roles, and explains why the spinner is disabled
             // when all selected images have fixed roles.
             validationSplitObservedLabel = new Label();
-            validationSplitObservedLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 10px;");
+            validationSplitObservedLabel.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
             validationSplitObservedLabel.setWrapText(true);
             validationSplitObservedLabel.setMaxWidth(280);
             validationSplitObservedLabel.setVisible(false);
@@ -3571,6 +3624,12 @@ public class TrainingDialog {
                 esMetricLabel.setDisable(disabled);
                 earlyStoppingPatienceSpinner.setDisable(disabled);
                 esPatienceLabel.setDisable(disabled);
+                if (epochsHintLabel != null) {
+                    epochsHintLabel.setText(
+                            disabled
+                                    ? "Training passes over all data. Trains the full epoch count (early stopping disabled)."
+                                    : "Training passes over all data. Early stopping halts if no improvement.");
+                }
             };
             // Reactive preference save: change to the combo immediately
             // persists, instead of waiting for a Train click. Suppression
@@ -3607,6 +3666,7 @@ public class TrainingDialog {
                 }
             });
             applyEarlyStoppingDisableState.run();
+            updateEarlyStoppingStatusLabel();
 
             TitledPane pane = new TitledPane("Duration & Stopping", grid);
             pane.setExpanded(true);
@@ -3643,7 +3703,7 @@ public class TrainingDialog {
             // Batch size hint (basic mode only)
             Label batchHint = new Label("Images processed at once. Larger = faster but more GPU memory.");
             batchHint.setWrapText(true);
-            batchHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11px;");
+            batchHint.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
             batchHint.visibleProperty().bind(advancedMode.not());
             batchHint.managedProperty().bind(advancedMode.not());
             grid.add(batchHint, 0, row, 2, 1);
@@ -3808,7 +3868,7 @@ public class TrainingDialog {
             // Tile size hint (basic mode only)
             Label tileHint = new Label("Pixel size of patches the model learns from.");
             tileHint.setWrapText(true);
-            tileHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11px;");
+            tileHint.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
             tileHint.visibleProperty().bind(advancedMode.not());
             tileHint.managedProperty().bind(advancedMode.not());
             grid.add(tileHint, 0, row, 2, 1);
@@ -4414,7 +4474,7 @@ public class TrainingDialog {
 
             // Auto-find learning rate (LR Finder presweep toggle)
             useLrFinderCheck = new CheckBox("Auto-find learning rate (LR Finder)");
-            useLrFinderCheck.setSelected(true);
+            useLrFinderCheck.setSelected(DLClassifierPreferences.isDefaultUseLrFinder());
             TooltipHelper.install(
                     useLrFinderCheck,
                     "Run a 100-iteration LR Finder presweep before training to pick\n"
@@ -4425,6 +4485,15 @@ public class TrainingDialog {
                             + "- You already know a good learning rate for this task\n\n"
                             + "When disabled, max_lr = base_lr * sqrt(batch_size / 8) is used.\n"
                             + "Only affects training when the scheduler is OneCycleLR.");
+            // Disable when the scheduler isn't OneCycleLR -- the backend
+            // ignores the toggle elsewhere, so a stuck-on checkbox misleads.
+            Runnable updateLrFinderApplicability = () -> {
+                String sched = schedulerCombo.getValue();
+                boolean applicable = "One Cycle".equals(sched);
+                useLrFinderCheck.setDisable(!applicable);
+            };
+            schedulerCombo.valueProperty().addListener((obs, o, n) -> updateLrFinderApplicability.run());
+            updateLrFinderApplicability.run();
             grid.add(useLrFinderCheck, 0, row, 2, 1);
             row++;
 
@@ -4675,16 +4744,16 @@ public class TrainingDialog {
             ohemScheduleCombo.setManaged(false);
 
             boolean ohemActive = ohemSpinner.getValue() < 100;
-            ohemStartLabel.setVisible(ohemActive);
-            ohemStartLabel.setManaged(ohemActive);
-            ohemStartSpinner.setVisible(ohemActive);
-            ohemStartSpinner.setManaged(ohemActive);
+            // Disable rather than hide so the row doesn't reflow as the user
+            // tunes the Hard Pixel spinner. Visibility-flipping yanked the
+            // controls out of the layout completely, which the persona pass
+            // flagged as "looks like a rendering bug" (audit item 12).
+            ohemStartLabel.setDisable(!ohemActive);
+            ohemStartSpinner.setDisable(!ohemActive);
             ohemSpinner.valueProperty().addListener((obs, old, val) -> {
                 boolean active = val != null && val < 100;
-                ohemStartLabel.setVisible(active);
-                ohemStartLabel.setManaged(active);
-                ohemStartSpinner.setVisible(active);
-                ohemStartSpinner.setManaged(active);
+                ohemStartLabel.setDisable(!active);
+                ohemStartSpinner.setDisable(!active);
                 // Enforce start >= end whenever end changes.
                 if (val != null && ohemStartSpinner.getValue() < val) {
                     ohemStartSpinner.getValueFactory().setValue(val);
@@ -4724,12 +4793,10 @@ public class TrainingDialog {
                     ohemAdaptiveFloorCheck);
 
             boolean ohemActiveNow = ohemSpinner.getValue() < 100;
-            ohemAdaptiveFloorCheck.setVisible(ohemActiveNow);
-            ohemAdaptiveFloorCheck.setManaged(ohemActiveNow);
+            ohemAdaptiveFloorCheck.setDisable(!ohemActiveNow);
             ohemSpinner.valueProperty().addListener((obs, old, val) -> {
                 boolean active = val != null && val < 100;
-                ohemAdaptiveFloorCheck.setVisible(active);
-                ohemAdaptiveFloorCheck.setManaged(active);
+                ohemAdaptiveFloorCheck.setDisable(!active);
             });
             grid.add(ohemAdaptiveFloorCheck, 0, row, 2, 1);
             row++;
@@ -4748,7 +4815,7 @@ public class TrainingDialog {
 
             // Fused optimizer: one-kernel AdamW update, saves 2-5 ms/step on tiny models.
             fusedOptimizerCheck = new CheckBox("Fused optimizer (CUDA only)");
-            fusedOptimizerCheck.setSelected(true);
+            fusedOptimizerCheck.setSelected(DLClassifierPreferences.isDefaultFusedOptimizer());
             TooltipHelper.install(
                     fusedOptimizerCheck,
                     "Use PyTorch's fused AdamW implementation on NVIDIA GPUs.\n\n" + "Benefits:\n"
@@ -4781,7 +4848,7 @@ public class TrainingDialog {
 
             // GPU augmentation via kornia (experimental, opt-in).
             gpuAugmentationCheck = new CheckBox("GPU augmentation (experimental, CUDA only)");
-            gpuAugmentationCheck.setSelected(false);
+            gpuAugmentationCheck.setSelected(DLClassifierPreferences.isDefaultGpuAugmentation());
             TooltipHelper.installWithLink(
                     gpuAugmentationCheck,
                     "Run data augmentation on the GPU via kornia instead of on\n"
@@ -4812,7 +4879,7 @@ public class TrainingDialog {
                     ? "torch.compile (experimental, Linux+CUDA)"
                     : "torch.compile (Linux-only, disabled on this OS)";
             useTorchCompileCheck = new CheckBox(compileLabel);
-            useTorchCompileCheck.setSelected(false);
+            useTorchCompileCheck.setSelected(isLinux && DLClassifierPreferences.isDefaultUseTorchCompile());
             useTorchCompileCheck.setDisable(!isLinux);
             TooltipHelper.installWithLink(
                     useTorchCompileCheck,
@@ -5270,6 +5337,8 @@ public class TrainingDialog {
                     "Loaded %d classes from %d images. Estimated ~%,d training tiles.", classCount, imageCount, est));
             appendInMemoryCacheEstimate(sb, est);
             tileEstimateLabel.setText(sb.toString());
+            // Reset placeholder italic styling now that the real estimate is shown.
+            tileEstimateLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
             tileEstimateLabel.setVisible(true);
             tileEstimateLabel.setManaged(true);
         }
@@ -6197,6 +6266,18 @@ public class TrainingDialog {
             DLClassifierPreferences.setDefaultProgressiveResize(progressiveResizeCheck.isSelected());
             DLClassifierPreferences.setDefaultFocusClass(mapFocusClassFromDisplay(focusClassCombo.getValue()));
             DLClassifierPreferences.setDefaultFocusClassMinIoU(focusClassMinIoUSpinner.getValue());
+            if (useLrFinderCheck != null) {
+                DLClassifierPreferences.setDefaultUseLrFinder(useLrFinderCheck.isSelected());
+            }
+            if (fusedOptimizerCheck != null) {
+                DLClassifierPreferences.setDefaultFusedOptimizer(fusedOptimizerCheck.isSelected());
+            }
+            if (gpuAugmentationCheck != null) {
+                DLClassifierPreferences.setDefaultGpuAugmentation(gpuAugmentationCheck.isSelected());
+            }
+            if (useTorchCompileCheck != null) {
+                DLClassifierPreferences.setDefaultUseTorchCompile(useTorchCompileCheck.isSelected());
+            }
 
             // Build training config from unified weight init strategy
             TrainingConfig trainingConfig = buildTrainingConfig();

@@ -224,15 +224,14 @@ public class ModelManager {
                 });
             }
 
-            // Training metrics
-            String trainingImageName = "";
+            // Training metrics. Note: the legacy "image_name" field is read but
+            // discarded -- it was always empty and the dormant getter has been
+            // removed (clinical persona m3).
             int trainingEpochs = 0;
             double finalLoss = 0.0;
             double finalAccuracy = 0.0;
             if (obj.has("training")) {
                 JsonObject train = obj.getAsJsonObject("training");
-                trainingImageName =
-                        train.has("image_name") ? train.get("image_name").getAsString() : "";
                 trainingEpochs = train.has("epochs") ? train.get("epochs").getAsInt() : 0;
                 finalLoss = train.has("final_loss") ? train.get("final_loss").getAsDouble() : 0.0;
                 finalAccuracy = train.has("final_accuracy")
@@ -297,7 +296,6 @@ public class ModelManager {
                     .normalizationStrategy(ChannelConfiguration.NormalizationStrategy.valueOf(normStrategy))
                     .bitDepthTrained(bitDepth)
                     .classes(classes)
-                    .trainingImageName(trainingImageName)
                     .trainingEpochs(trainingEpochs)
                     .finalLoss(finalLoss)
                     .finalAccuracy(finalAccuracy)
