@@ -67,6 +67,34 @@ DLClassifierScripts.classifyProject(classifier)
 println "Done"
 ```
 
+### Retrain a classifier with a tweak
+
+Re-runs training using a previously trained classifier's settings, with
+optional per-field overrides. Useful for seed sweeps and "same recipe,
+one knob changed" runs:
+
+```groovy
+import qupath.ext.dlclassifier.scripting.DLClassifierScripts
+
+// Same config, just a different seed
+def result = DLClassifierScripts.retrainClassifier(
+    "my_classifier_id",
+    [seed: 43])
+
+// Or sweep three seeds in one script
+for (seed in [42, 43, 44]) {
+    DLClassifierScripts.retrainClassifier(
+        "my_classifier_id",
+        [seed: seed, name: "my_classifier_seed${seed}"])
+}
+```
+
+Overrides accept the same key names that the trained model's
+`metadata.json` stores under `training_settings` (for example
+`learning_rate`, `epochs`, `weight_decay`, `ohem_hard_ratio`). The
+top-level `name` and `description` are also overridable. If the
+override map is omitted, the run reproduces the original training.
+
 ## Builder API
 
 For full control over inference parameters:
