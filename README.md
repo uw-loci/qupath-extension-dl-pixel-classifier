@@ -54,6 +54,7 @@ Each bullet leads with what you can *do*; the algorithm or architecture name is 
 
 ### Inspect and iterate
 - **Find your worst annotations and hardest tiles automatically** -- post-training evaluation runs the model over every training tile, ranks by loss, and renders per-tile loss heatmaps and disagreement maps as viewer overlays. Sessions save per classifier version and reload without re-running
+- **Visualize class confusions in a matrix** -- the Training Area Issues dialog includes a Confusion Matrix tab showing pixel-level GT × Predicted aggregates across all tiles, color-coded by error percentage. Click any off-diagonal cell to filter the Tiles tab to just those confusion pairs
 - **See training progress live** with separate train and validation loss charts
 
 ### Automate and reproduce
