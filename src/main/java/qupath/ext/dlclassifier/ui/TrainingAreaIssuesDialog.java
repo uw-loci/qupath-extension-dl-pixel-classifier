@@ -117,8 +117,15 @@ public class TrainingAreaIssuesDialog {
     private Label adjustStatusLabel;
     private CheckBox previewCheckBox;
     private Slider confidenceSlider;
-    // Cached preview result for the apply-after-preview flow
+    // Cached preview result for the apply-after-preview flow.
+    // pendingPreview reflects only the currently-checked transitions; basePreview
+    // is the unfiltered version, kept so toggling a checkbox can rebuild the
+    // filtered overlay without re-loading prediction maps.
     private AnnotationAdjuster.PreviewResult pendingPreview;
+    private AnnotationAdjuster.PreviewResult basePreview;
+    private VBox transitionCheckBoxesBox;
+    private final Map<AnnotationAdjuster.TransitionKey, CheckBox> transitionCheckBoxes = new LinkedHashMap<>();
+    private final Set<AnnotationAdjuster.TransitionKey> allowedTransitions = new HashSet<>();
 
     // Confusion Matrix tab: rebuilt whenever allRows changes (initial load,
     // session reload). Cell click sets the (gt, pred) filter and switches
@@ -1358,6 +1365,14 @@ public class TrainingAreaIssuesDialog {
         adjustStatusLabel.setWrapText(true);
         adjustStatusLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
 
+        // Per-(from -> to) transition checkboxes, populated when a preview is
+        // computed. Hidden when no preview is pending. Toggling a checkbox
+        // re-filters the preview overlay live.
+        transitionCheckBoxesBox = new VBox(2);
+        transitionCheckBoxesBox.setPadding(new Insets(4, 0, 4, 0));
+        transitionCheckBoxesBox.setVisible(false);
+        transitionCheckBoxesBox.setManaged(false);
+
         VBox content = new VBox(
                 6,
                 confLabel,
@@ -1366,6 +1381,7 @@ public class TrainingAreaIssuesDialog {
                 adjustButton,
                 cancelPreviewButton,
                 undoButton,
+                transitionCheckBoxesBox,
                 adjustStatusLabel);
         content.setPadding(new Insets(8));
 
@@ -1405,6 +1421,14 @@ public class TrainingAreaIssuesDialog {
             return;
         }
         pendingPreview = null;
+        basePreview = null;
+        allowedTransitions.clear();
+        transitionCheckBoxes.clear();
+        if (transitionCheckBoxesBox != null) {
+            transitionCheckBoxesBox.getChildren().clear();
+            transitionCheckBoxesBox.setVisible(false);
+            transitionCheckBoxesBox.setManaged(false);
+        }
         adjustButton.setText("Adjust annotations in current tile");
         cancelPreviewButton.setVisible(false);
         cancelPreviewButton.setManaged(false);
@@ -1436,14 +1460,26 @@ public class TrainingAreaIssuesDialog {
 
         // Second click: apply the pending preview
         if (pendingPreview != null) {
+            int changedPixels = pendingPreview.totalChangedPixels();
+            if (changedPixels == 0) {
+                adjustStatusLabel.setText("No transitions selected -- nothing to apply.\n"
+                        + "Check at least one transition or cancel the preview.");
+                return;
+            }
+            int checkedCount = allowedTransitions.size();
+            int totalCount =
+                    basePreview != null ? basePreview.changesPerTransition().size() : checkedCount;
+            String suffix = checkedCount == totalCount
+                    ? ""
+                    : String.format(" (from %d of %d transitions)", checkedCount, totalCount);
             boolean confirmed = Dialogs.showConfirmDialog(
                     "Apply Annotation Adjustment",
                     String.format(
-                            "%d pixels will be changed.\n\n"
+                            "%,d pixels will be changed%s.\n\n"
                                     + "This modifies annotations within this tile only.\n"
                                     + "Use 'Undo last adjustment' to reverse.\n\n"
                                     + "Apply?",
-                            pendingPreview.totalChangedPixels()));
+                            changedPixels, suffix));
             if (!confirmed) {
                 cancelPendingPreview();
                 return;
@@ -1470,11 +1506,15 @@ public class TrainingAreaIssuesDialog {
         }
 
         try {
-            // Compute preview (always, for stats and the adjusted mask)
+            // Compute preview (always, for stats and the adjusted mask).
+            // computePreview rasterises the LIVE annotations as the "from"
+            // mask, so a redo of the same tile sees the post-adjustment state.
             AnnotationAdjuster.PreviewResult preview = annotationAdjuster.computePreview(
+                    viewer,
+                    row.getX(),
+                    row.getY(),
                     row.getPredictionMapPath(),
                     row.getConfidenceMapPath(),
-                    row.getGroundTruthMaskPath(),
                     threshold,
                     classColors);
 
@@ -1484,25 +1524,29 @@ public class TrainingAreaIssuesDialog {
                 return;
             }
 
-            // Build summary of proposed changes
-            StringBuilder changeSummary = new StringBuilder();
-            changeSummary.append(String.format("%d pixels would change:\n", preview.totalChangedPixels()));
-            for (Map.Entry<String, Integer> entry : preview.changesPerClass().entrySet()) {
-                changeSummary.append(String.format("  %s: %d pixels\n", entry.getKey(), entry.getValue()));
-            }
-
             if (previewCheckBox.isSelected()) {
-                // Show preview overlay on the viewer
+                // Stash the unfiltered preview so checkbox toggles can
+                // re-filter without re-loading prediction maps.
+                basePreview = preview;
+                allowedTransitions.clear();
+                allowedTransitions.addAll(preview.changesPerTransition().keySet());
                 pendingPreview = preview;
+
+                populateTransitionCheckBoxes(preview.changesPerTransition(), viewer, row);
                 showAdjustmentPreviewOverlay(viewer, row, preview.previewImage());
-                adjustStatusLabel.setText(changeSummary + "\nPreview shown on viewer.");
+                updateAdjustmentSummaryLabel();
                 adjustButton.setText("Apply previewed adjustment");
                 cancelPreviewButton.setVisible(true);
                 cancelPreviewButton.setManaged(true);
                 return;
             }
 
-            // No preview -- confirm and apply directly
+            // No preview -- confirm and apply directly (using all transitions).
+            StringBuilder changeSummary = new StringBuilder();
+            changeSummary.append(String.format("%d pixels would change:\n", preview.totalChangedPixels()));
+            for (Map.Entry<String, Integer> entry : preview.changesPerClass().entrySet()) {
+                changeSummary.append(String.format("  %s: %d pixels\n", entry.getKey(), entry.getValue()));
+            }
             boolean confirmed = Dialogs.showConfirmDialog(
                     "Adjust Annotations",
                     changeSummary
@@ -1523,6 +1567,81 @@ public class TrainingAreaIssuesDialog {
     }
 
     /**
+     * Rebuilds the per-transition checkbox list in the Adjust panel from a
+     * preview's {@code changesPerTransition} breakdown. All boxes start
+     * checked. Toggling re-filters the overlay live.
+     */
+    private void populateTransitionCheckBoxes(
+            Map<AnnotationAdjuster.TransitionKey, Integer> transitions, QuPathViewer viewer, TileRow row) {
+        transitionCheckBoxesBox.getChildren().clear();
+        transitionCheckBoxes.clear();
+        if (transitions.isEmpty()) {
+            transitionCheckBoxesBox.setVisible(false);
+            transitionCheckBoxesBox.setManaged(false);
+            return;
+        }
+
+        Label header = new Label("Transitions (uncheck to skip):");
+        header.setStyle("-fx-font-size: 11px; -fx-font-weight: bold;");
+        transitionCheckBoxesBox.getChildren().add(header);
+
+        // Sort by pixel count descending so the most consequential changes are at the top.
+        List<Map.Entry<AnnotationAdjuster.TransitionKey, Integer>> sorted = new ArrayList<>(transitions.entrySet());
+        sorted.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+
+        for (Map.Entry<AnnotationAdjuster.TransitionKey, Integer> e : sorted) {
+            AnnotationAdjuster.TransitionKey key = e.getKey();
+            int pixels = e.getValue();
+            CheckBox cb = new CheckBox(String.format("%s -> %s : %,d px", key.fromClass(), key.toClass(), pixels));
+            cb.setSelected(true);
+            cb.setStyle("-fx-font-size: 11px;");
+            cb.selectedProperty().addListener((obs, oldV, newV) -> {
+                if (Boolean.TRUE.equals(newV)) {
+                    allowedTransitions.add(key);
+                } else {
+                    allowedTransitions.remove(key);
+                }
+                refilterPreview(viewer, row);
+            });
+            transitionCheckBoxes.put(key, cb);
+            transitionCheckBoxesBox.getChildren().add(cb);
+        }
+        transitionCheckBoxesBox.setVisible(true);
+        transitionCheckBoxesBox.setManaged(true);
+    }
+
+    /**
+     * Rebuilds the filtered preview from {@code basePreview} using only the
+     * currently-checked transitions, and refreshes the viewer overlay + status
+     * label. No-op if no preview is pending.
+     */
+    private void refilterPreview(QuPathViewer viewer, TileRow row) {
+        if (basePreview == null || annotationAdjuster == null) return;
+        pendingPreview = annotationAdjuster.rebuildPreviewFromFilter(basePreview, allowedTransitions, classColors);
+        showAdjustmentPreviewOverlay(viewer, row, pendingPreview.previewImage());
+        updateAdjustmentSummaryLabel();
+    }
+
+    /** Updates the status label to reflect the currently-pending preview. */
+    private void updateAdjustmentSummaryLabel() {
+        if (pendingPreview == null || basePreview == null) return;
+        int total = pendingPreview.totalChangedPixels();
+        int base = basePreview.totalChangedPixels();
+        int checked = allowedTransitions.size();
+        int totalTransitions = basePreview.changesPerTransition().size();
+        if (total == 0) {
+            adjustStatusLabel.setText("No transitions selected -- nothing to apply.\nCheck at least one transition.");
+        } else if (checked == totalTransitions) {
+            adjustStatusLabel.setText(String.format(
+                    "%,d px would change across %d transition(s).\nPreview shown on viewer.", total, checked));
+        } else {
+            adjustStatusLabel.setText(String.format(
+                    "%,d / %,d px selected (%d / %d transitions).\nPreview shown on viewer.",
+                    total, base, checked, totalTransitions));
+        }
+    }
+
+    /**
      * Called when the adjust button is clicked while a preview is pending
      * (second click in preview flow), or called directly when preview is off.
      */
@@ -1538,6 +1657,14 @@ public class TrainingAreaIssuesDialog {
                 result.summary() + String.format("\n(%d pixels changed)", preview.totalChangedPixels()));
         undoButton.setDisable(false);
         pendingPreview = null;
+        basePreview = null;
+        allowedTransitions.clear();
+        transitionCheckBoxes.clear();
+        if (transitionCheckBoxesBox != null) {
+            transitionCheckBoxesBox.getChildren().clear();
+            transitionCheckBoxesBox.setVisible(false);
+            transitionCheckBoxesBox.setManaged(false);
+        }
         adjustButton.setText("Adjust annotations in current tile");
         cancelPreviewButton.setVisible(false);
         cancelPreviewButton.setManaged(false);

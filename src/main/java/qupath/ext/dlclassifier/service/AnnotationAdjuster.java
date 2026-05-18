@@ -1,5 +1,12 @@
 package qupath.ext.dlclassifier.service;
 
+import java.awt.BasicStroke;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.Rectangle;
+import java.awt.RenderingHints;
+import java.awt.Shape;
+import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
@@ -45,6 +52,13 @@ public class AnnotationAdjuster {
     /** Value used in masks for unlabeled pixels (must match AnnotationExtractor). */
     private static final int UNLABELED_INDEX = 255;
 
+    /**
+     * Stroke width applied when rasterising line ROIs into the "current
+     * annotations" mask. Matches the typical training default; differences
+     * here only affect users with line annotations in a tile being re-adjusted.
+     */
+    private static final double LINE_STROKE_WIDTH = 8.0;
+
     private final double downsample;
     private final int patchSize;
     private final List<String> classNames;
@@ -65,39 +79,43 @@ public class AnnotationAdjuster {
 
     /**
      * Computes the adjustment preview without modifying any annotations.
-     * Returns an RGBA BufferedImage showing which pixels would change,
-     * colored by the class they would be reassigned to.
+     * <p>
+     * The "from" mask is built by rasterising the CURRENT annotations in the
+     * viewer for the tile region -- not the saved training-time GT mask. This
+     * way, a redo of the same tile sees the post-adjustment annotation state,
+     * so the per-(from, to) transition breakdown stays accurate.
      *
+     * @param viewer the active QuPath viewer (used to read live annotations)
+     * @param tileX tile top-left X in full-resolution image coordinates
+     * @param tileY tile top-left Y in full-resolution image coordinates
      * @param predictionMapPath path to the argmax prediction PNG (uint8)
      * @param confidenceMapPath path to the confidence PNG (uint8 0-255)
-     * @param groundTruthMaskPath path to the ground truth mask PNG
      * @param confidenceThreshold minimum confidence to accept prediction (0.0-1.0)
      * @param classColors map of class name to packed RGB color for rendering
-     * @return preview image and statistics about the proposed changes
+     * @return preview image, full unfiltered mask, per-class + per-transition counts
      * @throws IOException if any map file cannot be read
      */
     public PreviewResult computePreview(
+            QuPathViewer viewer,
+            int tileX,
+            int tileY,
             String predictionMapPath,
             String confidenceMapPath,
-            String groundTruthMaskPath,
             double confidenceThreshold,
             Map<String, Integer> classColors)
             throws IOException {
         int[][] predMap = loadGrayscaleMap(predictionMapPath, "prediction");
         int[][] confMap = loadGrayscaleMap(confidenceMapPath, "confidence");
-        int[][] gtMask = loadGrayscaleMap(groundTruthMaskPath, "ground truth");
 
         // Crop padded maps to the center patchSize x patchSize region.
         // Training tiles exported with context padding are larger than patchSize
-        // (e.g. 552x552 for 512 + 2*20 padding). The padding border is UNLABELED
-        // in the GT mask. If not cropped, ContourTracing in applyAdjustment()
-        // maps pixel coordinates into the wrong image region (shifted by the
-        // padding offset).
+        // (e.g. 552x552 for 512 + 2*20 padding). If not cropped, ContourTracing
+        // in applyAdjustment() maps pixel coordinates into the wrong image
+        // region (shifted by the padding offset).
         int rawH = predMap.length;
         int rawW = predMap[0].length;
         predMap = cropToCenter(predMap, patchSize);
         confMap = cropToCenter(confMap, patchSize);
-        gtMask = cropToCenter(gtMask, patchSize);
         if (predMap.length != rawH || predMap[0].length != rawW) {
             int padding = (rawW - patchSize) / 2;
             logger.info(
@@ -109,34 +127,39 @@ public class AnnotationAdjuster {
                     padding);
         }
 
+        int[][] currentMask = rasterizeCurrentAnnotations(viewer, tileX, tileY);
         int h = predMap.length;
         int w = predMap[0].length;
 
-        // Build the adjusted mask and track changes
+        // Build the FULL unfiltered adjusted mask + per-transition counts.
+        // The UI can later filter these via rebuildPreviewFromFilter().
         int[][] adjustedMask = new int[h][w];
         int totalChanged = 0;
         Map<String, Integer> changesPerClass = new LinkedHashMap<>();
+        Map<TransitionKey, Integer> changesPerTransition = new LinkedHashMap<>();
 
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
-                int gt = gtMask[y][x];
+                int from = currentMask[y][x];
 
-                // Never create annotations in unlabeled areas
-                if (gt == UNLABELED_INDEX || gt >= classNames.size()) {
-                    adjustedMask[y][x] = gt;
+                // Never create annotations in unlabeled areas.
+                if (from == UNLABELED_INDEX || from >= classNames.size()) {
+                    adjustedMask[y][x] = from;
                     continue;
                 }
 
                 int pred = predMap[y][x];
                 double conf = confMap[y][x] / 255.0;
 
-                if (conf >= confidenceThreshold && pred != gt && pred < classNames.size()) {
+                if (conf >= confidenceThreshold && pred != from && pred < classNames.size()) {
                     adjustedMask[y][x] = pred;
                     totalChanged++;
-                    String className = classNames.get(pred);
-                    changesPerClass.merge(className, 1, Integer::sum);
+                    String fromName = classNames.get(from);
+                    String toName = classNames.get(pred);
+                    changesPerClass.merge(toName, 1, Integer::sum);
+                    changesPerTransition.merge(new TransitionKey(fromName, toName), 1, Integer::sum);
                 } else {
-                    adjustedMask[y][x] = gt;
+                    adjustedMask[y][x] = from;
                 }
             }
         }
@@ -145,7 +168,7 @@ public class AnnotationAdjuster {
         BufferedImage preview = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
-                if (adjustedMask[y][x] != gtMask[y][x]) {
+                if (adjustedMask[y][x] != currentMask[y][x]) {
                     int pred = adjustedMask[y][x];
                     String className = pred < classNames.size() ? classNames.get(pred) : "";
                     int packed = classColors.getOrDefault(className, 0xFF00FF) & 0xFFFFFF;
@@ -156,7 +179,8 @@ public class AnnotationAdjuster {
             }
         }
 
-        return new PreviewResult(preview, adjustedMask, totalChanged, changesPerClass);
+        return new PreviewResult(
+                preview, adjustedMask, currentMask, totalChanged, changesPerClass, changesPerTransition);
     }
 
     /**
@@ -363,6 +387,138 @@ public class AnnotationAdjuster {
     }
 
     /**
+     * Rebuilds a preview from an existing one, keeping only the (from -> to)
+     * transitions in {@code allowed}. Unchecked transitions revert to the
+     * current annotation class. Used to update the overlay live as the user
+     * toggles per-transition checkboxes in the dialog.
+     */
+    public PreviewResult rebuildPreviewFromFilter(
+            PreviewResult original, Set<TransitionKey> allowed, Map<String, Integer> classColors) {
+        int[][] current = original.currentMask();
+        int[][] full = original.adjustedMask();
+        int h = current.length;
+        int w = current[0].length;
+
+        int[][] filtered = new int[h][w];
+        int totalChanged = 0;
+        Map<String, Integer> changesPerClass = new LinkedHashMap<>();
+        Map<TransitionKey, Integer> changesPerTransition = new LinkedHashMap<>();
+        BufferedImage preview = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int from = current[y][x];
+                int to = full[y][x];
+                if (from == to || from == UNLABELED_INDEX || from >= classNames.size()) {
+                    filtered[y][x] = from;
+                    preview.setRGB(x, y, 0x00000000);
+                    continue;
+                }
+                String fromName = classNames.get(from);
+                String toName = to < classNames.size() ? classNames.get(to) : "";
+                TransitionKey key = new TransitionKey(fromName, toName);
+                if (allowed.contains(key)) {
+                    filtered[y][x] = to;
+                    totalChanged++;
+                    changesPerClass.merge(toName, 1, Integer::sum);
+                    changesPerTransition.merge(key, 1, Integer::sum);
+                    int packed = classColors.getOrDefault(toName, 0xFF00FF) & 0xFFFFFF;
+                    preview.setRGB(x, y, 0xFF000000 | packed);
+                } else {
+                    filtered[y][x] = from;
+                    preview.setRGB(x, y, 0x00000000);
+                }
+            }
+        }
+
+        return new PreviewResult(preview, filtered, current, totalChanged, changesPerClass, changesPerTransition);
+    }
+
+    /**
+     * Rasterises the current annotations in {@code viewer} for the tile region
+     * into a {@code patchSize x patchSize} class-index mask. Pixels with no
+     * annotation get {@link #UNLABELED_INDEX}. Mirrors the rendering pipeline
+     * in {@code AnnotationExtractor.createCombinedMask} so the resulting mask
+     * is comparable to the saved training-time GT mask.
+     * <p>
+     * Larger-area annotations are painted first so smaller (more specific)
+     * annotations end up on top, matching typical class-precedence intent.
+     */
+    public int[][] rasterizeCurrentAnnotations(QuPathViewer viewer, int tileX, int tileY) {
+        BufferedImage mask = new BufferedImage(patchSize, patchSize, BufferedImage.TYPE_BYTE_GRAY);
+        byte[] maskBytes = ((java.awt.image.DataBufferByte) mask.getRaster().getDataBuffer()).getData();
+        Arrays.fill(maskBytes, (byte) UNLABELED_INDEX);
+
+        ImageData<?> imageData = viewer != null ? viewer.getImageData() : null;
+        if (imageData == null) {
+            return bytesToIntArray(maskBytes, patchSize);
+        }
+
+        PathObjectHierarchy hierarchy = imageData.getHierarchy();
+        int regionSize = (int) (patchSize * downsample);
+        Rectangle patchBounds = new Rectangle(tileX, tileY, regionSize, regionSize);
+
+        List<PathObject> overlapping = new ArrayList<>();
+        for (PathObject ann : hierarchy.getAnnotationObjects()) {
+            if (ann.getPathClass() == null) continue;
+            ROI roi = ann.getROI();
+            if (roi == null) continue;
+            int expandedStroke = (int) Math.ceil(LINE_STROKE_WIDTH * downsample);
+            Rectangle annBounds = new Rectangle(
+                    (int) roi.getBoundsX(),
+                    (int) roi.getBoundsY(),
+                    (int) roi.getBoundsWidth() + expandedStroke,
+                    (int) roi.getBoundsHeight() + expandedStroke);
+            if (!patchBounds.intersects(annBounds)) continue;
+            overlapping.add(ann);
+        }
+        // Largest-area first; smaller (typically more specific) annotations paint on top.
+        overlapping.sort(
+                (a, b) -> Double.compare(b.getROI().getArea(), a.getROI().getArea()));
+
+        Graphics2D g2d = mask.createGraphics();
+        try {
+            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+            g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+            AffineTransform originalTransform = g2d.getTransform();
+            for (PathObject ann : overlapping) {
+                String cls = ann.getPathClass().toString();
+                int idx = classNames.indexOf(cls);
+                if (idx < 0 || idx >= UNLABELED_INDEX) continue;
+
+                g2d.setColor(new Color(idx, idx, idx));
+                g2d.setTransform(originalTransform);
+                g2d.scale(1.0 / downsample, 1.0 / downsample);
+                g2d.translate(-tileX, -tileY);
+
+                ROI roi = ann.getROI();
+                Shape shape = roi.getShape();
+                if (roi.isLine()) {
+                    g2d.setStroke(new BasicStroke(
+                            (float) (LINE_STROKE_WIDTH * downsample), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    g2d.draw(shape);
+                } else {
+                    g2d.fill(shape);
+                }
+            }
+        } finally {
+            g2d.dispose();
+        }
+
+        return bytesToIntArray(maskBytes, patchSize);
+    }
+
+    private static int[][] bytesToIntArray(byte[] bytes, int size) {
+        int[][] out = new int[size][size];
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                out[y][x] = bytes[y * size + x] & 0xFF;
+            }
+        }
+        return out;
+    }
+
+    /**
      * Undoes the most recent annotation adjustment, restoring the original
      * annotations. Returns false if there is nothing to undo.
      */
@@ -398,13 +554,31 @@ public class AnnotationAdjuster {
     // ==================== Data Classes ====================
 
     /**
+     * Identifies a single (from-class -> to-class) transition. Used to break
+     * down the changes by class pair and to filter which transitions get
+     * applied.
+     */
+    public record TransitionKey(String fromClass, String toClass) {}
+
+    /**
      * Result of computing a preview (before applying changes).
+     *
+     * @param previewImage RGBA overlay of changed pixels coloured by new class
+     * @param adjustedMask the proposed new mask (after applying the filter)
+     * @param currentMask  the live-annotation mask the proposal was computed
+     *                     against; needed by {@link #rebuildPreviewFromFilter}
+     * @param totalChangedPixels number of pixels that differ between
+     *                           {@code currentMask} and {@code adjustedMask}
+     * @param changesPerClass    pixel count by target class (legacy)
+     * @param changesPerTransition pixel count by (from, to) transition pair
      */
     public record PreviewResult(
             BufferedImage previewImage,
             int[][] adjustedMask,
+            int[][] currentMask,
             int totalChangedPixels,
-            Map<String, Integer> changesPerClass) {}
+            Map<String, Integer> changesPerClass,
+            Map<TransitionKey, Integer> changesPerTransition) {}
 
     /**
      * Result after applying an annotation adjustment.
