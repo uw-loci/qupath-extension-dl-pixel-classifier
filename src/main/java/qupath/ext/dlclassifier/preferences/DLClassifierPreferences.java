@@ -197,6 +197,12 @@ public final class DLClassifierPreferences {
     private static final IntegerProperty defaultGradientAccumulation =
             PathPrefs.createPersistentPreference("dlclassifier.defaultGradientAccumulation", 1);
 
+    // Number of PyTorch DataLoader worker processes. 0 = main-thread loading
+    // (safest, no IPC overhead); >0 forks workers for parallel disk reads and
+    // augmentation. Capped at 8 in TrainingConfig.Builder.
+    private static final IntegerProperty defaultDataLoaderWorkers =
+            PathPrefs.createPersistentPreference("dlclassifier.defaultDataLoaderWorkers", 0);
+
     private static final IntegerProperty defaultOhemHardPixelPct =
             PathPrefs.createPersistentPreference("dlclassifier.defaultOhemHardPixelPct", 100);
 
@@ -1166,6 +1172,18 @@ public final class DLClassifierPreferences {
 
     public static void setDefaultGradientAccumulation(int steps) {
         defaultGradientAccumulation.set(steps);
+    }
+
+    public static int getDefaultDataLoaderWorkers() {
+        return Math.max(0, Math.min(8, defaultDataLoaderWorkers.get()));
+    }
+
+    public static void setDefaultDataLoaderWorkers(int n) {
+        defaultDataLoaderWorkers.set(Math.max(0, Math.min(8, n)));
+    }
+
+    public static IntegerProperty defaultDataLoaderWorkersProperty() {
+        return defaultDataLoaderWorkers;
     }
 
     public static int getDefaultOhemHardPixelPct() {

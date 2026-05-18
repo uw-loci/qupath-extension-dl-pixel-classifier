@@ -1,8 +1,13 @@
 package qupath.ext.dlclassifier.ui;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
+import com.google.gson.reflect.TypeToken;
 import java.awt.image.BufferedImage;
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -28,6 +33,7 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.SetupDLClassifier;
 import qupath.ext.dlclassifier.classifier.ClassifierHandler;
 import qupath.ext.dlclassifier.classifier.ClassifierRegistry;
+import qupath.ext.dlclassifier.controller.TrainingWorkflow;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.TrainingConfig;
@@ -256,6 +262,12 @@ public class TrainingDialog {
         private CheckBox useLrFinderCheck;
         private CheckBox gpuAugmentationCheck;
         private CheckBox useTorchCompileCheck;
+        private ComboBox<String> inMemoryDatasetCombo;
+        private Spinner<Integer> dataLoaderWorkersSpinner;
+
+        // Holds class names from a loaded profile when classes haven't been
+        // loaded yet -- applied once loadClassesFromSelectedImages finishes.
+        private Set<String> pendingProfileClassNames;
 
         // Focus class
         private ComboBox<String> focusClassCombo;
@@ -462,9 +474,41 @@ public class TrainingDialog {
                 if (proceed) resetTrainingControlsToDefaults();
             });
 
+            // Save / Load profile: round-trip the entire dialog configuration
+            // (training settings + selected classes + channel config + name /
+            // description) through a JSON file the user can share or reload.
+            // Scientist W2 M-6: lets a user iterate on settings, save a known-
+            // good profile, and re-load it after experimenting without having
+            // to retrain a placeholder model and "Load Settings From Model".
+            Button saveProfileButton = new Button("Save profile...");
+            TooltipHelper.install(
+                    saveProfileButton,
+                    "Save the current dialog configuration to a JSON file: training\n"
+                            + "parameters, selected classes, channel setup, name, and\n"
+                            + "description. Useful for sharing tuned configs across\n"
+                            + "projects or machines without saving a placeholder model.");
+            saveProfileButton.setOnAction(e -> saveProfileToFile(saveProfileButton));
+
+            Button loadProfileButton = new Button("Load profile...");
+            TooltipHelper.install(
+                    loadProfileButton,
+                    "Load a previously saved profile JSON file. Applies training\n"
+                            + "parameters and selected class names (if the classes have\n"
+                            + "been loaded), name, and description. Image selection and\n"
+                            + "per-image train/val roles are not touched.");
+            loadProfileButton.setOnAction(e -> loadProfileFromFile(loadProfileButton));
+
             Region spacer = new Region();
             HBox.setHgrow(spacer, Priority.ALWAYS);
-            HBox buttonBar = new HBox(8, copyScriptButton, resetDefaultsButton, spacer, okButton, cancelButton);
+            HBox buttonBar = new HBox(
+                    8,
+                    copyScriptButton,
+                    saveProfileButton,
+                    loadProfileButton,
+                    resetDefaultsButton,
+                    spacer,
+                    okButton,
+                    cancelButton);
             buttonBar.setPadding(new Insets(10, 0, 0, 0));
 
             // Create content
@@ -1786,6 +1830,16 @@ public class TrainingDialog {
                         && !useTorchCompileCheck.isDisable()) {
                     useTorchCompileCheck.setSelected(Boolean.TRUE.equals(ts.get("use_torch_compile")));
                 }
+                if (ts.containsKey("in_memory_dataset") && inMemoryDatasetCombo != null) {
+                    String mode = String.valueOf(ts.get("in_memory_dataset"));
+                    if (inMemoryDatasetCombo.getItems().contains(mode)) {
+                        inMemoryDatasetCombo.setValue(mode);
+                    }
+                }
+                if (ts.containsKey("data_loader_workers") && dataLoaderWorkersSpinner != null) {
+                    int workers = Math.max(0, Math.min(8, ((Number) ts.get("data_loader_workers")).intValue()));
+                    dataLoaderWorkersSpinner.getValueFactory().setValue(workers);
+                }
 
                 // Pretrained weights -> weight init radio
                 if (ts.containsKey("use_pretrained_weights") && Boolean.TRUE.equals(ts.get("use_pretrained_weights"))) {
@@ -2162,47 +2216,98 @@ public class TrainingDialog {
                             + "Only images with classified annotations are shown.\n"
                             + "Patches from all selected images are combined into one training set.");
 
-            // Populate project images that have classified annotations
+            // Populate project images that have classified annotations.
+            //
+            // Heavy work avoided here: a previous version called entry.readImageData()
+            // for every image to read annotations + width/height, which opened the
+            // full ImageServer per entry and made the dialog slow to appear on
+            // projects with many slides. We now use readHierarchy() (lighter) for
+            // the annotation count, try the ServerBuilder's cached metadata for
+            // dimensions, and defer any genuine ImageServer open to a background
+            // thread that fills in dimensions per item as they arrive.
             Project<BufferedImage> project = QuPathGUI.getInstance().getProject();
+            List<ImageSelectionItem> needsDimensions = new ArrayList<>();
             if (project != null) {
                 for (ProjectImageEntry<BufferedImage> entry : project.getImageList()) {
                     try {
-                        ImageData<BufferedImage> data = entry.readImageData();
-                        long annotationCount = data.getHierarchy().getAnnotationObjects().stream()
+                        var hierarchy = entry.readHierarchy();
+                        long annotationCount = hierarchy.getAnnotationObjects().stream()
                                 .filter(a -> a.getPathClass() != null)
                                 .count();
-                        int imgW = data.getServer().getWidth();
-                        int imgH = data.getServer().getHeight();
-                        data.getServer().close();
-                        if (annotationCount > 0) {
-                            ImageSelectionItem item = new ImageSelectionItem(entry, annotationCount, imgW, imgH);
-                            // When image selection changes, update button state, mark classes
-                            // stale, and recheck whole-image size warning
-                            item.selected.addListener((obs, old, newVal) -> {
-                                updateLoadClassesButtonState();
-                                if (classesLoaded) {
-                                    markClassesStale();
-                                }
-                                updateWholeImageInfoLabel();
-                                updateValidationSplitSpinnerState();
-                                updateBasicSplitStatusLabel();
-                            });
-                            item.splitRole.addListener((obs, old, newVal) -> {
-                                updateValidationSplitSpinnerState();
-                                updateBasicSplitStatusLabel();
-                                // Any manual override clears the auto-distribute
-                                // highlight; auto-distribute itself runs inside
-                                // its own guard so it doesn't trip this.
-                                if (!inAutoDistribute) {
-                                    applyAutoDistributeHighlight(false);
-                                }
-                            });
-                            imageSelectionList.getItems().add(item);
+                        if (annotationCount == 0) continue;
+
+                        int imgW = 0;
+                        int imgH = 0;
+                        try {
+                            var metaOpt = entry.getServerBuilder().getMetadata();
+                            if (metaOpt.isPresent()) {
+                                imgW = metaOpt.get().getWidth();
+                                imgH = metaOpt.get().getHeight();
+                            }
+                        } catch (Exception ignored) {
+                            // ServerBuilder may not have cached metadata; fetch in background below.
+                        }
+
+                        ImageSelectionItem item = new ImageSelectionItem(entry, annotationCount, imgW, imgH);
+                        // When image selection changes, update button state, mark classes
+                        // stale, and recheck whole-image size warning
+                        item.selected.addListener((obs, old, newVal) -> {
+                            updateLoadClassesButtonState();
+                            if (classesLoaded) {
+                                markClassesStale();
+                            }
+                            updateWholeImageInfoLabel();
+                            updateValidationSplitSpinnerState();
+                            updateBasicSplitStatusLabel();
+                        });
+                        item.splitRole.addListener((obs, old, newVal) -> {
+                            updateValidationSplitSpinnerState();
+                            updateBasicSplitStatusLabel();
+                            // Any manual override clears the auto-distribute
+                            // highlight; auto-distribute itself runs inside
+                            // its own guard so it doesn't trip this.
+                            if (!inAutoDistribute) {
+                                applyAutoDistributeHighlight(false);
+                            }
+                        });
+                        imageSelectionList.getItems().add(item);
+                        if (imgW == 0 || imgH == 0) {
+                            needsDimensions.add(item);
                         }
                     } catch (Exception e) {
                         logger.debug("Could not read image '{}': {}", entry.getImageName(), e.getMessage());
                     }
                 }
+            }
+
+            // Background fill-in for images whose ServerBuilder didn't expose
+            // cached metadata. Runs off the FX thread so the dialog appears
+            // immediately; dimensions show up in the whole-image warning as
+            // soon as each server is queried.
+            if (!needsDimensions.isEmpty()) {
+                List<ImageSelectionItem> pending = new ArrayList<>(needsDimensions);
+                Thread loader = new Thread(
+                        () -> {
+                            for (ImageSelectionItem item : pending) {
+                                try (var server = item.entry.getServerBuilder().build()) {
+                                    int w = server.getWidth();
+                                    int h = server.getHeight();
+                                    Platform.runLater(() -> {
+                                        item.imageWidth = w;
+                                        item.imageHeight = h;
+                                        updateWholeImageInfoLabel();
+                                    });
+                                } catch (Exception e) {
+                                    logger.debug(
+                                            "Could not load dimensions for '{}': {}",
+                                            item.entry.getImageName(),
+                                            e.getMessage());
+                                }
+                            }
+                        },
+                        "dl-classifier-image-dims");
+                loader.setDaemon(true);
+                loader.start();
             }
 
             // Select All / Select None buttons
@@ -3072,7 +3177,14 @@ public class TrainingDialog {
                     .ohemHardRatioStart(ohemStartSpinner.getValue() / 100.0)
                     .ohemSchedule(ohemStartSpinner.getValue() > ohemSpinner.getValue() ? "anneal" : "fixed")
                     .ohemAdaptiveFloor(ohemAdaptiveFloorCheck.isSelected())
-                    .inMemoryDataset(DLClassifierPreferences.getDefaultInMemoryDataset())
+                    .inMemoryDataset(
+                            inMemoryDatasetCombo != null && inMemoryDatasetCombo.getValue() != null
+                                    ? inMemoryDatasetCombo.getValue()
+                                    : DLClassifierPreferences.getDefaultInMemoryDataset())
+                    .dataLoaderWorkers(
+                            dataLoaderWorkersSpinner != null
+                                    ? dataLoaderWorkersSpinner.getValue()
+                                    : DLClassifierPreferences.getDefaultDataLoaderWorkers())
                     .earlyStoppingMetric(currentEarlyStoppingMetricValue())
                     .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
@@ -4956,13 +5068,65 @@ public class TrainingDialog {
                             + "failure; check the training log for the actual outcome.",
                     "https://pytorch.org/docs/stable/generated/torch.compile.html");
             grid.add(useTorchCompileCheck, 0, row, 2, 1);
+            row++;
+
+            // In-memory dataset cache mode. Mirrors the global preference but
+            // lets the user override per-run from inside the dialog without
+            // round-tripping through Preferences.
+            inMemoryDatasetCombo = new ComboBox<>(FXCollections.observableArrayList("auto", "on", "off", "bounded"));
+            inMemoryDatasetCombo.setValue(DLClassifierPreferences.getDefaultInMemoryDataset());
+            inMemoryDatasetCombo.setPrefWidth(140);
+            Label inMemLabel = new Label("In-memory dataset:");
+            TooltipHelper.install(
+                    "Preload training patches into RAM to skip per-batch disk I/O\n"
+                            + "and TIFF decode. Picks the dominant per-epoch cost on small\n"
+                            + "models trained from local SSD.\n\n"
+                            + "auto: enable when the dataset fits in ~25% of free RAM.\n"
+                            + "on: always preload (may exhaust memory on huge datasets).\n"
+                            + "bounded: cap preload at the bounded-cache fraction set in\n"
+                            + "    Preferences (default 40% of available RAM).\n"
+                            + "off: always stream from disk (legacy behavior).",
+                    inMemLabel, inMemoryDatasetCombo);
+            grid.add(inMemLabel, 0, row);
+            grid.add(inMemoryDatasetCombo, 1, row);
+            row++;
+
+            // Refresh the per-epoch / RAM estimate when the user flips this
+            // dropdown so the change is visible immediately.
+            inMemoryDatasetCombo.valueProperty().addListener((obs, o, n) -> {
+                if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
+            });
+
+            // DataLoader worker count. 0 = main-thread loading (the safest
+            // default; no IPC overhead). >0 forks worker processes that
+            // parallelize disk read + CPU augmentation. Helps when the
+            // dataset doesn't fit in the in-memory cache and disk is the
+            // bottleneck. Capped at 8 (TrainingConfig.Builder clamps too).
+            dataLoaderWorkersSpinner = new Spinner<>(0, 8, DLClassifierPreferences.getDefaultDataLoaderWorkers(), 1);
+            dataLoaderWorkersSpinner.setEditable(true);
+            dataLoaderWorkersSpinner.setPrefWidth(100);
+            Label dlwLabel = new Label("DataLoader workers:");
+            TooltipHelper.install(
+                    "Number of background worker processes the PyTorch DataLoader\n"
+                            + "spawns for parallel patch loading and CPU augmentation.\n\n"
+                            + "0: load on the main thread (default; no IPC overhead).\n"
+                            + "1-2: helpful when disk I/O dominates and the in-memory\n"
+                            + "     cache is off or bounded below the dataset size.\n"
+                            + "4-8: only useful on workstations with fast NVMe + many cores.\n\n"
+                            + "Note: on Windows each worker re-imports the Python module\n"
+                            + "and can leak ~200 MB; start small and only raise if disk\n"
+                            + "throughput is clearly the bottleneck in training logs.",
+                    dlwLabel,
+                    dataLoaderWorkersSpinner);
+            grid.add(dlwLabel, 0, row);
+            grid.add(dataLoaderWorkersSpinner, 1, row);
 
             TitledPane pane = new TitledPane("Performance", grid);
             pane.setExpanded(false);
             pane.setStyle("-fx-font-weight: bold;");
             pane.setTooltip(
                     TooltipHelper.create("Optional speed/accuracy trade-offs: fused optimizer, progressive resize, "
-                            + "GPU augmentation, torch.compile."));
+                            + "GPU augmentation, torch.compile, in-memory cache, DataLoader workers."));
             return pane;
         }
 
@@ -5370,6 +5534,17 @@ public class TrainingDialog {
                         autoMatchModelClasses();
                     }
 
+                    // Apply class selection from a profile that was loaded
+                    // before classes existed. Wanted names that don't appear
+                    // in the loaded class set are silently dropped.
+                    if (pendingProfileClassNames != null) {
+                        Set<String> wanted = pendingProfileClassNames;
+                        pendingProfileClassNames = null;
+                        for (ClassItem ci : classListView.getItems()) {
+                            ci.selected().set(wanted.contains(ci.name()));
+                        }
+                    }
+
                     // Reset button state
                     loadClassesButton.setText("Load Classes from Selected Images");
                     updateLoadClassesButtonState();
@@ -5408,7 +5583,9 @@ public class TrainingDialog {
          * (25% ceiling for "auto"; warns if "on" exceeds free RAM).
          */
         private void appendInMemoryCacheEstimate(StringBuilder sb, int tileEst) {
-            String mode = DLClassifierPreferences.getDefaultInMemoryDataset();
+            String mode = inMemoryDatasetCombo != null && inMemoryDatasetCombo.getValue() != null
+                    ? inMemoryDatasetCombo.getValue()
+                    : DLClassifierPreferences.getDefaultInMemoryDataset();
             if ("off".equals(mode)) {
                 sb.append(" In-memory cache: off.");
                 tileEstimateLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
@@ -6129,6 +6306,17 @@ public class TrainingDialog {
             }
             if (progressiveResizeCheck != null) {
                 progressiveResizeCheck.setSelected(DLClassifierPreferences.isDefaultProgressiveResize());
+            }
+            if (inMemoryDatasetCombo != null) {
+                String mode = DLClassifierPreferences.getDefaultInMemoryDataset();
+                if (inMemoryDatasetCombo.getItems().contains(mode)) {
+                    inMemoryDatasetCombo.setValue(mode);
+                }
+            }
+            if (dataLoaderWorkersSpinner != null) {
+                dataLoaderWorkersSpinner
+                        .getValueFactory()
+                        .setValue(DLClassifierPreferences.getDefaultDataLoaderWorkers());
             }
             // Focus class min IoU (the focus-class combo itself stays put --
             // it depends on loaded class names which we don't touch).
@@ -7235,6 +7423,190 @@ public class TrainingDialog {
             showCopyFeedback(sourceButton, "Script copied to clipboard!");
         }
 
+        /**
+         * Save the current dialog configuration to a JSON profile file.
+         *
+         * <p>Captures training settings, channel configuration, selected class
+         * names, and the classifier name + description. Image selection is
+         * intentionally omitted -- a profile is meant to travel across
+         * projects, where image names won't match anyway.
+         */
+        private void saveProfileToFile(Button sourceButton) {
+            // Build the profile in-memory without running the full
+            // buildResult() validation chain -- the user may save a partial
+            // profile while still tuning, so accept whatever the dialog can
+            // serialize right now.
+            TrainingConfig config;
+            try {
+                config = buildTrainingConfig();
+            } catch (Exception e) {
+                showCopyFeedback(sourceButton, "Cannot save: " + e.getMessage());
+                return;
+            }
+
+            Map<String, Object> profile = new LinkedHashMap<>();
+            profile.put("schema_version", 1);
+            profile.put("name", classifierNameField.getText().trim());
+            profile.put("description", descriptionField.getText().trim());
+            profile.put("model_type", architectureCombo.getValue());
+            profile.put("backbone", backboneCombo.getValue());
+            profile.put("input_width", tileSizeSpinner.getValue());
+            profile.put("input_height", tileSizeSpinner.getValue());
+            profile.put("downsample", parseDownsample(downsampleCombo.getValue()));
+            profile.put(
+                    "context_scale", contextScaleCombo != null ? parseContextScale(contextScaleCombo.getValue()) : 1);
+            profile.put("training_epochs", config.getEpochs());
+
+            profile.put("training_settings", TrainingWorkflow.buildTrainingSettingsMap(config));
+
+            if (classListView != null) {
+                List<String> selectedClassNames = classListView.getItems().stream()
+                        .filter(ci -> ci.selected().get())
+                        .map(ClassItem::name)
+                        .collect(Collectors.toList());
+                if (!selectedClassNames.isEmpty()) {
+                    profile.put("selected_classes", selectedClassNames);
+                }
+            }
+
+            if (channelPanel != null && channelPanel.isValid()) {
+                ChannelConfiguration cc = channelPanel.getChannelConfiguration();
+                Map<String, Object> channels = new LinkedHashMap<>();
+                channels.put("selected_channels", cc.getSelectedChannels());
+                channels.put("channel_names", cc.getChannelNames());
+                channels.put("bit_depth", cc.getBitDepth());
+                channels.put(
+                        "normalization_strategy", cc.getNormalizationStrategy().name());
+                profile.put("channel_config", channels);
+            }
+
+            FileChooser chooser = new FileChooser();
+            chooser.setTitle("Save Training Profile");
+            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON profile", "*.json"));
+            String suggested = classifierNameField.getText().trim();
+            if (suggested.isEmpty()) suggested = "training-profile";
+            chooser.setInitialFileName(suggested + ".json");
+            File out = chooser.showSaveDialog(dialog);
+            if (out == null) return;
+
+            try {
+                Gson gson = new GsonBuilder()
+                        .setPrettyPrinting()
+                        .disableHtmlEscaping()
+                        .create();
+                String json = gson.toJson(profile);
+                Files.writeString(out.toPath(), json, StandardCharsets.UTF_8);
+                logger.info("Saved training profile to {}", out.getAbsolutePath());
+                showCopyFeedback(sourceButton, "Profile saved to " + out.getName());
+            } catch (Exception e) {
+                logger.error("Failed to save profile to {}", out.getAbsolutePath(), e);
+                showCopyFeedback(sourceButton, "Save failed: " + e.getMessage());
+            }
+        }
+
+        /**
+         * Load a previously saved JSON profile and apply it to the dialog.
+         *
+         * <p>Reuses {@link #loadSettingsFromModel} for the bulk of the work by
+         * synthesizing a {@link ClassifierMetadata} from the profile fields.
+         * Selected class names and channel normalization strategy are applied
+         * separately when present.
+         */
+        private void loadProfileFromFile(Button sourceButton) {
+            FileChooser chooser = new FileChooser();
+            chooser.setTitle("Load Training Profile");
+            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON profile", "*.json"));
+            File in = chooser.showOpenDialog(dialog);
+            if (in == null) return;
+
+            Map<String, Object> profile;
+            try {
+                String json = Files.readString(in.toPath(), StandardCharsets.UTF_8);
+                Gson gson = new Gson();
+                profile = gson.fromJson(json, new TypeToken<Map<String, Object>>() {}.getType());
+            } catch (Exception e) {
+                logger.error("Failed to read profile from {}", in.getAbsolutePath(), e);
+                showCopyFeedback(sourceButton, "Load failed: " + e.getMessage());
+                return;
+            }
+            if (profile == null) {
+                showCopyFeedback(sourceButton, "Profile file was empty");
+                return;
+            }
+
+            try {
+                ClassifierMetadata.Builder mb = ClassifierMetadata.builder();
+                mb.id("profile-stub");
+                Object nameVal = profile.get("name");
+                if (nameVal != null) mb.name(String.valueOf(nameVal));
+                Object descVal = profile.get("description");
+                if (descVal != null) mb.description(String.valueOf(descVal));
+                Object mtype = profile.get("model_type");
+                if (mtype != null) mb.modelType(String.valueOf(mtype));
+                Object bb = profile.get("backbone");
+                if (bb != null) mb.backbone(String.valueOf(bb));
+                Object iw = profile.get("input_width");
+                Object ih = profile.get("input_height");
+                if (iw instanceof Number wn && ih instanceof Number hn) {
+                    mb.inputSize(wn.intValue(), hn.intValue());
+                } else if (iw instanceof Number wn) {
+                    mb.inputSize(wn.intValue(), wn.intValue());
+                }
+                Object ds = profile.get("downsample");
+                if (ds instanceof Number dsn) mb.downsample(dsn.doubleValue());
+                Object cs = profile.get("context_scale");
+                if (cs instanceof Number csn) mb.contextScale(csn.intValue());
+                Object te = profile.get("training_epochs");
+                if (te instanceof Number ten) mb.trainingEpochs(ten.intValue());
+
+                Object tsObj = profile.get("training_settings");
+                if (tsObj instanceof Map<?, ?> tsMap) {
+                    Map<String, Object> ts = new LinkedHashMap<>();
+                    for (Map.Entry<?, ?> e : tsMap.entrySet()) {
+                        ts.put(String.valueOf(e.getKey()), e.getValue());
+                    }
+                    mb.trainingSettings(ts);
+                }
+
+                Object channelsObj = profile.get("channel_config");
+                if (channelsObj instanceof Map<?, ?> cmap) {
+                    Object normName = cmap.get("normalization_strategy");
+                    if (normName != null) {
+                        try {
+                            mb.normalizationStrategy(
+                                    ChannelConfiguration.NormalizationStrategy.valueOf(String.valueOf(normName)));
+                        } catch (IllegalArgumentException ignored) {
+                            // Unknown normalization in profile -- skip
+                        }
+                    }
+                }
+
+                loadSettingsFromModel(mb.build());
+
+                // Apply selected class names if classes are already loaded.
+                // If not, defer the application: stash the names and reapply
+                // once Load Classes finishes.
+                Object selClasses = profile.get("selected_classes");
+                if (selClasses instanceof List<?> raw) {
+                    Set<String> wanted = new HashSet<>();
+                    for (Object o : raw) wanted.add(String.valueOf(o));
+                    if (classListView != null && !classListView.getItems().isEmpty()) {
+                        for (ClassItem item : classListView.getItems()) {
+                            item.selected().set(wanted.contains(item.name()));
+                        }
+                    } else {
+                        pendingProfileClassNames = wanted;
+                    }
+                }
+
+                logger.info("Loaded training profile from {}", in.getAbsolutePath());
+                showCopyFeedback(sourceButton, "Profile loaded from " + in.getName());
+            } catch (Exception e) {
+                logger.error("Failed to apply profile from {}", in.getAbsolutePath(), e);
+                showCopyFeedback(sourceButton, "Apply failed: " + e.getMessage());
+            }
+        }
+
         private void showCopyFeedback(Button button, String message) {
             Tooltip tooltip = new Tooltip(message);
             tooltip.setAutoHide(true);
@@ -7902,8 +8274,10 @@ public class TrainingDialog {
         final ProjectImageEntry<BufferedImage> entry;
         final String imageName;
         final long annotationCount;
-        final int imageWidth;
-        final int imageHeight;
+        // Mutable so the dialog's background image-dimension loader can fill
+        // these in lazily; only ever written on the FX thread.
+        int imageWidth;
+        int imageHeight;
         final javafx.beans.property.BooleanProperty selected;
         final javafx.beans.property.ObjectProperty<SplitRole> splitRole;
 

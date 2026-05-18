@@ -2651,7 +2651,7 @@ public class TrainingWorkflow {
      * @param config the training configuration
      * @return map of parameter names to values
      */
-    static Map<String, Object> buildTrainingSettingsMap(TrainingConfig config) {
+    public static Map<String, Object> buildTrainingSettingsMap(TrainingConfig config) {
         Map<String, Object> settings = new LinkedHashMap<>();
         settings.put("learning_rate", config.getLearningRate());
         settings.put("batch_size", config.getBatchSize());
