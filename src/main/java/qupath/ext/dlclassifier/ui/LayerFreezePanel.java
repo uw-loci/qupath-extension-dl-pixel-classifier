@@ -36,6 +36,10 @@ public class LayerFreezePanel extends VBox {
     private static final Logger logger = LoggerFactory.getLogger(LayerFreezePanel.class);
 
     private final ObservableList<LayerItem> layers = FXCollections.observableArrayList();
+    // Monotonic counter incremented on every loadLayers invocation; runLater
+    // bodies bail when their generation no longer matches the latest. See
+    // the comment in loadLayers for the race this closes.
+    private final java.util.concurrent.atomic.AtomicLong loadGeneration = new java.util.concurrent.atomic.AtomicLong();
     private final ListView<LayerItem> layerListView;
     private final ComboBox<String> presetCombo;
     private final Label statusLabel;
@@ -223,8 +227,19 @@ public class LayerFreezePanel extends VBox {
         this.currentEncoder = encoder;
         this.currentContextScale = contextScale;
 
+        // Generation token: only the most recent loadLayers invocation gets
+        // to mutate the list. Earlier in-flight calls quietly discard their
+        // results when they finish, which closes the concurrent-clear race
+        // (two callers scheduling clear+add on FX would interleave as
+        // clearA, clearB, addsA, addsB -- doubling the list and producing
+        // the "encoder.conv1, encoder.layer1, encoder.layer2, encoder.conv1,
+        // encoder.layer1, encoder.layer2" frozen-list output the user
+        // reported. Now: addsA's runLater sees its generation is stale and
+        // bails; only addsB lands.)
+        final long generation = loadGeneration.incrementAndGet();
+
         Platform.runLater(() -> {
-            layers.clear();
+            if (generation != loadGeneration.get()) return;
             statusLabel.setText("Loading layer structure...");
         });
 
@@ -236,6 +251,8 @@ public class LayerFreezePanel extends VBox {
 
                 if (layerInfos != null && !layerInfos.isEmpty()) {
                     Platform.runLater(() -> {
+                        if (generation != loadGeneration.get()) return;
+                        layers.clear();
                         for (ClassifierClient.LayerInfo info : layerInfos) {
                             LayerItem item = new LayerItem(
                                     info.name(),
@@ -263,13 +280,19 @@ public class LayerFreezePanel extends VBox {
         List<LayerItem> localLayers = buildLocalLayerStructure(encoder);
         if (!localLayers.isEmpty()) {
             Platform.runLater(() -> {
+                if (generation != loadGeneration.get()) return;
+                layers.clear();
                 layers.addAll(localLayers);
                 updateContextWarning();
                 updateStatus();
             });
             logger.info("Loaded {} layers from local fallback for {}/{}", localLayers.size(), architecture, encoder);
         } else {
-            Platform.runLater(() -> statusLabel.setText("Unknown encoder: " + encoder));
+            Platform.runLater(() -> {
+                if (generation != loadGeneration.get()) return;
+                layers.clear();
+                statusLabel.setText("Unknown encoder: " + encoder);
+            });
         }
     }
 

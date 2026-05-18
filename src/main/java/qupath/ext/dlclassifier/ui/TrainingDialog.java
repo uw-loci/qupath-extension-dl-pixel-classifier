@@ -302,6 +302,23 @@ public class TrainingDialog {
         // loaded before or after the model. Cleared once applied.
         private final Map<String, Double> pendingClassWeightMultipliers = new LinkedHashMap<>();
 
+        // Per-control "user has explicitly edited this in the current
+        // dialog session" markers. loadSettingsFromModel checks these and
+        // skips controls the user has already touched, so a Load Settings
+        // From Model click can no longer silently flip Early Stopping back
+        // to mean_iou after the user picked Disabled. Set by the reactive
+        // listeners ONLY when the change is user-initiated (suppression
+        // flags below distinguish that from programmatic setValue calls
+        // we make during init / model load).
+        private boolean esMetricUserEdited = false;
+        private boolean esPatienceUserEdited = false;
+        // Suppression: when true, value-change listeners skip both the
+        // userEdited flip and the preference write. Wrapped around any
+        // setValue() we issue programmatically (init from prefs, load
+        // from model) so those don't masquerade as user edits.
+        private boolean suppressEsMetricListener = false;
+        private boolean suppressEsPatienceListener = false;
+
         // Spatial info labels
         private Label resolutionInfoLabel;
         private Label contextInfoLabel;
@@ -1716,15 +1733,31 @@ public class TrainingDialog {
                     ohemAdaptiveFloorCheck.setSelected(Boolean.TRUE.equals(ts.get("ohem_adaptive_floor")));
                 }
 
-                // Early stopping
-                if (ts.containsKey("early_stopping_metric")) {
-                    earlyStoppingMetricCombo.setValue(
-                            mapEarlyStoppingMetricToDisplay((String) ts.get("early_stopping_metric")));
+                // Early stopping: respect the user's explicit choice if they
+                // touched these controls already in this session, so loading
+                // a previous model can no longer silently flip Early Stop
+                // Metric back to Mean IoU after the user picked Disabled.
+                // Otherwise apply the loaded value, suppressing the listener
+                // so it doesn't re-stamp the preference and mark this as a
+                // user edit.
+                if (ts.containsKey("early_stopping_metric") && !esMetricUserEdited) {
+                    suppressEsMetricListener = true;
+                    try {
+                        earlyStoppingMetricCombo.setValue(
+                                mapEarlyStoppingMetricToDisplay((String) ts.get("early_stopping_metric")));
+                    } finally {
+                        suppressEsMetricListener = false;
+                    }
                 }
-                if (ts.containsKey("early_stopping_patience")) {
-                    earlyStoppingPatienceSpinner
-                            .getValueFactory()
-                            .setValue(((Number) ts.get("early_stopping_patience")).intValue());
+                if (ts.containsKey("early_stopping_patience") && !esPatienceUserEdited) {
+                    suppressEsPatienceListener = true;
+                    try {
+                        earlyStoppingPatienceSpinner
+                                .getValueFactory()
+                                .setValue(((Number) ts.get("early_stopping_patience")).intValue());
+                    } finally {
+                        suppressEsPatienceListener = false;
+                    }
                 }
 
                 // Mixed precision
@@ -3162,8 +3195,17 @@ public class TrainingDialog {
             // Early stopping metric
             earlyStoppingMetricCombo =
                     new ComboBox<>(FXCollections.observableArrayList("Mean IoU", "Validation Loss", "Disabled"));
-            earlyStoppingMetricCombo.setValue(
-                    mapEarlyStoppingMetricToDisplay(DLClassifierPreferences.getDefaultEarlyStoppingMetric()));
+            // Suppress the listener: initial preference load is not a user
+            // edit, so it must not flip esMetricUserEdited (which would then
+            // block legitimate model-load overwrites later) and must not
+            // re-write the same value back to the preference.
+            suppressEsMetricListener = true;
+            try {
+                earlyStoppingMetricCombo.setValue(
+                        mapEarlyStoppingMetricToDisplay(DLClassifierPreferences.getDefaultEarlyStoppingMetric()));
+            } finally {
+                suppressEsMetricListener = false;
+            }
             Label esMetricLabel = new Label("Early Stop Metric:");
             TooltipHelper.install(
                     "Which metric decides WHEN TO STOP training.\n"
@@ -3331,21 +3373,23 @@ public class TrainingDialog {
                 esPatienceLabel.setDisable(disabled);
             };
             // Reactive preference save: change to the combo immediately
-            // persists, instead of waiting for a Train click. Without this,
-            // a session where the user picks Disabled but never clicks Train
-            // (cancel, close, crash) loses the setting and the next dialog
-            // open shows whatever was last persisted -- typically "Mean IoU".
+            // persists, instead of waiting for a Train click. Suppression
+            // flags exclude programmatic setValue calls (init from prefs,
+            // load from model) so they don't masquerade as user edits and
+            // overwrite a value the user has explicitly chosen this session.
             earlyStoppingMetricCombo.valueProperty().addListener((obs, o, n) -> {
                 updateEarlyStoppingStatusLabel();
                 applyEarlyStoppingDisableState.run();
-                if (n != null) {
+                if (n != null && !suppressEsMetricListener) {
                     DLClassifierPreferences.setDefaultEarlyStoppingMetric(mapEarlyStoppingMetricFromDisplay(n));
+                    esMetricUserEdited = true;
                 }
             });
             earlyStoppingPatienceSpinner.valueProperty().addListener((obs, o, n) -> {
                 updateEarlyStoppingStatusLabel();
-                if (n != null) {
+                if (n != null && !suppressEsPatienceListener) {
                     DLClassifierPreferences.setDefaultEarlyStoppingPatience(n);
+                    esPatienceUserEdited = true;
                 }
             });
             applyEarlyStoppingDisableState.run();
