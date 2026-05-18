@@ -908,7 +908,12 @@ public class TrainingDialog {
                             + "especially with limited training data.",
                     "https://cs231n.github.io/transfer-learning/");
 
-            Label backboneInfo = new Label("Transfer learning uses pretrained weights from ImageNet. "
+            // Initial text is a neutral placeholder; updateBackboneInfoText
+            // below replaces it with the correct text for the currently
+            // selected backbone (foundation / histology / ImageNet). The
+            // previous hardcoded "from ImageNet" sentence was wrong when
+            // the dialog opened on a histology-pretrained backbone.
+            Label backboneInfo = new Label("Transfer learning uses pretrained weights. "
                     + "Freeze early layers to preserve general features, train later layers to adapt to your data.");
             backboneInfo.setWrapText(true);
             backboneInfo.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
@@ -921,6 +926,9 @@ public class TrainingDialog {
             advancedMode.addListener((obs, old, isAdv) -> {
                 updateBackboneInfoText(backboneCombo.getValue(), backboneInfo);
             });
+            // Set the correct text for the initially-selected backbone so the
+            // label is right before the user interacts with the combo.
+            updateBackboneInfoText(backboneCombo.getValue(), backboneInfo);
 
             layerFreezePanel = new LayerFreezePanel();
             layerFreezePanel.setBackend(backend);
