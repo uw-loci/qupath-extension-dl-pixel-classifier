@@ -120,6 +120,17 @@ public class TrainingAreaIssuesDialog {
     // Cached preview result for the apply-after-preview flow
     private AnnotationAdjuster.PreviewResult pendingPreview;
 
+    // Confusion Matrix tab: rebuilt whenever allRows changes (initial load,
+    // session reload). Cell click sets the (gt, pred) filter and switches
+    // back to the Tiles tab.
+    private TabPane mainTabs;
+    private Tab tilesTab;
+    private VBox matrixContent;
+    private String confusionFilterGt;
+    private String confusionFilterPred;
+    private Label confusionFilterLabel;
+    private HBox confusionFilterBanner;
+
     /**
      * Creates the training area issues dialog.
      *
@@ -528,10 +539,38 @@ public class TrainingAreaIssuesDialog {
         HBox sessionBar = new HBox(8, saveSessionButton, loadSessionButton);
         sessionBar.setAlignment(Pos.CENTER_LEFT);
 
-        // Layout: table on left, preview on right
-        VBox tablePane = new VBox(10, summaryLabel, warningBanner, filterBox, table, statusLabel, sessionBar);
-        tablePane.setPadding(new Insets(15));
+        // Confusion-filter banner -- only visible when a matrix cell click
+        // has applied a (gt, pred) filter to the table.
+        confusionFilterLabel = new Label("");
+        confusionFilterLabel.setStyle("-fx-text-fill: #b80000; -fx-font-weight: bold;");
+        Hyperlink clearConfusionLink = new Hyperlink("Clear");
+        clearConfusionLink.setOnAction(e -> clearConfusionFilter());
+        confusionFilterBanner = new HBox(8, confusionFilterLabel, clearConfusionLink);
+        confusionFilterBanner.setAlignment(Pos.CENTER_LEFT);
+        confusionFilterBanner.setVisible(false);
+        confusionFilterBanner.setManaged(false);
+
+        // Tabbed view: the existing table on one tab, the new Confusion
+        // Matrix on the other. Filter controls + status label move into the
+        // Tiles tab so they don't appear above the matrix.
+        VBox tilesTabContent = new VBox(10, filterBox, table, statusLabel);
+        tilesTabContent.setPadding(new Insets(10));
         VBox.setVgrow(table, Priority.ALWAYS);
+        tilesTab = new Tab("Tiles", tilesTabContent);
+        tilesTab.setClosable(false);
+
+        matrixContent = new VBox(10);
+        matrixContent.setPadding(new Insets(10));
+        Tab matrixTab = new Tab("Confusion Matrix", matrixContent);
+        matrixTab.setClosable(false);
+
+        mainTabs = new TabPane(tilesTab, matrixTab);
+        mainTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        VBox.setVgrow(mainTabs, Priority.ALWAYS);
+
+        // Layout: table on left, preview on right
+        VBox tablePane = new VBox(10, summaryLabel, warningBanner, confusionFilterBanner, mainTabs, sessionBar);
+        tablePane.setPadding(new Insets(15));
         HBox.setHgrow(tablePane, Priority.ALWAYS);
 
         HBox mainLayout = new HBox(0, tablePane, previewPane);
@@ -547,6 +586,8 @@ public class TrainingAreaIssuesDialog {
             overlayController.dispose();
             uninstallImageSwitchListener();
         });
+
+        rebuildConfusionMatrix();
     }
 
     /**
@@ -616,7 +657,15 @@ public class TrainingAreaIssuesDialog {
             if (excludedImageNames.contains(row.getSourceImage())) {
                 return false;
             }
-            return row.getLoss() >= minLoss;
+            if (row.getLoss() < minLoss) {
+                return false;
+            }
+            if (confusionFilterGt != null && confusionFilterPred != null) {
+                boolean matches = row.getTopConfusions().stream()
+                        .anyMatch(cp -> confusionFilterGt.equals(cp.gt()) && confusionFilterPred.equals(cp.pred()));
+                if (!matches) return false;
+            }
+            return true;
         });
 
         long visible = filteredRows.size();
@@ -943,6 +992,7 @@ public class TrainingAreaIssuesDialog {
         stage.setTitle("Training Area Issues - " + classifierName + " (session "
                 + loaded.info().sessionId() + ")");
         rescaleThresholdSlider();
+        rebuildConfusionMatrix();
     }
 
     /** Re-scales the Min Loss slider to the current row set's loss range. */
@@ -1532,6 +1582,205 @@ public class TrainingAreaIssuesDialog {
         } else {
             adjustStatusLabel.setText("Undo failed");
         }
+    }
+
+    // ==================== Confusion Matrix ====================
+
+    /**
+     * Rebuilds the Confusion Matrix tab from the current {@code allRows}.
+     * <p>
+     * Aggregates per-tile {@link ClassifierClient.ConfusionPair} entries into a
+     * session-wide GT x Pred matrix. Diagonal entries are derived as
+     * {@code (sum of GT pixels for this class across tiles) - (sum of misclassified pixels for this class)}.
+     * <p>
+     * For sessions emitted by v0.7.10 and earlier, the per-tile pair list was
+     * truncated to the top 3 entries, so the off-diagonals miss any pair that
+     * was always the 4th+ confusion. The header subtitle is labeled
+     * "(approximate, from top-3 per tile)" in that case. v0.7.11+ emits the
+     * full pair list and the subtitle reads "(full pixel-level)".
+     */
+    private void rebuildConfusionMatrix() {
+        if (matrixContent == null) return;
+        matrixContent.getChildren().clear();
+
+        Set<String> classSet = new java.util.LinkedHashSet<>();
+        Map<String, Long> gtSessionTotals = new java.util.LinkedHashMap<>();
+        Map<String, Map<String, Long>> offDiag = new java.util.LinkedHashMap<>();
+        Set<String> seenTileGt = new HashSet<>();
+        int maxPairsPerTile = 0;
+        long totalTiles = 0;
+
+        for (TileRow row : allRows) {
+            totalTiles++;
+            // perClassIoU brings in classes that are correctly predicted in
+            // some tiles but never appear in a confusion pair -- they would
+            // otherwise be missing from the matrix headers.
+            for (String cls : row.perClassIoU.keySet()) {
+                classSet.add(cls);
+            }
+            List<ClassifierClient.ConfusionPair> pairs = row.getTopConfusions();
+            if (pairs.size() > maxPairsPerTile) maxPairsPerTile = pairs.size();
+            for (ClassifierClient.ConfusionPair cp : pairs) {
+                classSet.add(cp.gt());
+                classSet.add(cp.pred());
+                String key = row.getFilename() + "|" + cp.gt();
+                if (seenTileGt.add(key)) {
+                    gtSessionTotals.merge(cp.gt(), cp.gtTotal(), Long::sum);
+                }
+                offDiag.computeIfAbsent(cp.gt(), k -> new java.util.LinkedHashMap<>())
+                        .merge(cp.pred(), cp.pixels(), Long::sum);
+            }
+        }
+
+        if (classSet.isEmpty()) {
+            Label empty = new Label("No confusion data available yet.\n"
+                    + "Train a classifier or load a saved session to populate the matrix.");
+            empty.setStyle("-fx-text-fill: #888;");
+            matrixContent.getChildren().add(empty);
+            return;
+        }
+
+        List<String> classes = new ArrayList<>(classSet);
+        java.util.Collections.sort(classes);
+
+        boolean isApproximate = maxPairsPerTile > 0 && maxPairsPerTile <= 3;
+        String subtitle = isApproximate
+                ? String.format(
+                        "Confusion Matrix (approximate, from top-3 per tile) -- %,d tiles aggregated", totalTiles)
+                : String.format("Confusion Matrix (full pixel-level) -- %,d tiles aggregated", totalTiles);
+        Label header = new Label(subtitle);
+        header.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;");
+
+        Label hint = new Label("Rows = ground truth, columns = prediction. "
+                + "Cell colour = % of that GT class's pixels predicted as that column. "
+                + "Click an off-diagonal cell to filter the Tiles tab to those confusions.");
+        hint.setWrapText(true);
+        hint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+
+        GridPane grid = new GridPane();
+        grid.setHgap(1);
+        grid.setVgap(1);
+        grid.setStyle("-fx-background-color: #cccccc;");
+
+        Label corner = new Label("GT \\ Pred");
+        corner.setMinSize(110, 32);
+        corner.setAlignment(Pos.CENTER);
+        corner.setStyle("-fx-font-weight: bold; -fx-background-color: #eeeeee;");
+        grid.add(corner, 0, 0);
+
+        for (int j = 0; j < classes.size(); j++) {
+            String pred = classes.get(j);
+            Label colHeader = new Label(truncateLabel(pred, 12));
+            colHeader.setMinSize(80, 32);
+            colHeader.setAlignment(Pos.CENTER);
+            colHeader.setStyle("-fx-font-weight: bold; -fx-background-color: #eeeeee;");
+            colHeader.setTooltip(TooltipHelper.create(pred + " (predicted)"));
+            grid.add(colHeader, j + 1, 0);
+        }
+
+        for (int i = 0; i < classes.size(); i++) {
+            String gt = classes.get(i);
+            Label rowHeader = new Label(truncateLabel(gt, 12));
+            rowHeader.setMinSize(110, 32);
+            rowHeader.setAlignment(Pos.CENTER_LEFT);
+            rowHeader.setStyle("-fx-font-weight: bold; -fx-background-color: #eeeeee; -fx-padding: 0 0 0 6;");
+            rowHeader.setTooltip(TooltipHelper.create(gt + " (ground truth)"));
+            grid.add(rowHeader, 0, i + 1);
+
+            long gtTotal = gtSessionTotals.getOrDefault(gt, 0L);
+            Map<String, Long> rowMap = offDiag.getOrDefault(gt, Map.of());
+            long offDiagSum = 0;
+            for (Long v : rowMap.values()) offDiagSum += v;
+            long correct = Math.max(gtTotal - offDiagSum, 0L);
+
+            for (int j = 0; j < classes.size(); j++) {
+                String pred = classes.get(j);
+                boolean diag = i == j;
+                long pixels = diag ? correct : rowMap.getOrDefault(pred, 0L);
+                double pct = gtTotal > 0 ? (100.0 * pixels / gtTotal) : 0.0;
+
+                Label cell = new Label();
+                cell.setMinSize(80, 32);
+                cell.setAlignment(Pos.CENTER);
+                if (gtTotal == 0) {
+                    cell.setText("-");
+                    cell.setStyle("-fx-background-color: white; -fx-text-fill: #ccc;");
+                } else if (diag) {
+                    cell.setText(String.format("%.1f%%", pct));
+                    cell.setStyle("-fx-background-color: #f0f0f0; -fx-text-fill: #888;");
+                } else if (pixels == 0) {
+                    cell.setText("-");
+                    cell.setStyle("-fx-background-color: white; -fx-text-fill: #ccc;");
+                } else {
+                    cell.setText(String.format("%.1f%%", pct));
+                    double intensity = Math.min(pct / 30.0, 1.0);
+                    int gb = (int) Math.round(255 - intensity * 200);
+                    String bg = String.format("#ff%02x%02x", gb, gb);
+                    String textColour = intensity > 0.5 ? "white" : "black";
+                    cell.setStyle(String.format(
+                            "-fx-background-color: %s; -fx-text-fill: %s; -fx-cursor: hand;", bg, textColour));
+                    final String gtFinal = gt;
+                    final String predFinal = pred;
+                    cell.setOnMouseClicked(e -> applyConfusionFilter(gtFinal, predFinal));
+                }
+
+                String tip = diag
+                        ? String.format("%s correctly predicted\n%,d px (%.2f%% of %s)", gt, pixels, pct, gt)
+                        : pixels == 0
+                                ? String.format("%s -> %s\nNo pixels recorded.", gt, pred)
+                                : String.format(
+                                        "%s -> %s\n%,d px (%.2f%% of %s)\nClick to filter Tiles tab.",
+                                        gt, pred, pixels, pct, gt);
+                cell.setTooltip(TooltipHelper.create(tip));
+                grid.add(cell, j + 1, i + 1);
+            }
+        }
+
+        javafx.scene.control.ScrollPane scroll = new javafx.scene.control.ScrollPane(grid);
+        scroll.setFitToWidth(false);
+        scroll.setFitToHeight(false);
+        VBox.setVgrow(scroll, Priority.ALWAYS);
+
+        matrixContent.getChildren().addAll(header, hint, scroll);
+    }
+
+    /**
+     * Sets the matrix-cell filter on the Tiles tab and switches to it. Rows
+     * are kept only if their {@code topConfusions} list contains the (gt, pred) pair.
+     */
+    private void applyConfusionFilter(String gt, String pred) {
+        this.confusionFilterGt = gt;
+        this.confusionFilterPred = pred;
+        if (confusionFilterLabel != null) {
+            confusionFilterLabel.setText(String.format("Filtered to tiles with confusion: %s -> %s", gt, pred));
+        }
+        if (confusionFilterBanner != null) {
+            confusionFilterBanner.setVisible(true);
+            confusionFilterBanner.setManaged(true);
+        }
+        refreshFilter();
+        if (mainTabs != null && tilesTab != null) {
+            mainTabs.getSelectionModel().select(tilesTab);
+        }
+    }
+
+    /** Drops the matrix-cell filter and restores the unfiltered table. */
+    private void clearConfusionFilter() {
+        this.confusionFilterGt = null;
+        this.confusionFilterPred = null;
+        if (confusionFilterLabel != null) {
+            confusionFilterLabel.setText("");
+        }
+        if (confusionFilterBanner != null) {
+            confusionFilterBanner.setVisible(false);
+            confusionFilterBanner.setManaged(false);
+        }
+        refreshFilter();
+    }
+
+    private static String truncateLabel(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(0, Math.max(0, max - 3)) + "...";
     }
 
     // ==================== Helper Classes ====================

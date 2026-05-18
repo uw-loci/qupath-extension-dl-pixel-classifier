@@ -479,7 +479,11 @@ try:
                                 }
                             )
                     pairs.sort(key=lambda p: p["pixels"], reverse=True)
-                    top_confusions = pairs[:3]
+                    # Keep the full set of non-zero off-diagonal pairs so the
+                    # Confusion Matrix tab in TrainingAreaIssuesDialog has
+                    # pixel-exact aggregation. JSON payload grows by ~50 KB
+                    # for a 1000-tile, 7-class session -- negligible.
+                    top_confusions = pairs
                 except Exception as conf_err:
                     logger.warning(
                         "confusion-pair computation failed for [%s] %s: %s",
