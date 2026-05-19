@@ -514,11 +514,32 @@ public class InferenceWorkflow {
                     }
                 }
 
-                // Count total tiles
+                // Count total tiles. The OBJECTS unified pipeline strides by
+                // tileSize - 2*padding (same as the overlay), while MEASUREMENTS
+                // and rendered overlay use the per-spec geometry from
+                // TileProcessor.generateTiles(). Counting via tileProcessor for
+                // the unified path inflated the count (e.g. logged 504 when
+                // the unified pipeline actually processed 35), so match the
+                // pre-count to whichever path will run.
                 int totalTiles = 0;
-                for (PathObject obj : targetObjects) {
-                    List<TileProcessor.TileSpec> specs = tileProcessor.generateTiles(obj.getROI(), server);
-                    totalTiles += specs.size();
+                boolean unifiedObjects =
+                        !isRenderedOverlay && inferenceConfig.getOutputType() == InferenceConfig.OutputType.OBJECTS;
+                if (unifiedObjects) {
+                    int tileSize = inferenceConfig.getTileSize();
+                    int padding = InferenceConfig.computeEffectivePadding(tileSize, inferenceConfig.getOverlap());
+                    int strideClass = Math.max(1, tileSize - 2 * padding);
+                    int strideFull = Math.max(1, (int) (strideClass * metadata.getDownsample()));
+                    for (PathObject obj : targetObjects) {
+                        ROI r = obj.getROI();
+                        int tx = (int) Math.ceil(r.getBoundsWidth() / (double) strideFull);
+                        int ty = (int) Math.ceil(r.getBoundsHeight() / (double) strideFull);
+                        totalTiles += tx * ty;
+                    }
+                } else {
+                    for (PathObject obj : targetObjects) {
+                        List<TileProcessor.TileSpec> specs = tileProcessor.generateTiles(obj.getROI(), server);
+                        totalTiles += specs.size();
+                    }
                 }
                 progress.log("Total tiles to process: " + totalTiles);
 
