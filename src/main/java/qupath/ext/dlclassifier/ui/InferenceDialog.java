@@ -258,8 +258,14 @@ public class InferenceDialog {
                 return new SimpleStringProperty("-");
             });
             dateCol.setPrefWidth(90);
+            // Default to newest-trained first when the dialog opens.
+            // ISO yyyy-MM-dd sorts correctly lexicographically; classifiers
+            // with no createdAt render as "-" which sorts after dated rows
+            // in DESCENDING order (ASCII '-' < '0'..'9').
+            dateCol.setSortType(TableColumn.SortType.DESCENDING);
 
             classifierTable.getColumns().addAll(List.of(nameCol, typeCol, channelsCol, classesCol, dateCol));
+            classifierTable.getSortOrder().add(dateCol);
 
             // Info label
             classifierInfoLabel = new Label("Select a classifier to see details");
@@ -646,8 +652,14 @@ public class InferenceDialog {
         }
 
         private void loadClassifiers() {
-            List<ClassifierMetadata> classifiers = modelManager.listClassifiers();
+            List<ClassifierMetadata> classifiers = new ArrayList<>(modelManager.listClassifiers());
+            // Pre-sort newest-first so selectFirst() lands on the most recent
+            // classifier even before the table applies its own sort.
+            classifiers.sort(Comparator.comparing(
+                            ClassifierMetadata::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                    .reversed());
             classifierTable.setItems(FXCollections.observableArrayList(classifiers));
+            classifierTable.sort();
 
             if (!classifiers.isEmpty()) {
                 classifierTable.getSelectionModel().selectFirst();
