@@ -732,7 +732,7 @@ public class InferenceWorkflow {
                     }
 
                     processed++;
-                    if (progress != null && (processed <= 10 || processed % 25 == 0)) {
+                    if (progress != null && (processed <= 10 || processed % 25 == 0 || processed == totalTiles)) {
                         progress.setDetail(String.format("Tile %d/%d", processed, totalTiles));
                         progress.setCurrentProgress((double) processed / totalTiles);
                     }
