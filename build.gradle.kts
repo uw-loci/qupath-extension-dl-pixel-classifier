@@ -55,8 +55,9 @@ dependencies {
 
     // For testing
     testImplementation(libs.bundles.qupath)
-    testImplementation("io.github.qupath:qupath-app:0.7.0-rc1")
-    testImplementation("org.junit.jupiter:junit-jupiter:5.9.1")
+    testImplementation("io.github.qupath:qupath-app:0.7.0")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.4")
     testImplementation("org.assertj:assertj-core:3.27.7")
     testImplementation(libs.bundles.logging)
     testImplementation(libs.qupath.fxtras)
@@ -122,10 +123,21 @@ tasks.withType<JavaCompile> {
 
 tasks.test {
     useJUnitPlatform()
-    jvmArgs = listOf(
-        "--add-modules", "javafx.base,javafx.graphics,javafx.controls",
-        "--add-opens", "javafx.graphics/javafx.stage=ALL-UNNAMED"
-    )
+    // Move JavaFX JARs from classpath to module path so --add-modules can find them.
+    // Temurin JDK (used in CI) does not bundle JavaFX, so the modules are only available
+    // as dependency JARs which Gradle places on the classpath by default.
+    doFirst {
+        val cp = classpath.files
+        val fxJars = cp.filter { it.name.startsWith("javafx-") }
+        if (fxJars.isNotEmpty()) {
+            classpath = files(cp - fxJars)
+            jvmArgs(
+                "--module-path", fxJars.joinToString(File.pathSeparator),
+                "--add-modules", "javafx.base,javafx.graphics,javafx.controls",
+                "--add-opens", "javafx.graphics/javafx.stage=ALL-UNNAMED"
+            )
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
