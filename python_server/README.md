@@ -19,7 +19,7 @@ This library provides the training and inference engines that power the DL Pixel
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+
 - PyTorch 2.1+
 - CUDA-capable GPU (recommended, but not required)
 
@@ -32,9 +32,12 @@ python_server/
       training_service.py      # PyTorch training loop
       inference_service.py     # ONNX + PyTorch inference
       pretrained_models.py     # Encoder/architecture catalog
+      model_registry.py        # Trained-model registry
+      muvit_model.py           # MuViT model factory
       job_manager.py           # Async job tracking
       gpu_manager.py           # CUDA/MPS/CPU detection
     utils/                     # Shared utilities (normalization, etc.)
+      batchrenorm.py           # BatchRenorm layer replacement
   tests/
     conftest.py                # Shared fixtures
     generate_test_data.py      # Synthetic data generator

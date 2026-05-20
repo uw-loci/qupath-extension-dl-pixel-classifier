@@ -175,6 +175,11 @@ def trainingConfig = TrainingConfig.builder()
 | `.holeFilling(double)` | double | Hole filling threshold in um^2 |
 | `.smoothing(double)` | double | Boundary smoothing in microns |
 | `.useGPU(boolean)` | boolean | Use GPU if available |
+| `.useTTA(boolean)` | boolean | Test-time augmentation (D4 transforms, averaged) |
+| `.multiPassAveraging(boolean)` | boolean | Run each tile at multiple spatial offsets and average |
+| `.overlaySmoothingSigma(double)` | double | Gaussian sigma for probability-map smoothing (0 = off) |
+| `.useCompactArgmaxOutput(boolean)` | boolean | Return uint8 argmax instead of float32 probabilities |
+| `.maxTilesInMemory(int)` | int | Cap on tiles buffered in memory during batch inference |
 
 ### ChannelConfiguration.builder()
 

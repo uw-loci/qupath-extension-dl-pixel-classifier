@@ -178,7 +178,3 @@ Agent reports backing the design decisions:
 - A1 (minimalist TinyUNet design)
 - A2 (counterpoint: SMP + lightweight pretrained encoder)
 - B2 (safe-default training speedups)
-
-Both agent reports live under `~/.claude/plans/` on the development
-machine and are referenced from the phase plan file
-`we-need-to-change-modular-charm.md`.

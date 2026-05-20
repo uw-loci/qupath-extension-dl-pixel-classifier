@@ -328,9 +328,9 @@ This is especially common with:
 
 **Symptom:** `val_loss` shows values in the hundreds or thousands, while the individual per-class losses sum to much less than the reported total.
 
-**Cause:** Extreme logit magnitudes from pretrained or continued-training models. When model outputs become very large, `cross_entropy(-log(softmax(x)))` produces huge per-pixel losses even in FP32 precision. This was fixed in v0.4.2+ by clamping logits to the range [-50, 50] before loss computation.
+**Cause:** Extreme logit magnitudes from pretrained or continued-training models. When model outputs become very large, `cross_entropy(-log(softmax(x)))` produces huge per-pixel losses even in FP32 precision. This is fixed in current releases by clamping logits to the range [-50, 50] before loss computation.
 
-**Fix:** Update to v0.4.7+ and use **Utilities > Rebuild DL Environment...** to ensure the Python environment matches the latest version.
+**Fix:** This is fixed in current releases. If you see it, use **Utilities > Rebuild DL Environment...** to ensure the Python environment matches the installed extension.
 
 ### Continue-training produces worse results than original
 
@@ -340,7 +340,7 @@ This is especially common with:
 
 - **Learning rate too high for continue-training.** Use `0.0001`, not `0.001`. The model is already near a minimum, so a large learning rate pushes it out of the basin.
 - **`loadSettingsFromModel` may restore the OLD learning rate from the saved model.** Always verify that the LR spinner shows `0.00010` before clicking Train. If the spinner shows `0.00100`, the old model's LR was loaded -- change it manually.
-- **Frozen layers, discriminative LRs, and scheduler settings are now preserved** (v0.4.0+). If you are on an older version, these settings may be lost when loading a model.
+- **Frozen layers, discriminative LRs, and scheduler settings are preserved** when loading a model in current releases.
 - **Version mismatch between the pip package and the JAR.** Check for the version mismatch notification dialog on startup. If the Python environment is out of date, use **Utilities > Rebuild DL Environment...** to update it.
 
 ## Inference Issues

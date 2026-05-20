@@ -109,6 +109,8 @@ Multi-image training combines patches from all selected images into one training
 | Architecture | Best for | Reference |
 |-------------|----------|-----------|
 | **UNet** | General-purpose segmentation. Good default. | [Paper](https://arxiv.org/abs/1505.04597) |
+| **Tiny UNet** | Lightweight depthwise-separable UNet for simple 2-5 class tasks, especially non-RGB data. No pretrained weights. Fast to train. | [Tiny UNet](TINY_MODEL.md) |
+| **Fast Pretrained** | Compact UNet with mobile ImageNet-pretrained encoders (EfficientNet-Lite0, MobileNetV3-Small). Best for small RGB H&E datasets. | [Fast Pretrained](FAST_PRETRAINED.md) |
 | **MuViT (Transformer)** | Multi-scale feature fusion with Vision Transformer encoder. Supports optional MAE pretraining. | - |
 | **Custom ONNX Model** | Importing externally trained models. Advanced users. | - |
 
@@ -342,7 +344,18 @@ When training completes successfully, a **"Review Training Areas..."** button ap
 | **Loss** | Cross-entropy loss -- higher = model disagrees more with annotation |
 | **Disagree%** | Percentage of pixels where prediction differs from annotation |
 | **mIoU** | Mean Intersection-over-Union across classes present in the tile |
+| **Worst Confusion** | The most frequent ground-truth-to-prediction class confusion in the tile (hover for the full breakdown) |
 | **Classes** | Which classes are present in the tile |
+
+### Confusion Matrix tab
+
+The dialog has two tabs: the tile list described above, and a **Confusion Matrix** tab. The matrix aggregates pixel-level ground-truth-vs-prediction counts across all evaluated tiles, with ground-truth classes as rows and predicted classes as columns. The diagonal holds correctly classified pixels; off-diagonal cells show where the model systematically confuses one class for another.
+
+**Click any cell** to filter the tile list to only the tiles that contain that specific ground-truth-to-prediction confusion. A banner at the top of the tile list shows the active confusion filter with a **Clear** link to remove it. This makes it easy to jump from a systematic error in the matrix to the exact tiles where it occurs.
+
+### Apply Annotation Adjustment
+
+The **Apply Annotation Adjustment** panel proposes corrections to your annotations based on where the model disagrees with them. It presents a list of **per-transition checkboxes** -- each checkbox is a single class-to-class transition (e.g., "Stroma -> Tumor") with the pixel count that would be reassigned. All transitions are checked by default. Toggling any checkbox updates the preview overlay live so you can see exactly which pixels each transition affects before committing the adjustment.
 
 ### Filtering and navigation
 

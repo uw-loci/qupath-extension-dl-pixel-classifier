@@ -8,7 +8,7 @@ version = "0.7.12-dev"
 description = "Deep learning pixel classification server for QuPath supporting multi-channel images"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "GPL-3.0"}
+license = {text = "Apache-2.0"}
 authors = [
     {name = "UW-LOCI", email = "loci@wisc.edu"}
 ]

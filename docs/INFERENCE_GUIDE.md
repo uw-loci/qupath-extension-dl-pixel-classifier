@@ -23,6 +23,8 @@ The classifier table shows all available trained models with columns for:
 - **Classes** -- number of output classes
 - **Trained** -- training date
 
+The table defaults to sorting by **Trained** date, newest first, so the most recently trained classifier appears at the top. Click any column header to re-sort by that column (click again to reverse the order).
+
 Click a row to select it. The info panel below shows the architecture + backbone, input channels + context scale + tile dimensions, downsample level, and class names.
 
 ### Channel Mapping

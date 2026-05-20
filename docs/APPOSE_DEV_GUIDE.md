@@ -177,13 +177,16 @@ On the Java side, Appose event listeners catch exceptions to prevent crashes. If
 
 ## Constraint 5: Globals Available in Script Scope
 
-Appose scripts receive these injected globals (set up by `init_shared.py`):
+Appose scripts receive these injected globals (set up by `init_services.py`):
 
 | Variable | Type | Description |
 |----------|------|-------------|
 | `task` | `appose.Task` | Progress reporting and output |
 | `inference_service` | `InferenceService` | Shared inference service instance |
 | `gpu_manager` | `GPUManager` | GPU device and memory management |
+| `model_registry` | `ModelRegistry` | Trained-model registry |
+| `inference_lock` | `threading.Lock` | Serializes GPU operations across concurrent tasks |
+| `pretrained_service` | `PretrainedModelsService` | Encoder/architecture catalog (may be `None` if it failed to load) |
 
 Plus any `inputs` specified when creating the task (e.g., `config`, `data_path`).
 
@@ -230,7 +233,7 @@ At startup, `init_services.py` parses both version strings into tuples and compa
 ### What the user sees
 
 When the Python package is out of date:
-- An error notification appears: "Python environment is out of date. Go to DL Pixel Classifier > Rebuild Python Environment to update."
+- An error notification appears: "Python environment is out of date. Go to DL Pixel Classifier > Utilities > Rebuild DL Environment to update."
 - Training and inference menu items fail their health check and refuse to open
 - The QuPath log shows: `PYTHON PACKAGE OUT OF DATE: installed dlclassifier-server vX.Y.Z but the extension requires vA.B.C or newer`
 
@@ -244,12 +247,15 @@ When the Python package is out of date:
 
 **How to bump:**
 
-1. Bump `version` in `python_server/pyproject.toml`
-2. Update the fallback `__version__` in `python_server/dlclassifier_server/__init__.py`
-3. Update `_REQUIRED_PYTHON_VERSION` in `src/main/resources/.../scripts/init_services.py`
-4. Update the version tag comment in `pixi.toml` to force re-fetch
+The version string is duplicated across **five** sites. All five must be bumped together:
 
-All three locations must match. The `_REQUIRED_PYTHON_VERSION` in the JAR script is the enforcement point -- it is the source of truth for "what Python version does this JAR need?"
+1. `version` in `python_server/pyproject.toml`
+2. The fallback `__version__` in `python_server/dlclassifier_server/__init__.py`
+3. `_REQUIRED_PYTHON_VERSION` in `src/main/resources/qupath/ext/dlclassifier/scripts/init_services.py`
+4. `version` in `build.gradle.kts` (the `qupathExtension { ... }` block)
+5. `DL_SERVER_VERSION` in `src/main/java/qupath/ext/dlclassifier/service/ApposeService.java`
+
+All five locations must match. The `_REQUIRED_PYTHON_VERSION` in the JAR script is the enforcement point -- it is the source of truth for "what Python version does this JAR need?" Note that `ApposeService.DL_SERVER_VERSION` also drives the pip install URL (master branch for `-dev` builds, the matching `vX.Y.Z` tag for releases), so a missed bump there fetches the wrong Python code.
 
 ## Checklist for New Python Services
 

@@ -446,6 +446,8 @@ After training, the **Review Training Areas** feature evaluates every training t
 | **Disagree%** | Percentage of labeled pixels where the model's prediction differs from the annotation mask. | < 10% for clear regions |
 | **mIoU** | Mean Intersection-over-Union across all classes present in the tile. 1.0 = perfect agreement. | > 0.7 for good predictions |
 
+The tile list also includes a **Worst Confusion** column showing the most frequent ground-truth-to-prediction class confusion in each tile. To see systematic errors across the whole dataset, switch to the **Confusion Matrix** tab, which aggregates pixel-level ground-truth-vs-prediction counts; clicking a matrix cell filters the tile list to the tiles containing that specific confusion.
+
 ### Prioritizing which tiles to review
 
 1. **Start with the highest-loss tiles** -- these are the most likely annotation errors

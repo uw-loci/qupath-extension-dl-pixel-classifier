@@ -87,7 +87,7 @@ These are saved when you click "Apply" and restored next time you open the dialo
 
 | Preference | Key | Default | Description |
 |-----------|-----|---------|-------------|
-| Output Type | `dlclassifier.lastOutputType` | `RENDERED_OVERLAY` | Last used output type |
+| Output Type | `dlclassifier.lastOutputType` | `OBJECTS` | Last used output type. The Apply dialog offers only `OBJECTS` and `MEASUREMENTS`; any other stored value (e.g. a legacy `RENDERED_OVERLAY`) is coerced to `OBJECTS` when the dialog loads. |
 | Blend Mode | `dlclassifier.lastBlendMode` | `CENTER_CROP` | Last used blend mode (CENTER_CROP recommended; forced for OVERLAY output) |
 | Smoothing | `dlclassifier.smoothing` | `1.0` | Boundary smoothing amount |
 | Overlay Smoothing | `dlclassifier.overlaySmoothing` | `2.0` | Gaussian sigma for probability map smoothing in overlay mode (0 = off, 1-2 = light, 3-5 = moderate) |

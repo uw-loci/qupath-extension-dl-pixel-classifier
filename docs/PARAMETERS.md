@@ -36,7 +36,7 @@ Dialog sections appear in this order:
 
 | Parameter | Options | Description |
 |-----------|---------|-------------|
-| **Architecture** | UNet, MuViT (Transformer), Custom ONNX Model | Segmentation architecture. UNet is the best general-purpose choice. MuViT uses multi-resolution Vision Transformer feature fusion for multi-scale context. Custom ONNX allows importing externally trained models. See [UNet paper](https://arxiv.org/abs/1505.04597). |
+| **Architecture** | UNet, Tiny UNet, Fast Pretrained, MuViT (Transformer), Custom ONNX Model | Segmentation architecture. UNet is the best general-purpose choice. **Tiny UNet** is a lightweight depthwise-separable UNet (no pretrained weights) for simple 2-5 class tasks and non-RGB data -- see [Tiny UNet](TINY_MODEL.md). **Fast Pretrained** is a compact UNet with mobile ImageNet-pretrained encoders for small RGB H&E datasets -- see [Fast Pretrained](FAST_PRETRAINED.md). MuViT uses multi-resolution Vision Transformer feature fusion for multi-scale context. Custom ONNX allows importing externally trained models. See [UNet paper](https://arxiv.org/abs/1505.04597). |
 | **Encoder** | resnet18, resnet34, resnet50, efficientnet-b0/b1/b2, mobilenet_v2, 4 histology-pretrained variants (resnet50_lunit-swav, resnet50_lunit-bt, resnet50_kather100k, resnet50_tcga-brca), and 6 foundation model encoders (see below) | Pretrained encoder network (shown for UNet only). Histology backbones use H&E tissue-pretrained weights (20x, 3-channel RGB) instead of ImageNet -- best for H&E brightfield. Foundation model encoders provide large-scale pretrained representations for tissue analysis. For fluorescence or multi-channel images, use ImageNet backbones. See [Backbone Selection](BEST_PRACTICES.md#backbone-selection). |
 
 **Foundation model encoders** (downloaded on-demand from HuggingFace, not bundled). Foundation model integration inspired by LazySlide (Zheng et al. 2026, Nature Methods). Only commercially-permissive licenses are included:
@@ -63,13 +63,14 @@ When **MuViT (Transformer)** is selected, the Encoder combo is hidden and a hand
 
 ### Weight Initialization
 
-Controls how model weights are initialized before training. This section has four mutually exclusive radio buttons:
+Controls how model weights are initialized before training. This section has five mutually exclusive radio buttons:
 
 | Strategy | Description |
 |----------|-------------|
 | **Train from scratch** | Random initialization. Only recommended for very large datasets. |
 | **Use pretrained backbone weights** | Initialize the encoder with pretrained weights (ImageNet or histology). Almost always recommended. Shows a layer freeze panel for fine-grained control over which layers to train vs. freeze. |
 | **Use MAE pretrained encoder** | Load encoder weights from a self-supervised MAE pretrained model (.pt file). Click "Browse..." to select the file. Architecture settings auto-lock to match the encoder metadata. MuViT only. |
+| **Use SSL pretrained encoder** | Load encoder weights from a self-supervised SSL pretrained model (.pt file). Click "Browse..." to select the file. For CNN encoders (ResNet, EfficientNet, MobileNet) produced by the SSL Pretrain Encoder workflow. UNet only. See [Domain Adaptation Guide](DOMAIN_ADAPTATION_GUIDE.md). |
 | **Continue training from saved model** | Resume training from a previously trained classifier. Click "Select model..." to pick the model. All dialog fields populate from the saved model's metadata and training settings. Architecture, backbone, tile size, downsample, context scale, and handler-specific parameters (MuViT model size, patch size, level scales) are locked to match the saved model weights. |
 
 When **Use pretrained backbone weights** is selected, a **Layer Freeze Panel** appears with:
@@ -99,7 +100,7 @@ When **Use pretrained backbone weights** is selected, a **Layer Freeze Panel** a
 | Parameter | Default | Options | Description |
 |-----------|---------|---------|-------------|
 | **LR Scheduler** | One Cycle | One Cycle, Cosine Annealing, Reduce on Plateau, Step Decay, None | Learning rate schedule. One Cycle is recommended for most cases. Reduce on Plateau automatically lowers the LR when the monitored metric stops improving (factor=0.5, patience=10). See [PyTorch schedulers](https://pytorch.org/docs/stable/optim.html). |
-| **Loss Function** | Cross Entropy + Dice | Cross Entropy + Dice, Cross Entropy, Focal + Dice, Focal | Cross Entropy + Dice is recommended for most cases. **Focal + Dice** down-weights easy pixels via (1-p)^gamma, helping the model focus on hard regions (e.g., small structures in large images). **Focal** is focal loss without Dice. See [smp losses](https://smp.readthedocs.io/en/latest/losses.html). |
+| **Loss Function** | Cross Entropy + Dice | Cross Entropy + Dice, Cross Entropy, Focal + Dice, Focal, Boundary-softened CE, Boundary-softened CE + Dice, Lovasz-Softmax, CE + Lovasz-Softmax | Cross Entropy + Dice is recommended for most cases. **Focal + Dice** down-weights easy pixels via (1-p)^gamma, helping the model focus on hard regions (e.g., small structures in large images). **Focal** is focal loss without Dice. **Boundary-softened CE** weights CE by distance to the nearest annotation boundary, down-weighting noisy edge pixels (tunable via Boundary Sigma / Boundary W Min); **Boundary-softened CE + Dice** pairs it with Dice. **Lovasz-Softmax** directly optimizes mean IoU and has no hyperparameters; **CE + Lovasz-Softmax** adds a CE term for stable early gradient. OHEM (Hard Pixel %) composes with all variants except the two Lovasz options. See [smp losses](https://smp.readthedocs.io/en/latest/losses.html) and [Training Guide: Loss function options](TRAINING_GUIDE.md#loss-function-options). |
 | **Focal Gamma** | 2.0 | 0.5-5.0 | Focal loss focusing parameter. Higher = stronger focus on hard pixels. Only visible when a Focal loss variant is selected. gamma=2 is standard. |
 | **Hard Pixel %** | 100 | 10-100 | Online Hard Example Mining (OHEM): keep only the hardest N% of pixels per batch. 100% = all pixels (standard). 25% = aggressive hard mining. More aggressive than focal loss -- completely ignores easy pixels instead of down-weighting. |
 | **Early Stop Metric** | Mean IoU | Mean IoU, Validation Loss | Mean IoU is more reliable than loss for stopping. |

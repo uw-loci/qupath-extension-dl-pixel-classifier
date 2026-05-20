@@ -69,7 +69,7 @@ The training and inference menu items now appear automatically. On subsequent la
 
 ### 3b. Open the training dialog
 
-**Extensions > DL Pixel Classifier > Train Classifier...**
+**Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**
 
 ### 3c. Configure training
 
@@ -92,7 +92,7 @@ A 3-epoch test run should complete in under a minute on GPU.
 
 ### 3e. Verify the result
 
-When training completes, the classifier is saved to your QuPath project under `classifiers/`. You can see it via **Extensions > DL Pixel Classifier > Manage Models...**
+When training completes, the classifier is saved to your QuPath project under `classifiers/`. You can see it via **Extensions > DL Pixel Classifier > Manage Classifiers...**
 
 ---
 
@@ -100,14 +100,14 @@ When training completes, the classifier is saved to your QuPath project under `c
 
 1. Open an image (same one or a different one)
 2. Create annotation(s) around the region(s) you want to classify
-3. **Extensions > DL Pixel Classifier > Apply Classifier...**
+3. **Extensions > DL Pixel Classifier > Apply DL Pixel Classifier...**
 4. Select your trained classifier
-5. Choose an output type:
-   - **Rendered Overlay** -- batch inference with seamless blending (recommended for quality validation)
+5. Choose an output type (the Apply dialog offers two):
    - **Measurements** -- adds class probabilities as annotation measurements
-   - **Objects** -- creates detection objects from the classification map
-   - **Overlay** -- renders a live on-demand color overlay as you pan and zoom
+   - **Objects** -- creates detection or annotation objects from the classification map
 6. Click **Apply**
+
+> For a live color overlay you can pan and zoom, use **Select Overlay Model...** and **Toggle Prediction Overlay** instead -- see [Live Overlay Mode](docs/INFERENCE_GUIDE.md#live-overlay-mode).
 
 ---
 
@@ -115,7 +115,7 @@ When training completes, the classifier is saved to your QuPath project under `c
 
 To iterate on a model with updated annotations or adjusted settings:
 
-1. Open the training dialog (**Train Classifier...**)
+1. Open the training dialog (**Train DL Pixel Classifier...**)
 2. In the **WEIGHT INITIALIZATION** section, select **"Continue training from saved model"**
 3. Click **"Select model..."** and choose the model you want to build on
 4. All parameters (architecture, learning rate, augmentation, etc.) are pre-filled
@@ -132,7 +132,7 @@ The new classifier is saved separately; the original model is not modified.
 To train from annotations across multiple project images:
 
 1. Open a QuPath project with multiple annotated images
-2. Open the training dialog (**Train Classifier...**)
+2. Open the training dialog (**Train DL Pixel Classifier...**)
 3. Under **TRAINING DATA SOURCE**, check images to include (only images with classified annotations appear)
 4. Click **"Load Classes from Selected Images"**
 5. Train as usual -- patches from all selected images are combined into one training set
