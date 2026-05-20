@@ -4,3 +4,10 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # qupath-app must stay in lockstep with the `qupath { version }` pin in
+      # settings.gradle.kts. A standalone Dependabot bump desyncs the test
+      # classpath from the targeted QuPath release and can force a newer JVM
+      # than the CI runners use. Bump it by hand as part of a full QuPath
+      # version upgrade instead.
+      - dependency-name: "io.github.qupath:qupath-app"
