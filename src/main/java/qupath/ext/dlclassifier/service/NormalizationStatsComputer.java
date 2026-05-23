@@ -132,6 +132,34 @@ public final class NormalizationStatsComputer {
     }
 
     /**
+     * Sample image-level per-channel pixel statistics independently of
+     * the normalization pipeline. Returns the base (detail-channel)
+     * stats only, so the result is directly comparable to
+     * {@code ClassifierMetadata.getNormalizationStats()} regardless of
+     * whether multi-scale context is enabled.
+     * <p>
+     * Used by the out-of-distribution checker: when training stats are
+     * present, {@link #compute(ImageServer, ClassifierMetadata,
+     * ChannelConfiguration, int, double)} short-circuits to those and
+     * never samples the image, so this method provides the image-side
+     * half of the comparison.
+     *
+     * @return list of per-channel stat maps, or null on failure
+     */
+    public static List<Map<String, Double>> sampleImageStats(
+            ImageServer<BufferedImage> server,
+            ClassifierMetadata metadata,
+            ChannelConfiguration channelConfig,
+            double downsample) {
+        try {
+            return computeImageNormalizationStats(server, metadata, channelConfig, downsample);
+        } catch (IOException e) {
+            logger.warn("Failed to sample image stats for OOD check: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Samples the image to compute per-channel normalization statistics.
      * <p>
      * Reads tiles from a grid of sample locations across the image,

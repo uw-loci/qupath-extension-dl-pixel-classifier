@@ -49,6 +49,15 @@ public final class InteractionWarningRegistration {
         // the "Don't show again" checkbox in preferences.
         suppressIfUnset(OhemFocalWatcher.ID);
         suppressIfUnset(PlateauValLossWatcher.ID);
+
+        // Reserved ids -- not registered here because they are not
+        // watcher-style (their description is built from runtime data)
+        // but they share the InteractionWarningService suppression
+        // preference key space. Do not reuse:
+        //   "ood-distribution-shift" -- OutOfDistributionWarning,
+        //       fired by OutOfDistributionPreflight at inference start
+        //       when image pixel stats fall outside the training
+        //       distribution recorded in metadata.normalization_stats.
     }
 
     /**

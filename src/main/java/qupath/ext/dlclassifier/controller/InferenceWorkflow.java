@@ -35,6 +35,7 @@ import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.NormalizationStatsComputer;
 import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.ext.dlclassifier.service.PrecomputedPixelClassifier;
+import qupath.ext.dlclassifier.service.ood.OutOfDistributionPreflight;
 import qupath.ext.dlclassifier.ui.InferenceDialog;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.utilities.OutputGenerator;
@@ -236,6 +237,12 @@ public class InferenceWorkflow {
                 // tile normalization (prevents per-tile fallback artifacts)
                 ChannelConfiguration channelsWithStats = NormalizationStatsComputer.compute(
                         server, classifier, channels, classifier.getContextScale(), classifier.getDownsample());
+
+                // Headless OOD preflight: compares image pixel stats to training stats and
+                // logs a warning when the channels are outside the training distribution.
+                // Headless callers continue regardless; the popup is the interactive path.
+                OutOfDistributionPreflight.run(
+                        server, classifier, channelsWithStats, classifier.getDownsample(), false);
 
                 // Use same effective overlap as the overlay path
                 int effectivePadding =
@@ -460,6 +467,14 @@ public class InferenceWorkflow {
                 progress.setStatus("Computing normalization stats...");
                 ChannelConfiguration channelCfg = NormalizationStatsComputer.compute(
                         server, metadata, channelConfig, metadata.getContextScale(), metadata.getDownsample());
+
+                // Interactive OOD preflight: compares image pixel stats to training stats
+                // and pops up a warning when the channels are outside the training
+                // distribution. Currently non-blocking (WARN severity), so the user is
+                // informed but can always proceed. Skipped when training stats are absent
+                // from metadata or when the user has dismissed the warning.
+                progress.setStatus("Checking image distribution vs training...");
+                OutOfDistributionPreflight.run(server, metadata, channelCfg, metadata.getDownsample(), true);
 
                 // Create tile processor with effective overlap matching the overlay.
                 // Both paths use InferenceConfig.computeEffectivePadding() so the

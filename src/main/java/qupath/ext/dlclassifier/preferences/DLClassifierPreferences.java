@@ -315,6 +315,13 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty overlayNoticeDismissed =
             PathPrefs.createPersistentPreference("dlclassifier.overlayNoticeDismissed", false);
 
+    // Out-of-distribution warning threshold (z-score). Per-channel mean / p1 / p99
+    // deviations from training stats are flagged when |image - train| / train_std
+    // exceeds this value. 3.0 is the conventional "unusual" cutoff. The contrast
+    // (std-ratio) check uses a fixed ln(2) threshold inside the checker.
+    private static final DoubleProperty oodSigmaThreshold =
+            PathPrefs.createPersistentPreference("dlclassifier.oodSigmaThreshold", 3.0);
+
     // ==================== Environment ====================
 
     // Automatically rebuild the Python environment when extension version changes
@@ -492,6 +499,21 @@ public final class DLClassifierPreferences {
                         + "values train on a larger subset but leave less headroom.")
                 .build());
 
+        items.add(new PropertyItemBuilder<>(oodSigmaThreshold, Double.class)
+                .name("Out-of-Distribution Warning Threshold (sigma)")
+                .category(CATEGORY)
+                .description("Per-channel z-score threshold for the pre-inference "
+                        + "out-of-distribution check. Compares the image's pixel mean, "
+                        + "p1, and p99 against the training distribution recorded in "
+                        + "the classifier's metadata.json. "
+                        + "3.0 = conventional 'unusual' cutoff (the default); "
+                        + "lower = more sensitive (more warnings); "
+                        + "higher = only flag extreme drift. "
+                        + "The contrast (std-ratio) check uses a separate fixed "
+                        + "threshold of 2x. Use the 'Don't show again' checkbox on "
+                        + "the warning popup to disable the check entirely.")
+                .build());
+
         items.add(new PropertyItemBuilder<>(showMenuDot, Boolean.class)
                 .name("Show Menu Indicator Dot")
                 .category(CATEGORY)
@@ -661,6 +683,20 @@ public final class DLClassifierPreferences {
 
     public static BooleanProperty useGPUProperty() {
         return useGPU;
+    }
+
+    // ==================== Out-of-Distribution Check ====================
+
+    public static double getOodSigmaThreshold() {
+        return oodSigmaThreshold.get();
+    }
+
+    public static void setOodSigmaThreshold(double sigma) {
+        oodSigmaThreshold.set(sigma);
+    }
+
+    public static DoubleProperty oodSigmaThresholdProperty() {
+        return oodSigmaThreshold;
     }
 
     // ==================== Object Output Settings ====================
