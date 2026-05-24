@@ -242,7 +242,11 @@ public class InferenceWorkflow {
                 // logs a warning when the channels are outside the training distribution.
                 // Headless callers continue regardless; the popup is the interactive path.
                 OutOfDistributionPreflight.run(
-                        server, classifier, channelsWithStats, classifier.getDownsample(), false);
+                        server,
+                        classifier,
+                        channelsWithStats,
+                        classifier.getDownsample(),
+                        OutOfDistributionPreflight.SurfaceMode.LOG);
 
                 // Use same effective overlap as the overlay path
                 int effectivePadding =
@@ -474,7 +478,12 @@ public class InferenceWorkflow {
                 // informed but can always proceed. Skipped when training stats are absent
                 // from metadata or when the user has dismissed the warning.
                 progress.setStatus("Checking image distribution vs training...");
-                OutOfDistributionPreflight.run(server, metadata, channelCfg, metadata.getDownsample(), true);
+                OutOfDistributionPreflight.run(
+                        server,
+                        metadata,
+                        channelCfg,
+                        metadata.getDownsample(),
+                        OutOfDistributionPreflight.SurfaceMode.DIALOG);
 
                 // Create tile processor with effective overlap matching the overlay.
                 // Both paths use InferenceConfig.computeEffectivePadding() so the

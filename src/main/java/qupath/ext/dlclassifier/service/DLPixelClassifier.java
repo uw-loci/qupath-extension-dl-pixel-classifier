@@ -10,6 +10,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import javafx.application.Platform;
@@ -19,6 +20,7 @@ import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.service.ClassifierClient.PixelInferenceResult;
+import qupath.ext.dlclassifier.service.ood.OutOfDistributionPreflight;
 import qupath.ext.dlclassifier.utilities.TileEncoder;
 import qupath.lib.classifiers.pixel.PixelClassifier;
 import qupath.lib.classifiers.pixel.PixelClassifierMetadata;
@@ -71,6 +73,7 @@ public class DLPixelClassifier implements PixelClassifier {
     private final AtomicBoolean contextResizeWarned = new AtomicBoolean(false);
     private final AtomicBoolean firstTileLogged = new AtomicBoolean(false);
     private final AtomicBoolean oversizedWarned = new AtomicBoolean(false);
+    private final AtomicBoolean oodChecked = new AtomicBoolean(false);
     private volatile String lastErrorMessage;
 
     /** Set to true when the overlay is being removed, to suppress error counting on interrupted threads. */
@@ -318,6 +321,7 @@ public class DLPixelClassifier implements PixelClassifier {
             consecutiveErrors.set(0);
             errorNotified.set(false);
             contextResizeWarned.set(false);
+            oodChecked.set(false);
         }
         currentServerPath = serverPath;
 
@@ -360,6 +364,27 @@ public class DLPixelClassifier implements PixelClassifier {
                     channelConfigWithStats = channelCfg;
                 }
             }
+        }
+
+        // Overlay-path OOD preflight: fire once per image on a background thread so
+        // tile rendering is not delayed by the ~1-3 s of image sampling. Surfaces
+        // via a non-blocking corner notification (the Apply Classifier path uses a
+        // modal dialog instead). Skipped when training stats are absent from
+        // metadata, when the warning is user-suppressed, or after the first run.
+        if (oodChecked.compareAndSet(false, true)) {
+            final ChannelConfiguration cfgForCheck = channelCfg;
+            CompletableFuture.runAsync(() -> {
+                try {
+                    OutOfDistributionPreflight.run(
+                            server,
+                            metadata,
+                            cfgForCheck,
+                            downsample,
+                            OutOfDistributionPreflight.SurfaceMode.NOTIFICATION);
+                } catch (RuntimeException ex) {
+                    logger.warn("Overlay OOD preflight failed: {}", ex.getMessage());
+                }
+            });
         }
 
         // Read expanded region from image for real context at tile boundaries.
