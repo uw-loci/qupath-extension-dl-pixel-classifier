@@ -424,9 +424,24 @@ public class ModelManagementWorkflow {
      * Adds a label-value row to a grid.
      */
     private void addDetailRow(GridPane grid, int row, String label, String value) {
+        // Without explicit constraints the label column gets squeezed to "..."
+        // when the value column carries long content (e.g. serialized maps or
+        // lists from Training Settings) inside the narrow details split pane.
+        if (grid.getColumnConstraints().isEmpty()) {
+            ColumnConstraints labelCol = new ColumnConstraints();
+            labelCol.setHgrow(Priority.NEVER);
+            labelCol.setMinWidth(Region.USE_PREF_SIZE);
+            ColumnConstraints valueCol = new ColumnConstraints();
+            valueCol.setHgrow(Priority.ALWAYS);
+            valueCol.setFillWidth(true);
+            grid.getColumnConstraints().addAll(labelCol, valueCol);
+        }
         Label labelNode = new Label(label);
         labelNode.setStyle("-fx-text-fill: #666;");
+        labelNode.setMinWidth(Region.USE_PREF_SIZE);
         Label valueNode = new Label(value != null ? value : "-");
+        valueNode.setWrapText(true);
+        valueNode.setMaxWidth(Double.MAX_VALUE);
         grid.add(labelNode, 0, row);
         grid.add(valueNode, 1, row);
     }
