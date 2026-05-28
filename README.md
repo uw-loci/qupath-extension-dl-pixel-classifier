@@ -51,6 +51,7 @@ Each bullet leads with what you can *do*; the algorithm or architecture name is 
 - **Get full per-pixel probability maps** for OBJECTS and OVERLAY outputs, not just argmax labels
 - **Fast embedded Python inference** with zero-copy tile transfer (Appose shared-memory IPC)
 - **Efficient ROI merging** via hierarchical geometry union
+- **Out-of-distribution check** -- warns before inference when the image's pixel distribution (mean, contrast, dynamic range) differs significantly from the training data, helping you catch gross appearance shifts (stain, exposure, sensor changes) that could degrade predictions
 
 ### Inspect and iterate
 - **Find your worst annotations and hardest tiles automatically** -- post-training evaluation runs the model over every training tile, ranks by loss, and renders per-tile loss heatmaps and disagreement maps as viewer overlays. Sessions save per classifier version and reload without re-running
