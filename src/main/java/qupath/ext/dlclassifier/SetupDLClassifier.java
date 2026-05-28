@@ -1155,6 +1155,25 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 }
             }
 
+            // 4. Transient `disagreement/` folders inside each known classifier
+            // directory. These hold the latest evaluation tiles and grow large
+            // fast (full-resolution PNGs for every tile). Deleting them does
+            // NOT touch saved sessions, but it does mean the Training Area
+            // Issues dialog will be empty until evaluation is re-run.
+            java.util.List<Path> disagreementDirs = collectDisagreementDirs();
+            if (!disagreementDirs.isEmpty()) {
+                long size = disagreementDirs.stream().mapToLong(this::dirSize).sum();
+                report.append(String.format(
+                        "Transient disagreement tile folders: %d (%.1f MB)\n"
+                                + "  WARNING: these hold the latest evaluation output for each\n"
+                                + "  classifier. Deleting them means you cannot reopen Training\n"
+                                + "  Area Issues for that classifier without re-running evaluation.\n"
+                                + "  Saved sessions (training_issues_sessions/) are NOT affected.\n\n",
+                        disagreementDirs.size(), size / (1024.0 * 1024.0)));
+                totalBytes += size;
+                totalItems += disagreementDirs.size();
+            }
+
             if (totalItems == 0) {
                 Dialogs.showInfoNotification(EXTENSION_NAME, "No orphaned files found. Storage is clean.");
                 return;
@@ -1220,6 +1239,14 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 }
             }
 
+            // Delete transient disagreement/ folders
+            for (Path d : disagreementDirs) {
+                long size = dirSize(d);
+                deleteDirectory(d);
+                deletedBytes += size;
+                deletedItems++;
+            }
+
             Dialogs.showInfoNotification(
                     EXTENSION_NAME,
                     String.format(
@@ -1234,6 +1261,29 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             logger.error("Storage cleanup failed", e);
             Dialogs.showErrorMessage("Clean Up Storage", "Cleanup failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * Walks every known classifier directory (project + user) and returns the
+     * {@code disagreement/} subfolders that actually exist on disk. Used by
+     * the Clean Up Storage report so we can offer to reclaim the transient
+     * evaluation tiles without touching saved sessions.
+     */
+    private java.util.List<Path> collectDisagreementDirs() {
+        java.util.List<Path> out = new java.util.ArrayList<>();
+        try {
+            ModelManager mm = new ModelManager();
+            for (ClassifierMetadata m : mm.listClassifiers()) {
+                mm.getModelPath(m.getId())
+                        .map(Path::getParent)
+                        .map(p -> p.resolve("disagreement"))
+                        .filter(Files::isDirectory)
+                        .ifPresent(out::add);
+            }
+        } catch (Exception e) {
+            logger.warn("Could not enumerate classifier disagreement folders: {}", e.getMessage());
+        }
+        return out;
     }
 
     private long dirSize(Path dir) {
