@@ -90,6 +90,8 @@ Click **Start Training**. A progress window appears showing:
 
 A 3-epoch test run should complete in under a minute on GPU.
 
+![Training progress window showing Epoch 2/50, batch 36/44, elapsed time, current loss, per-epoch time, and estimated time remaining](docs/images/training-progress-dialog.png)
+
 ### 3e. Verify the result
 
 When training completes, the classifier is saved to your QuPath project under `classifiers/`. You can see it via **Extensions > DL Pixel Classifier > Manage Classifiers...**

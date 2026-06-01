@@ -27,6 +27,8 @@ The table defaults to sorting by **Trained** date, newest first, so the most rec
 
 Click a row to select it. The info panel below shows the architecture + backbone, input channels + context scale + tile dimensions, downsample level, and class names.
 
+![Manage Classifiers dialog: a table of trained classifiers (name, architecture, class count, created date) beside an info panel listing model type, backbone, input size, downsample, and the color-coded class list](images/manage-classifiers.png)
+
 ### Channel Mapping
 
 The **CHANNEL MAPPING** section shows how the classifier's expected channels map to the current image. Each row displays:
@@ -114,6 +116,10 @@ Check **Create backup of annotation measurements** to save existing measurements
 ## Step 7: Apply
 
 Click **Apply** to start inference. Progress is shown in the QuPath log.
+
+![Two tissue sections shown before and after classification: the raw H&E sections on the left and the same sections on the right with per-class color predictions overlaid](images/inference-tissue-prediction.png)
+
+*Left: input tissue sections. Right: the same sections after applying a trained classifier, with per-class predictions rendered as a color overlay.*
 
 > **Note:** All inference dialog settings (output type, blend mode, smoothing, tile size, overlap, GPU, object type, min object size, hole filling, application scope, backup) are remembered across sessions.
 

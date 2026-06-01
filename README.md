@@ -27,6 +27,10 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 
 Each bullet leads with what you can *do*; the algorithm or architecture name is in parentheses or after an em-dash for when you need to know what's under the hood.
 
+![Histology section with a few sparse brush annotations drawn in several colors over the tissue](docs/images/annotated-tissue-sparse-annotations.png)
+
+*Sparse brush annotations are enough to start: the extension samples training tiles from the regions you mark.*
+
 ### Train your own classifier
 - **Train custom pixel classifiers from sparse annotations** -- draw a few regions per class, the extension samples training tiles from them
 - **Train across multiple project images in one run** for more representative sampling
@@ -86,6 +90,8 @@ Each bullet leads with what you can *do*; the algorithm or architecture name is 
 See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and GPU configuration.
 
 ## Getting Started
+
+![DL Pixel Classifier menu under Extensions, showing Train, Apply, Manage Classifiers, Select Overlay Model, Toggle Prediction Overlay, and the Utilities submenu](docs/images/menu-dl-pixel-classifier.png)
 
 1. **Set up the Python environment** -- go to **Extensions > DL Pixel Classifier > Setup DL Environment...** in the QuPath menu bar. This downloads and configures PyTorch, CUDA, and all dependencies automatically (~2-4 GB, first time only).
 

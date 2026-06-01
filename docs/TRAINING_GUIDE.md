@@ -40,6 +40,8 @@ Go to **Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**
 
 The dialog opens in **Basic mode** by default, showing only the essentials: Training Data Source, Annotation Classes, and Classifier Name. Click **"Show All Settings"** in the header to reveal all configuration options. The mode is remembered across sessions.
 
+![Configure Classifier Training dialog: Training Data Source list with per-image Train/Val role dropdowns, Model Architecture (unet + ResNet-50 Kather100K encoder), and Weight Initialization radio options](images/train-dialog-configure-classifier.png)
+
 In advanced mode, the dialog has collapsible titled pane sections:
 
 1. **TRAINING DATA SOURCE** -- select images and load classes
@@ -92,6 +94,8 @@ Check the project images to include in training. Only images with classified ann
 |------|-------------|
 | **1. Select images** | Check images in the list. Use "Select All" / "Select None" for bulk selection. |
 | **2. Load Classes** | Click **"Load Classes from Selected Images"** to populate the class list and initialize channels from the first image. |
+
+![QuPath project image list showing multiple .svs slides available for training](images/project-image-list.png)
 
 Multi-image training combines patches from all selected images into one training set, improving generalization. If you previously loaded settings from a model, classes matching the source model are auto-selected after loading.
 
@@ -189,6 +193,8 @@ The **WEIGHT INITIALIZATION** section controls how model weights are initialized
 | **Use SSL pretrained encoder** | UNet only. Load encoder weights from a SimCLR/BYOL self-supervised pretrained .pt file. Use when you have domain-specific unlabeled images (different microscope, staining, tissue type) and want the encoder to recognize those visual patterns before supervised training. Run **Utilities > SSL Pretrain Encoder** first. See [Domain Adaptation Guide](DOMAIN_ADAPTATION_GUIDE.md). |
 | **Continue training from saved model** | Resume from a previously trained classifier. Click "Select model..." to pick the model. All settings populate from the saved model. |
 
+![Transfer Learning Configuration panel: per-layer freeze checkboxes for encoder blocks with parameter counts, a retraining preset dropdown, and Keep All Pretrained / Retrain Everything / Use Recommended buttons](images/train-dialog-transfer-learning-layers.png)
+
 When **Use pretrained backbone weights** is selected, a layer freeze panel appears:
 - Per-layer checkboxes to freeze/unfreeze individual encoder layers
 - **Freeze All** / **Unfreeze All** / **Use Recommended** buttons
@@ -210,6 +216,8 @@ When **Use pretrained backbone weights** is selected, a layer freeze panel appea
 | **Context Scale** | 4x (Recommended) | None, 2x, 4x, 8x, 16x. Adds surrounding context at lower resolution alongside the main tile. Hidden for MuViT (handles multi-scale internally). |
 | **Tile Overlap** | 0% | 10-25% generates more patches from limited annotations. |
 | **Line Stroke Width** | QuPath's stroke | Width for polyline annotation masks (minimum 1px). Increase for sparse lines. |
+
+![Tiles and Resolution settings (tile size, resolution/downsample, surrounding context, overlap, line stroke width, minimum annotation coverage) with a resolution preview of an H&E tile](images/train-dialog-tiles-resolution-preview.png)
 
 ### Training Strategy (collapsed by default)
 
@@ -296,6 +304,8 @@ Click **Start Training**. A progress window shows:
 - Per-class IoU metrics
 - Early stopping status
 
+![Training Classifier window with a Training Progress loss chart (train and validation curves) and a Per-Class IoU chart over epochs, plus a log panel](images/training-progress-charts.png)
+
 > **Settings are remembered:** When you train a model and later load it to continue training, all training dialog settings (architecture, tile size, learning rate, loss function, gradient accumulation, progressive resize, augmentation, etc.) are restored from the model's saved metadata. This means you can iterate quickly without re-entering parameters.
 
 ### Cancelling training
@@ -351,6 +361,8 @@ When training completes successfully, a **"Review Training Areas..."** button ap
 
 The dialog has two tabs: the tile list described above, and a **Confusion Matrix** tab. The matrix aggregates pixel-level ground-truth-vs-prediction counts across all evaluated tiles, with ground-truth classes as rows and predicted classes as columns. The diagonal holds correctly classified pixels; off-diagonal cells show where the model systematically confuses one class for another.
 
+![Training Area Issues dialog Confusion Matrix tab: ground-truth rows vs predicted columns for tissue classes, cells shaded by error percentage with diagonal correct-classification values](images/training-area-issues-confusion-matrix.png)
+
 **Click any cell** to filter the tile list to only the tiles that contain that specific ground-truth-to-prediction confusion. A banner at the top of the tile list shows the active confusion filter with a **Clear** link to remove it. This makes it easy to jump from a systematic error in the matrix to the exact tiles where it occurs.
 
 ### Apply Annotation Adjustment
@@ -365,6 +377,8 @@ The **Apply Annotation Adjustment** panel proposes corrections to your annotatio
 - For multi-image projects, clicking automatically switches to the correct image.
 
 ### Viewer overlay
+
+![Training Area Issues Tiles tab filtered to a single confusion, with the loss heatmap preview (blue-to-red intensity) shown beside the tile and an H&E tile region in the viewer](images/training-area-issues-loss-heatmap.png)
 
 While a row is selected, the tile's diagnostic image is overlaid in the QuPath viewer:
 
