@@ -524,6 +524,22 @@ public class TrainingAreaIssuesDialog {
         // condition applies.
         Label warningBanner = buildOverlayWarningBanner();
 
+        // Always-visible reminder that predictions are most reliable toward the
+        // center of each tile. Objects and overlays generated downstream use a
+        // center crop, so tile edges are discarded to avoid the boundary
+        // artifacts that inflate per-tile loss here.
+        Label centerCropNote =
+                new Label("Focus on results near the center of each tile. When objects or overlays are created, "
+                        + "a center crop is applied, so tile edges (which often show artifacts and higher loss) "
+                        + "are discarded.");
+        centerCropNote.setWrapText(true);
+        centerCropNote.setStyle("-fx-background-color: #e7f1ff;"
+                + " -fx-text-fill: #084298;"
+                + " -fx-border-color: #b6d4fe;"
+                + " -fx-border-width: 1;"
+                + " -fx-padding: 6 10 6 10;"
+                + " -fx-font-size: 11px;");
+
         // Save/Load session buttons. Disabled when modelDir or metadata is
         // unavailable (e.g. sessions opened outside the training workflow
         // without sufficient context).
@@ -576,7 +592,8 @@ public class TrainingAreaIssuesDialog {
         VBox.setVgrow(mainTabs, Priority.ALWAYS);
 
         // Layout: table on left, preview on right
-        VBox tablePane = new VBox(10, summaryLabel, warningBanner, confusionFilterBanner, mainTabs, sessionBar);
+        VBox tablePane =
+                new VBox(10, summaryLabel, centerCropNote, warningBanner, confusionFilterBanner, mainTabs, sessionBar);
         tablePane.setPadding(new Insets(15));
         HBox.setHgrow(tablePane, Priority.ALWAYS);
 
