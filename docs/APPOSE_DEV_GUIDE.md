@@ -1,5 +1,7 @@
 # Appose Developer Guide
 
+> For the project-wide canonical Appose guide (Java service lifecycle, TCCL/ServiceLoader, pixi.toml, NDArray IPC, version dance, console window, concurrency), see `claude-reports/design/appose/APPOSE_REFERENCE.md`. **This document is the DL-Pixel-Classifier-specific deep dive on the Python side** -- the constraints below (num_workers, NaN/JSON, progress reporting, the five-site version sync) are extension-specific detail that complements the general reference.
+
 Developer reference for writing Python code that runs inside the Appose embedded Python environment. This documents constraints, pitfalls, and required patterns that differ from standalone Python scripts.
 
 ## What is Appose?
