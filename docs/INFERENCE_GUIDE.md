@@ -80,6 +80,8 @@ The effective stride (visible pixels per tile) is `tileSize - 2 * effectivePaddi
 
 Each tile is read from the image as a tileSize-sized region (not just the stride portion). This provides the model with **real neighboring pixel data** at every tile boundary -- no artificial reflection padding. The output is center-cropped to the stride region, discarding edge predictions where the model has less context. This follows the recommendation from Buglakova et al. (ICCV 2025): "Completely remove halo region during stitching."
 
+For multi-scale (context-scale) models, the tile read is expanded further, and a second downsampled "context" tile is reconstructed live from the image. The exact geometry -- and how it must line up with how training tiles and the per-tile Training Area Issues preview were built -- is documented in [Context and Downsample Design](CONTEXT_AND_DOWNSAMPLE_DESIGN.md).
+
 ### Unified pipeline (overlay = objects)
 
 The **OBJECTS** output and the **overlay** use the exact same inference pipeline (`DLPixelClassifier.applyClassification()`). This guarantees identical predictions: same expanded reads, same normalization, same model input, same center-crop, same Gaussian smoothing. The only difference is output format: the overlay renders pixels directly, while OBJECTS vectorizes the classification map into PathObjects via contour tracing.
