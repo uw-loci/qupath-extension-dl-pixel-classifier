@@ -534,9 +534,21 @@ public class ModelManagementWorkflow {
                 .disableProperty()
                 .bind(classifierTable.getSelectionModel().selectedItemProperty().isNull());
 
-        Button exportBtn = new Button("Export...");
-        exportBtn.setOnAction(e -> exportSelectedClassifier());
-        exportBtn
+        Button exportDescriptorBtn = new Button("Export Descriptor...");
+        exportDescriptorBtn.setOnAction(e -> exportDescriptorOnly());
+        exportDescriptorBtn
+                .disableProperty()
+                .bind(classifierTable.getSelectionModel().selectedItemProperty().isNull());
+
+        Button exportFullBtn = new Button("Export Full (with weights)  !");
+        exportFullBtn.setOnAction(e -> exportSelectedClassifier());
+        exportFullBtn.setStyle("-fx-text-fill: #b00020; -fx-font-weight: bold;");
+        exportFullBtn.setTooltip(
+                new Tooltip("Exports the ENTIRE classifier including model weights (model.pt, model.onnx,\n"
+                        + "model_static.onnx). This can be 500 MB to several GB. Use this only to move a\n"
+                        + "fully runnable model to another QuPath project via Import. For sharing or\n"
+                        + "inspecting the configuration, use \"Export Descriptor...\" instead."));
+        exportFullBtn
                 .disableProperty()
                 .bind(classifierTable.getSelectionModel().selectedItemProperty().isNull());
 
@@ -554,7 +566,7 @@ public class ModelManagementWorkflow {
         Label infoLabel = new Label("");
         infoLabel.setStyle("-fx-text-fill: #888;");
 
-        box.getChildren().addAll(infoLabel, spacer, deleteBtn, importBtn, exportBtn, closeBtn);
+        box.getChildren().addAll(infoLabel, spacer, deleteBtn, importBtn, exportDescriptorBtn, exportFullBtn, closeBtn);
         return box;
     }
 
@@ -611,6 +623,55 @@ public class ModelManagementWorkflow {
         } catch (Exception e) {
             logger.error("Failed to delete classifier", e);
             Dialogs.showErrorMessage("Error", "Failed to delete classifier: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Exports only the selected classifier's metadata.json descriptor.
+     * <p>
+     * This is the lightweight export: a small (~1-10 KB) text file describing the
+     * classifier (architecture, classes, channel config, training settings,
+     * normalization stats, provenance). It is intended for sharing or inspecting the
+     * configuration and is NOT re-importable as a runnable model (no weights). For a
+     * fully runnable, Import-compatible archive use {@link #exportSelectedClassifier()}.
+     */
+    private void exportDescriptorOnly() {
+        ClassifierMetadata selected = classifierTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            return;
+        }
+
+        Optional<Path> modelPathOpt = modelManager.getModelPath(selected.getId());
+        if (modelPathOpt.isEmpty()) {
+            Dialogs.showErrorMessage("Export Error", "Could not find model files for this classifier.");
+            return;
+        }
+
+        Path classifierDir = modelPathOpt.get().getParent();
+        Path metadataFile = classifierDir.resolve("metadata.json");
+        if (!Files.exists(metadataFile)) {
+            Dialogs.showErrorMessage("Export Error", "metadata.json not found for this classifier.");
+            return;
+        }
+
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Export Classifier Descriptor");
+        fileChooser.setInitialFileName(selected.getName().replaceAll("[^a-zA-Z0-9_\\-]", "_") + ".json");
+        fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Descriptor", "*.json"));
+
+        java.io.File saveFile = fileChooser.showSaveDialog(dialogStage);
+        if (saveFile == null) {
+            return;
+        }
+
+        try {
+            Files.copy(metadataFile, saveFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            logger.info("Exported classifier descriptor '{}' to {}", selected.getName(), saveFile.toPath());
+            Dialogs.showInfoNotification(
+                    "Export Complete", "Classifier descriptor exported to:\n" + saveFile.getName());
+        } catch (IOException e) {
+            logger.error("Failed to export classifier descriptor", e);
+            Dialogs.showErrorMessage("Export Error", "Failed to export classifier descriptor: " + e.getMessage());
         }
     }
 
