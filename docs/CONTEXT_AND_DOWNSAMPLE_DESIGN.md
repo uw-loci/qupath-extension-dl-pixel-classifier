@@ -127,51 +127,65 @@ The preview (3b) is byte-identical to training (3a). It is **3c** that diverges 
 
 ## 4. Worked geometry example
 
-Config: `tileSize = patchSize = 512`, `overlap = 128`, `contextScale = 4`, `downsample = 1`.
+> The first version of this section claimed the geometry always diverges. A precise read of
+> the code shows it is **config-conditional**, and that the larger, overlap-independent
+> divergence is the baked ONNX input shape. Corrected below.
 
-Padding values (all from `InferenceConfig.computeEffectivePadding(tileSize, overlap) =
-min(overlap, (tileSize-1)/2)`):
-- Export `contextPadding = min(128, 255) = 128`.
-- Inference `inputPadding = min(128, 255) = 128`  (same formula, same inputs).
-- Inference `contextInferencePad = (512 / 4) rounded down to a multiple of 32 = 128`
-  (added **only** when `contextScale > 1`; see `DLPixelClassifier` constructor).
+Config: `tileSize = patchSize = 512`, `contextScale = 4`, `downsample = 1`. The relevant code:
+- Export detail tile (`AnnotationExtractor.readPaddedTile`): `tileSize + 2*contextPadding`,
+  `contextPadding = InferenceConfig.computeEffectivePadding(tileSize, overlap) = min(overlap, (tileSize-1)/2)`.
+- Inference declares **stride** (`tileSize - 2*inputPadding`) as its tile size to QuPath, then
+  `expandRequest` reads `stride + 2*(inputPadding + contextInferencePad)` =
+  `tileSize + 2*contextInferencePad`. So the **inference model input = `tileSize + 2*contextInferencePad`**.
+- `inputPadding = computeEffectivePadding(tileSize, overlap)` (same as `contextPadding`);
+  `contextInferencePad = (tileSize/4)` rounded to a multiple of 32, added **only** when `contextScale > 1`.
 
-Resulting tiles:
+So the model-input dimensions are:
 
 | | Training / preview (3a, 3b) | Production inference (3c) |
 |---|---|---|
-| Detail canvas (px) | `512 + 2*128 = 768` | `core + 2*(128 + 128) = core + 512` |
-| Detail physical extent | `768` full-res px | `core + 512` full-res px |
-| Context physical extent | `512 * 4 = 2048` full-res px | `512 * 4 = 2048` full-res px |
-| Context stretched onto | `768` px canvas | `core + 512` px canvas |
+| Model input (px) | `tileSize + 2*contextPadding` = `tileSize + 2*inputPadding` | `tileSize + 2*contextInferencePad` |
+| Equal when... | -- | `contextInferencePad == inputPadding` |
 
-**Observation.** The context branch covers the **same physical extent** (2048 px) in both paths --
-that part is fine. But it is stretched onto **different-sized detail canvases** (768 vs `core + 512`),
-because production adds an extra `contextInferencePad` (= `tileSize/4`) halo that training never had.
-The result: the detail<->context *relative scale* the model sees at inference differs from what it
-learned at training. This is the highest-impact divergence.
+- **overlap = 128** -> `inputPadding = 128`, `contextInferencePad = 128`. Both inputs = `768`.
+  **Geometry matches.** (My earlier table wrote production as `core + 512`; with `core = stride = 256`
+  that is also `768` -- it matches, it does not diverge.)
+- **overlap = 64** -> `inputPadding = 64`, `contextInferencePad = 128`. Training input = `640`,
+  inference input = `768`. Context FOV is `tileSize*contextScale = 2048` in both, stretched onto
+  `640` vs `768` -> **the context relative scale diverges** (2048/640 = 3.2 vs 2048/768 = 2.67).
 
-(`contextInferencePad` was introduced to "push context tile edge effects away from the displayed
-stride region" -- see the comment in the `DLPixelClassifier` constructor. The intent is sound; the
-problem is that training tiles were never widened to match, so the two geometries drifted apart.)
+So the export-vs-inference geometry divergence appears **only when `inputPadding != contextInferencePad`**,
+i.e. at smaller overlaps. For the recommended high-overlap config it does not occur, and the mismatch
+the user observes must come from one of the other causes below.
+
+### 4a. The overlap-independent divergence: baked ONNX input shape
+
+`architecture["input_size"]` is set to the **unpadded** `[tileSize, tileSize]`
+(`ApposeClassifierBackend.java:232`), and the static ONNX is exported with a dummy input of that
+shape (`training_service.py:4943-4951`). But a `contextScale > 1` model is *trained* on the
+**padded** `tileSize + 2*contextPadding` input. So `model_static.onnx` is baked at `512x512` while
+the network actually learned on `768x768` tiles. At inference the expanded read is `768x768`, which
+does **not** match the baked `512x512`, forcing `inference_service`'s static-shape fallback (drop to
+the dynamic `model.onnx`, or center-crop/pad). This is independent of overlap and applies to every
+context model.
 
 ---
 
 ## 5. Root-cause analysis of the per-tile-vs-production mismatch
 
-Ranked by expected impact:
+Ranked by expected impact (to be confirmed with the Phase 0 harness, `tools/diagnose_eval_vs_inference.py`):
 
-1. **Geometry mismatch between export and inference (Section 4).** Detail canvas size and the
-   detail<->context relative scale differ because `contextInferencePad` is an inference-only halo.
-   `AnnotationExtractor.readContextTile`/`readPaddedTile` and `DLPixelClassifier.readContextTile`/
-   `expandRequest` are two independent implementations of "the same" reconstruction.
-2. **Runtime mismatch.** Preview uses PyTorch eager (`model.pt`); production uses ONNX with
-   static-shape center-pad/crop and possible BatchNorm/BatchRenorm export differences. Even on a
-   byte-identical input these can differ; with static-shape ONNX the pad/crop reshapes inputs.
-3. **Normalization of the 2C array.** Confirm `normalize_image` applies the intended per-channel
+1. **Baked ONNX input shape (Section 4a).** Static ONNX baked at unpadded `tileSize` while the
+   model trained on the padded size, so context-model inference takes the static-shape fallback /
+   crop path instead of running the graph the model was traced/trained for. Overlap-independent.
+2. **Runtime mismatch.** Preview uses PyTorch eager (`model.pt`); production uses ONNX. Even on a
+   byte-identical input these can differ (ONNX export, static-shape handling, BatchNorm/BatchRenorm).
+3. **Geometry mismatch (Section 4).** Detail/context relative scale diverges, but **only when
+   `inputPadding != contextInferencePad`** (smaller overlaps). Not present in the recommended config.
+4. **Normalization of the 2C array.** Confirm `normalize_image` applies the intended per-channel
    statistics to the doubled channel set identically on both sides (the same `input_config`).
-4. **Displayed-vs-cropped maps.** Preview displays full padded maps (with a center-crop reminder)
-   while production crops to stride. Minor compared with (1)-(3).
+5. **Displayed-vs-cropped maps.** Preview displays full padded maps (with a center-crop reminder)
+   while production crops to stride. Minor.
 
 **Rejected:** channel-ordering mismatch (Section 2).
 
