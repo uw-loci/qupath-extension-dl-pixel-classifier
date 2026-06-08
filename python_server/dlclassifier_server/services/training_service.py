@@ -2903,9 +2903,14 @@ class TrainingService:
             # Augmentation list
             aug_enabled = training_params.get("augmentation", True)
             if aug_enabled and augmentation_config:
-                aug_items = [
-                    k for k, v in augmentation_config.items() if v and k != "enabled"
-                ]
+                aug_items = []
+                for k, v in augmentation_config.items():
+                    if not v or k == "enabled":
+                        continue
+                    if isinstance(v, bool):
+                        aug_items.append(k)
+                    else:
+                        aug_items.append(f"{k}={v}")
                 aug_desc = ", ".join(aug_items) if aug_items else "default"
             elif aug_enabled:
                 aug_desc = "default"
@@ -2951,9 +2956,20 @@ class TrainingService:
                 "Early Stopping": es_desc,
                 "Augmentation": aug_desc,
                 "Progressive Resize": "On" if progressive_resize else "Off",
+                "Downsample": str(architecture.get("downsample", 1.0)),
+                "Context Scale": str(context_scale),
+                "Validation Split": str(training_params.get("validation_split", "N/A")),
+                "Pretrained Weights": "Yes" if architecture.get("use_pretrained", False) else "No",
+                "Torch Compile": "On" if training_params.get("use_torch_compile", False) else "Off",
+                "GPU Augmentation": "On" if gpu_augment_on_cuda else "Off",
+                "Fused Optimizer": "Yes" if training_params.get("fused_optimizer", True) else "No",
             }
 
             # Conditional entries
+            if "boundary" in loss_function:
+                config_summary["Boundary Params"] = (
+                    f"sigma={boundary_sigma}, w_min={boundary_w_min}"
+                )
             if disc_lr_parts:
                 config_summary["Discriminative LRs"] = disc_lr_parts
             if (
