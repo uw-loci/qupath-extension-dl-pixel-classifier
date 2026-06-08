@@ -2959,10 +2959,16 @@ class TrainingService:
                 "Downsample": str(architecture.get("downsample", 1.0)),
                 "Context Scale": str(context_scale),
                 "Validation Split": str(training_params.get("validation_split", "N/A")),
-                "Pretrained Weights": "Yes" if architecture.get("use_pretrained", False) else "No",
-                "Torch Compile": "On" if training_params.get("use_torch_compile", False) else "Off",
+                "Pretrained Weights": (
+                    "Yes" if architecture.get("use_pretrained", False) else "No"
+                ),
+                "Torch Compile": (
+                    "On" if training_params.get("use_torch_compile", False) else "Off"
+                ),
                 "GPU Augmentation": "On" if gpu_augment_on_cuda else "Off",
-                "Fused Optimizer": "Yes" if training_params.get("fused_optimizer", True) else "No",
+                "Fused Optimizer": (
+                    "Yes" if training_params.get("fused_optimizer", True) else "No"
+                ),
             }
 
             # Conditional entries
