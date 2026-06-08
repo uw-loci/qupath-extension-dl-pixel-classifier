@@ -122,16 +122,23 @@ public class DLPixelClassifier implements PixelClassifier {
         this.inputPadding =
                 InferenceConfig.computeEffectivePadding(inferenceConfig.getTileSize(), inferenceConfig.getOverlap());
 
-        // For context-scale models, add extra padding so the model processes
-        // a tile larger than tileSize. This pushes context tile edge effects
-        // away from the displayed stride region. The UNet architecture is
-        // fully convolutional and handles larger input (must be divisible by 32).
-        // For 4x context with 512px tile: extra 128px/side -> 768px model input.
+        // For context-scale models the inference model input must match the
+        // geometry the model was TRAINED on. Training tiles are exported at
+        // tileSize + 2*contextPadding, where contextPadding equals
+        // computeEffectivePadding(tileSize, overlap) -- i.e. exactly inputPadding.
+        // The inference model input is stride + 2*(inputPadding + contextInferencePad)
+        // = tileSize + 2*contextInferencePad, so using contextInferencePad =
+        // inputPadding makes the inference input (tileSize + 2*inputPadding)
+        // identical to the trained input. That keeps the detail<->context relative
+        // scale the model sees at inference equal to what it learned, and lets the
+        // static-shape ONNX (baked at the same size) be used without falling back
+        // to the dynamic graph. Both detail and context tensors are padded to the
+        // encoder's spatial divisor by the Python side (pad_to_multiple), so the
+        // input need not be a multiple of 32 here -- training does the same.
+        // (Previously this was tileSize/4 rounded to 32, which only coincided with
+        // inputPadding at large overlaps and otherwise distorted the context scale.)
         if (contextScale > 1) {
-            int extra = inferenceConfig.getTileSize() / 4; // 128px for 512px tile
-            // Round to multiple of 32 for encoder compatibility
-            extra = (extra / 32) * 32;
-            this.contextInferencePad = extra;
+            this.contextInferencePad = inputPadding;
         } else {
             this.contextInferencePad = 0;
         }

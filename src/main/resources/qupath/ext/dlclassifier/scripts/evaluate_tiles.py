@@ -295,6 +295,44 @@ try:
     model = model.to(device)
     model.eval()
 
+    # Faithful preview: run the SAME runtime as production (ONNX) when available
+    # so the per-tile maps match what applying the classifier to the image
+    # produces. Production uses ONNX (model_static*/model.onnx); this per-tile
+    # eval historically used model.pt (PyTorch eager), which can diverge from
+    # ONNX even on byte-identical input. We use the dynamic model.onnx here: it
+    # accepts the exported (padded, multiple-of-32) tile size directly and is
+    # numerically equivalent to the static variants production prefers, without
+    # the static-shape match constraint. Falls back to the PyTorch model when
+    # ONNX is unavailable (e.g. MuViT, or a failed export).
+    onnx_session = None
+    onnx_input_name = None
+    onnx_path = model_dir / "model.onnx"
+    if onnx_path.exists():
+        try:
+            import onnxruntime as ort
+
+            providers = (
+                ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                if str(training_service.device) == "cuda"
+                else ["CPUExecutionProvider"]
+            )
+            onnx_session = ort.InferenceSession(str(onnx_path), providers=providers)
+            onnx_input_name = onnx_session.get_inputs()[0].name
+            logger.info(
+                "Per-tile eval using ONNX runtime (%s) for production parity",
+                onnx_path,
+            )
+        except Exception as e:
+            logger.warning(
+                "ONNX runtime unavailable for eval (%s); "
+                "falling back to model.pt (PyTorch): %s",
+                onnx_path,
+                e,
+            )
+            onnx_session = None
+    else:
+        logger.info("No model.onnx found; per-tile eval uses model.pt (PyTorch eager)")
+
     # Determine ignore index from config
     config_path = Path(data_path) / "config.json"
     ignore_index = 255
@@ -363,7 +401,15 @@ try:
             batch_size = batch_images.shape[0]
 
             with torch.no_grad():
-                logits = model(batch_images)
+                if onnx_session is not None:
+                    # Production parity: same ONNX runtime as applying the model.
+                    onnx_out = onnx_session.run(
+                        None,
+                        {onnx_input_name: batch_images.detach().cpu().numpy()},
+                    )[0]
+                    logits = torch.from_numpy(onnx_out).to(device)
+                else:
+                    logits = model(batch_images)
                 # Per-tile cross-entropy loss
                 losses = F.cross_entropy(
                     logits, batch_masks, ignore_index=ignore_index, reduction="none"

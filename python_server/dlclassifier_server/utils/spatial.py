@@ -77,9 +77,46 @@ def get_spatial_divisor(model_type: str, architecture: Dict[str, Any]) -> int:
     return 32
 
 
-def pad_to_multiple(
-    x: torch.Tensor, factor: int
-) -> Tuple[torch.Tensor, int, int]:
+def compute_static_onnx_hw(
+    input_size, context_scale: int, context_padding: int, divisor: int
+) -> Tuple[int, int]:
+    """Return the (H, W) the static-shape ONNX must be baked at.
+
+    The static ONNX bakes a fixed H/W, so it must match the tensor the model
+    is actually fed at inference -- not the bare tile size. For context-scale
+    models the inference input is ``tileSize + 2 * context_padding`` (see
+    ``DLPixelClassifier`` where ``contextInferencePad == inputPadding ==
+    context_padding``), rounded up to the encoder spatial divisor so it equals
+    the post-:func:`pad_to_multiple` tensor the inference service runs. Plain
+    models (context_scale <= 1, or no context padding) use ``input_size``
+    unchanged, matching their unpadded inference input.
+
+    Args:
+        input_size: ``[H, W]`` tile size (the configured, unpadded patch size).
+        context_scale: multi-scale context factor (1 = disabled).
+        context_padding: real-pixel border per side added at export time.
+        divisor: encoder spatial divisor from :func:`get_spatial_divisor`.
+
+    Returns:
+        ``(H, W)`` to bake into the static ONNX and record in metadata.
+    """
+    h0 = int(input_size[0])
+    w0 = int(input_size[1])
+    if context_scale > 1 and context_padding > 0:
+
+        def _round_up(x: int, d: int) -> int:
+            if d is None or d <= 1:
+                return x
+            return ((x + d - 1) // d) * d
+
+        return (
+            _round_up(h0 + 2 * context_padding, divisor),
+            _round_up(w0 + 2 * context_padding, divisor),
+        )
+    return h0, w0
+
+
+def pad_to_multiple(x: torch.Tensor, factor: int) -> Tuple[torch.Tensor, int, int]:
     """Reflection-pad an NCHW tensor so H and W are multiples of ``factor``.
 
     Args:
@@ -103,9 +140,7 @@ def pad_to_multiple(
     return F.pad(x, (0, pad_w, 0, pad_h), mode="reflect"), pad_h, pad_w
 
 
-def crop_to_original(
-    y: torch.Tensor, pad_h: int, pad_w: int
-) -> torch.Tensor:
+def crop_to_original(y: torch.Tensor, pad_h: int, pad_w: int) -> torch.Tensor:
     """Undo :func:`pad_to_multiple` on the model's output tensor.
 
     Args:

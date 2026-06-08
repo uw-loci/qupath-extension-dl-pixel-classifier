@@ -9,9 +9,10 @@ because the per-tile Training Area Issues display does not match what the model 
 applied to the same image. This document is the canonical explanation of *why* the three code paths
 differ and what the intended invariants are.
 
-> **Status:** the geometry described in "Three code paths" below is the *current* (divergent)
-> behavior. The "Target invariants" section is what we are converging on. When the unification fix
-> lands, update the "Three code paths" tables so they describe one shared spec instead of three.
+> **Status:** the per-path tables in "Three code paths" describe the *historical* divergent
+> behavior that motivated this work. The fixes in Section 7 have landed (2026-06-08); read Section 7
+> for the current behavior. They still require end-to-end validation on a real `contextScale > 1`
+> model before being considered fully verified.
 
 ---
 
@@ -210,8 +211,43 @@ The fix converges on two invariants:
 Once B holds and the preview uses the production runtime, A largely follows: replaying the exported
 tiles through the production runtime equals reconstructing the same region live from the image.
 
-When implemented, fold the three rows of the Section 3 table into one and update Section 4 to show a
-single geometry.
+---
+
+## 7. Implementation (landed 2026-06-08)
+
+Three changes, addressing the ranked causes in Section 5:
+
+1. **Inference geometry matches training (Invariant B; cause 3).**
+   `DLPixelClassifier` now sets `contextInferencePad = inputPadding` for context models (was
+   `tileSize/4` rounded to 32). The inference model input becomes `tileSize + 2*inputPadding`, exactly
+   the trained input (`tileSize + 2*contextPadding`, since `contextPadding == inputPadding`), so the
+   detail<->context relative scale matches in **all** overlap configs. Both tensors are padded to the
+   encoder divisor by the Python `pad_to_multiple`, identically at training and inference, so the
+   input need not be a multiple of 32 here.
+
+2. **Static ONNX baked at the real inference input (cause 1).** The static ONNX variants
+   (`model_static.onnx`, `model_static_bn.onnx`) are now exported at
+   `compute_static_onnx_hw(input_size, context_scale, context_padding, divisor)` =
+   `tileSize + 2*context_padding` rounded up to the spatial divisor (matching `pad_to_multiple`), and
+   that shape is recorded in `metadata.json` `onnx_variants`. So a context model's static ONNX is
+   baked at the size inference feeds (e.g. 768) instead of the bare `tileSize` (512), and inference
+   no longer takes the static-shape fallback/crop path. Plain (non-context) models are unchanged.
+   `compute_static_onnx_hw` lives in `utils/spatial.py` and is unit-tested
+   (`tests/test_static_onnx_hw.py`).
+
+3. **Per-tile preview uses the production runtime (Invariant A; cause 2).** `evaluate_tiles.py` now
+   runs the dynamic `model.onnx` (the same ONNX runtime production uses, and numerically equivalent
+   to the static variants) for its forward pass instead of `model.pt` eager, falling back to
+   `model.pt` only when no ONNX exists (e.g. MuViT). With (1) aligning geometry, the preview's
+   ONNX-on-exported-tiles now matches production's ONNX-on-live-region.
+
+**Back-compat.** (1) helps existing context models too: their static ONNX is mis-baked at 512, so
+they fall back to the dynamic `model.onnx` at the now-correct `tileSize + 2*inputPadding` size. (2)
+only changes newly trained models. Re-train (or re-export) to get a correctly-baked static ONNX.
+
+**Still owed:** end-to-end validation on a real `contextScale > 1` model (run inference on an image,
+then open Training Area Issues for a tile from it and confirm the preview matches), plus the Phase 0
+harness numbers (`tools/diagnose_eval_vs_inference.py`) recorded in Section 5.
 
 ---
 

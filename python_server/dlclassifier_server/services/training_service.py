@@ -42,6 +42,7 @@ from ..utils.spatial import (
     get_spatial_divisor,
     pad_to_multiple,
     crop_to_original,
+    compute_static_onnx_hw,
 )
 
 logger = logging.getLogger(__name__)
@@ -4952,6 +4953,26 @@ class TrainingService:
                 )
                 dummy_input = dummy_input.to(self.device)
 
+                # The static ONNX variants bake a fixed H/W, so they must be
+                # baked at the size the model is actually FED at inference -- not
+                # the bare tile size. For context-scale models the inference input
+                # is tileSize + 2*contextPadding (see DLPixelClassifier
+                # contextInferencePad == inputPadding); plain models use tileSize.
+                # Round up to the encoder spatial divisor so the baked graph
+                # matches the post-pad_to_multiple tensor the inference service
+                # feeds. The dynamic model.onnx keeps dynamic H/W and is unaffected.
+                context_padding = int(input_config.get("context_padding", 0))
+                context_scale = int(architecture.get("context_scale", 1))
+                static_h, static_w = compute_static_onnx_hw(
+                    input_size,
+                    context_scale,
+                    context_padding,
+                    get_spatial_divisor(model_type, architecture),
+                )
+                static_dummy_input = torch.randn(
+                    1, actual_channels, static_h, static_w
+                ).to(self.device)
+
                 # PyTorch 2.10 changed torch.onnx.export to use the dynamo
                 # exporter by default, which requires onnxscript. We keep
                 # using the legacy TorchScript tracer (dynamo=False) so the
@@ -4996,7 +5017,7 @@ class TrainingService:
                 onnx_static_path = output_dir / "model_static.onnx"
                 torch.onnx.export(
                     model,
-                    dummy_input,
+                    static_dummy_input,
                     str(onnx_static_path),
                     opset_version=14,
                     input_names=["input"],
@@ -5012,19 +5033,20 @@ class TrainingService:
                     "(C,H,W fixed at [%d,%d,%d]; batch dynamic)",
                     onnx_static_path,
                     actual_channels,
-                    input_size[0],
-                    input_size[1],
+                    static_h,
+                    static_w,
                 )
                 onnx_variants["static"] = {
                     "path": "model_static.onnx",
                     # Reserved-batch sentinel: -1 communicates to the
                     # inference service that batch may vary. C,H,W
-                    # are fixed at training dimensions.
+                    # are fixed at the actual inference input dimensions
+                    # (tileSize + 2*contextPadding for context models).
                     "shape": [
                         -1,
                         int(actual_channels),
-                        int(input_size[0]),
-                        int(input_size[1]),
+                        int(static_h),
+                        int(static_w),
                     ],
                 }
             except Exception as e:
@@ -5067,7 +5089,7 @@ class TrainingService:
                     onnx_bn_path = output_dir / "model_static_bn.onnx"
                     torch.onnx.export(
                         export_model,
-                        dummy_input,
+                        static_dummy_input,
                         str(onnx_bn_path),
                         opset_version=14,
                         input_names=["input"],
@@ -5087,8 +5109,8 @@ class TrainingService:
                         "shape": [
                             -1,
                             int(actual_channels),
-                            int(input_size[0]),
-                            int(input_size[1]),
+                            int(static_h),
+                            int(static_w),
                         ],
                     }
                     del export_model
