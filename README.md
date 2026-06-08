@@ -102,6 +102,14 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and G
 
 See [QUICKSTART.md](QUICKSTART.md) for a complete walkthrough (zero to classifier in ~10 minutes).
 
+### Report bugs
+
+If you encounter an issue or have feedback, use the built-in bug reporter:
+
+**Extensions > DL Pixel Classifier > Report a Bug...**
+
+This dialog lets you describe the issue and optionally include system information, QuPath logs, and a window screenshot. Reports are submitted directly to the development team without requiring a GitHub account.
+
 ### Recommended workflow: separate training and production projects
 
 > **Keep your annotated training data in a dedicated "training project" and apply the finished classifier in a separate "production project."**

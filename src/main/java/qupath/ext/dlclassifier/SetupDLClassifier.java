@@ -40,6 +40,7 @@ import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.ext.dlclassifier.service.warnings.InteractionWarningRegistration;
 import qupath.ext.dlclassifier.ui.AdaBNDialog;
+import qupath.ext.dlclassifier.ui.BugReportDialog;
 import qupath.ext.dlclassifier.ui.MAEPretrainingDialog;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
@@ -640,6 +641,11 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             rebuildItem);
         }
 
+        // Report a Bug (always available -- files a GitHub issue via the shared
+        // Cloudflare Worker; no GitHub account needed from the user)
+        MenuItem reportBugItem = new MenuItem("Report a Bug...");
+        reportBugItem.setOnAction(e -> BugReportDialog.show());
+
         // === BUILD FINAL MENU ===
         extensionMenu
                 .getItems()
@@ -654,7 +660,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         sep2,
                         modelsOption,
                         sep3,
-                        utilitiesMenu);
+                        utilitiesMenu,
+                        new SeparatorMenuItem(),
+                        reportBugItem);
 
         logger.info("Menu items added for extension: {}", EXTENSION_NAME);
     }
