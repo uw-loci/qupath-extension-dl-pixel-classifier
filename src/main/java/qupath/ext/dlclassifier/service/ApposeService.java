@@ -41,6 +41,13 @@ public class ApposeService {
 
     private static final String RESOURCE_BASE = "qupath/ext/dlclassifier/";
     private static final String PIXI_TOML_RESOURCE = RESOURCE_BASE + "pixi.toml";
+    // Bundled lockfile pinning the full transitive dependency tree. Installed
+    // with --frozen so updates install the exact tested versions instead of
+    // re-resolving against current conda-forge/PyPI. The lock matches the
+    // UNMODIFIED (ONNX-included) manifest only; when ONNX is stripped the
+    // manifest no longer matches the lock, so that path re-resolves as before.
+    // Regenerate via tools/regen-pixi-lock.sh when pixi.toml changes.
+    private static final String PIXI_LOCK_RESOURCE = RESOURCE_BASE + "pixi.lock";
     private static final String SCRIPTS_BASE = RESOURCE_BASE + "scripts/";
     private static final String ENV_NAME = "dl-pixel-classifier";
 
@@ -197,11 +204,16 @@ public class ApposeService {
             // Load pixi.toml from JAR resources
             String pixiToml = loadResource(PIXI_TOML_RESOURCE);
 
-            // Optionally strip ONNX dependencies to reduce download size
+            // Optionally strip ONNX dependencies to reduce download size.
+            // The bundled lock matches the UNMODIFIED manifest, so we only
+            // install --frozen from it when ONNX is included; the stripped
+            // manifest re-resolves (lock would not match).
+            boolean useLock = includeOnnx;
             if (!includeOnnx) {
                 pixiToml = stripOnnxDependencies(pixiToml);
-                logger.info("ONNX dependencies excluded from environment");
+                logger.info("ONNX dependencies excluded from environment (lock disabled; will re-resolve)");
             }
+            String pixiLock = useLock ? loadResource(PIXI_LOCK_RESOURCE) : null;
 
             // ALL Appose operations require the extension classloader as TCCL.
             // Appose and its dependencies (Groovy JSON) use ServiceLoader internally:
@@ -214,30 +226,34 @@ public class ApposeService {
             Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
 
             try {
-                // Ensure the pixi.toml on disk matches the bundled content.
-                // Appose skips the build when the environment directory already
-                // exists, so a changed pixi.toml in the JAR would never be
-                // written to disk. Force-sync it here and delete the lockfile
-                // so pixi re-resolves with the new dependencies.
-                syncPixiToml(pixiToml);
+                // Sync the on-disk manifest (and, when locking, stage the
+                // bundled lock so the install can run --frozen). Appose skips
+                // the build when the env dir already exists, so a changed
+                // manifest in the JAR would never reach disk without this.
+                syncManifest(pixiToml, pixiLock);
 
                 report(statusCallback, "Building pixi environment (this may take several minutes)...");
 
-                // Build the pixi environment (downloads deps on first run)
-                environment = Appose.pixi()
+                // Build the pixi environment (downloads deps on first run).
+                // When locking, --frozen installs the exact pinned versions and
+                // never re-resolves against current conda-forge/PyPI.
+                var builder = Appose.pixi()
                         .content(pixiToml)
                         .scheme("pixi.toml")
                         .name(ENV_NAME)
-                        .logDebug()
-                        .build();
+                        .logDebug();
+                if (useLock) {
+                    builder = builder.flags(java.util.List.of("--frozen"));
+                }
+                environment = builder.build();
 
                 logger.info("Appose environment configured at: {}", environment.base());
 
                 // Install dependencies via pixi and then dlclassifier-server via pip.
-                // Appose's build() with .content() only writes pixi.toml -- it does
-                // NOT run pixi install. We must do that explicitly here.
-                // dlclassifier-server is installed separately via pip because pixi's
-                // PyPI resolver panics on git+subdirectory dependencies.
+                // build() above runs pixi install; this resolves remaining deps and
+                // pip-installs dlclassifier-server separately (pixi's PyPI resolver
+                // panics on git+subdirectory dependencies). When locking, the pixi
+                // install runs --frozen so it installs from the bundled lock.
                 installDLClassifierServer(statusCallback);
 
                 report(statusCallback, "Starting Python service...");
@@ -880,6 +896,9 @@ public class ApposeService {
     private void installDLClassifierServer(Consumer<String> statusCallback) throws IOException {
         Path envBase = Path.of(environment.base());
         Path manifestPath = envBase.resolve("pixi.toml");
+        // Lock present on disk (staged by syncManifest for the ONNX-included
+        // manifest) -> install --frozen from it; absent (ONNX stripped) -> resolve.
+        boolean frozen = Files.exists(envBase.resolve("pixi.lock"));
 
         // Find pixi binary -- Appose downloads it to ~/.local/share/appose/.pixi/bin/
         Path pixi = findPixiBinary();
@@ -889,13 +908,17 @@ public class ApposeService {
                     + "Try Utilities > Rebuild DL Environment.");
         }
 
-        // First, run "pixi install" to ensure all dependencies are resolved.
-        // Appose's build() with .content() only writes pixi.toml -- it does NOT
-        // actually install packages. This is the step that downloads Python,
-        // PyTorch, and all other dependencies (~2-4 GB on first run).
-        logger.info("Running pixi install to resolve dependencies...");
+        // Run "pixi install" to ensure all dependencies are present. This is
+        // the step that downloads Python, PyTorch, etc (~2-4 GB on first run).
+        // When locking, --frozen installs the exact pinned versions from the
+        // bundled lock and never re-resolves.
+        logger.info("Running pixi install{} to resolve dependencies...", frozen ? " --frozen" : "");
         report(statusCallback, "Installing Python dependencies (this may take several minutes on first run)...");
-        runPixiCommand(pixi, envBase, manifestPath, "install");
+        if (frozen) {
+            runPixiCommand(pixi, envBase, manifestPath, "install", "--frozen");
+        } else {
+            runPixiCommand(pixi, envBase, manifestPath, "install");
+        }
 
         // Now install dlclassifier-server via "pixi run pip install ..."
         // At this point pip and python are installed in the environment.
@@ -1038,29 +1061,58 @@ public class ApposeService {
     }
 
     /**
-     * Ensures the pixi.toml on disk matches the bundled content.
-     * If the content differs (e.g. after extension update), overwrites the
-     * file and deletes pixi.lock to force pixi to re-resolve dependencies.
-     * Also deletes .pixi/ so Appose doesn't skip the build.
+     * Sync the on-disk pixi.toml (and, when locking, pixi.lock) with the bundled
+     * versions. When {@code expectedLock} is non-null the lock pins the full
+     * dependency tree and is staged so the install can run --frozen; on change
+     * both files are rewritten and .pixi/ wiped for a clean reinstall, and the
+     * lock is re-staged if a prior wipe removed it. When {@code expectedLock} is
+     * null (ONNX stripped: the bundled lock would not match the manifest) this
+     * falls back to the legacy behavior -- delete pixi.lock so pixi re-resolves.
      */
-    private void syncPixiToml(String expectedContent) {
+    private void syncManifest(String expectedToml, String expectedLock) {
         try {
             Path envDir = getEnvironmentPath();
             Path pixiTomlFile = envDir.resolve("pixi.toml");
+            Path lockFile = envDir.resolve("pixi.lock");
+
             if (!Files.exists(pixiTomlFile)) {
-                return; // First-time install, Appose will create it
+                // First-time install. Stage the lock when locking; otherwise
+                // let Appose/pixi create the manifest + resolve.
+                if (expectedLock != null) {
+                    Files.createDirectories(envDir);
+                    Files.writeString(lockFile, expectedLock, StandardCharsets.UTF_8);
+                }
+                return;
             }
             String existingContent = Files.readString(pixiTomlFile, StandardCharsets.UTF_8);
             // Normalize line endings for comparison
             String normalizedExisting = existingContent.replace("\r\n", "\n").strip();
-            String normalizedExpected = expectedContent.replace("\r\n", "\n").strip();
-            if (normalizedExisting.equals(normalizedExpected)) {
-                return; // Content matches, no sync needed
+            String normalizedExpected = expectedToml.replace("\r\n", "\n").strip();
+            String onLock = Files.exists(lockFile)
+                    ? Files.readString(lockFile, StandardCharsets.UTF_8)
+                            .replace("\r\n", "\n")
+                            .strip()
+                    : "";
+            String exLock =
+                    expectedLock != null ? expectedLock.replace("\r\n", "\n").strip() : "";
+            boolean tomlSame = normalizedExisting.equals(normalizedExpected);
+            boolean lockSame = expectedLock == null || onLock.equals(exLock);
+            if (tomlSame && lockSame) {
+                // Unchanged -- ensure the lock is present for --frozen.
+                if (expectedLock != null && !Files.exists(lockFile)) {
+                    Files.writeString(lockFile, expectedLock, StandardCharsets.UTF_8);
+                }
+                return; // No sync needed
             }
-            logger.info("pixi.toml content changed - updating and forcing environment rebuild");
-            Files.writeString(pixiTomlFile, expectedContent, StandardCharsets.UTF_8);
-            // Delete lockfile so pixi re-resolves
-            Files.deleteIfExists(envDir.resolve("pixi.lock"));
+            logger.info("pixi manifest/lock changed - updating and forcing environment rebuild");
+            Files.writeString(pixiTomlFile, expectedToml, StandardCharsets.UTF_8);
+            if (expectedLock != null) {
+                // Stage the bundled lock so the rebuild installs --frozen from it.
+                Files.writeString(lockFile, expectedLock, StandardCharsets.UTF_8);
+            } else {
+                // No lock for this manifest variant -- delete so pixi re-resolves.
+                Files.deleteIfExists(lockFile);
+            }
             // Delete .pixi/ so Appose doesn't skip the build.
             // On Windows, files inside .pixi/ may be locked by OS caching even
             // after QuPath restarts, preventing deletion. Try rename-then-delete
@@ -1085,9 +1137,9 @@ public class ApposeService {
                     }
                 }
             }
-            logger.info("Environment sync complete - next build will re-resolve dependencies");
+            logger.info("Environment sync complete - next build will install from the bundled lock or re-resolve");
         } catch (IOException e) {
-            logger.warn("Failed to sync pixi.toml (will attempt build anyway): {}", e.getMessage());
+            logger.warn("Failed to sync pixi manifest/lock (will attempt build anyway): {}", e.getMessage());
         }
     }
 
