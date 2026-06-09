@@ -64,6 +64,14 @@ public class ModelManager {
         // Load from user directory
         classifiers.addAll(loadClassifiersFromDir(userClassifiersDir));
 
+        // Most-recently-created first, so every picker / list that consumes this
+        // (inference table, Manage Classifiers, Load Saved Training Area Issues,
+        // AdaBN, scripting) defaults to the newest model. Mirrors the comparator
+        // InferenceDialog applies to its table.
+        classifiers.sort(
+                Comparator.comparing(ClassifierMetadata::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .reversed());
+
         logger.info("Found {} classifiers", classifiers.size());
         return classifiers;
     }
