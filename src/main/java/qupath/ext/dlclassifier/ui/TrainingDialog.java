@@ -332,6 +332,10 @@ public class TrainingDialog {
         private boolean esEnabledUserEdited = false;
         private boolean suppressEsEnabledListener = false;
         private boolean esPatienceUserEdited = false;
+        // True once the Epochs spinner is changed (by the user or a model load).
+        // Gates the from-scratch epoch/patience floors so they never override a
+        // value the user explicitly chose.
+        private boolean epochsUserEdited = false;
         // Suppression: when true, value-change listeners skip both the
         // userEdited flip and the preference write. Wrapped around any
         // setValue() we issue programmatically (init from prefs, load
@@ -3182,10 +3186,27 @@ public class TrainingDialog {
                 }
             }
 
+            // From-scratch models (Tiny UNet, or any model trained without
+            // pretrained weights) converge slowly and noisily, so they need more
+            // runway than fine-tuning. Apply higher epoch / early-stop-patience
+            // floors -- but only when the user has not explicitly set those
+            // values, so a deliberate choice is never overridden.
+            int effectiveEpochs = epochsSpinner.getValue();
+            int effectivePatience = earlyStoppingPatienceSpinner != null ? earlyStoppingPatienceSpinner.getValue() : 15;
+            boolean fromScratch = "tiny-unet".equals(effectiveType) || !effectiveUsePretrained;
+            if (fromScratch) {
+                if (!epochsUserEdited) {
+                    effectiveEpochs = Math.max(effectiveEpochs, FROM_SCRATCH_MIN_EPOCHS);
+                }
+                if (!esPatienceUserEdited) {
+                    effectivePatience = Math.max(effectivePatience, FROM_SCRATCH_MIN_PATIENCE);
+                }
+            }
+
             return TrainingConfig.builder()
                     .classifierType(effectiveType)
                     .backbone(effectiveBackbone)
-                    .epochs(epochsSpinner.getValue())
+                    .epochs(effectiveEpochs)
                     .batchSize(batchSizeSpinner.getValue())
                     .learningRate(learningRateSpinner.getValue())
                     .weightDecay(weightDecaySpinner.getValue())
@@ -3225,7 +3246,7 @@ public class TrainingDialog {
                                     ? dataLoaderWorkersSpinner.getValue()
                                     : DLClassifierPreferences.getDefaultDataLoaderWorkers())
                     .earlyStoppingMetric(currentEarlyStoppingMetricValue())
-                    .earlyStoppingPatience(earlyStoppingPatienceSpinner.getValue())
+                    .earlyStoppingPatience(effectivePatience)
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
                     .fusedOptimizer(fusedOptimizerCheck != null ? fusedOptimizerCheck.isSelected() : true)
                     .useLrFinder(useLrFinderCheck != null ? useLrFinderCheck.isSelected() : true)
@@ -4302,6 +4323,7 @@ public class TrainingDialog {
                 if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
             });
             epochsSpinner.valueProperty().addListener((obs, o, n) -> {
+                epochsUserEdited = true;
                 if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
             });
             backboneCombo.valueProperty().addListener((obs, o, n) -> {
@@ -6144,6 +6166,11 @@ public class TrainingDialog {
          */
         private static final String BASIC_FAST_PRESET = "__fast_simple__";
 
+        /** From-scratch training needs more runway than fine-tuning: epoch / patience floors. */
+        private static final int FROM_SCRATCH_MIN_EPOCHS = 100;
+
+        private static final int FROM_SCRATCH_MIN_PATIENCE = 20;
+
         /** User-friendly labels for basic mode backbone selection. */
         private static String getBasicModeBackboneLabel(String backbone) {
             return switch (backbone) {
@@ -6726,6 +6753,17 @@ public class TrainingDialog {
                 showTemporaryNotification("Fast preset: training " + resolved + ".");
             }
 
+            // If the from-scratch floors raised epochs/patience above the spinner
+            // values, tell the user (so the change is visible, not silent).
+            int spinnerPatience = earlyStoppingPatienceSpinner != null ? earlyStoppingPatienceSpinner.getValue() : 15;
+            if (trainingConfig.getEpochs() > epochsSpinner.getValue()
+                    || trainingConfig.getEarlyStoppingPatience() > spinnerPatience) {
+                showTemporaryNotification(String.format(
+                        "From-scratch training: raised epochs to %d and early-stop patience to %d "
+                                + "(set them in advanced settings to override).",
+                        trainingConfig.getEpochs(), trainingConfig.getEarlyStoppingPatience()));
+            }
+
             // Run pairwise interaction checks against the built config.
             // BLOCKING watchers (e.g. overlap + no-per-image-split-roles)
             // return the user to the dialog if they pick Cancel; INFO/WARN
@@ -6761,6 +6799,20 @@ public class TrainingDialog {
                                             + "a different weight initialization strategy.",
                                     maeEncoderInputChannels, selectedChannels));
                     return null;
+                }
+            }
+
+            // Pre-flight: small-network + many-classes nudge. The tiny / Fast
+            // networks target simple 2-5 class tasks; with many classes they
+            // tend to underfit. Suggest a larger model, but let the user proceed.
+            String mt = trainingConfig.getModelType();
+            boolean smallNet = "tiny-unet".equals(mt) || "fast-pretrained".equals(mt);
+            long selectedClassCount = classListView.getItems().stream()
+                    .filter(item -> item.selected().get())
+                    .count();
+            if (smallNet && selectedClassCount > 5 && !DLClassifierPreferences.isTinyNetManyClassesNoticeDismissed()) {
+                if (!showTinyNetManyClassesNotice((int) selectedClassCount, mt)) {
+                    return null; // back to settings
                 }
             }
 
@@ -7036,6 +7088,45 @@ public class TrainingDialog {
             var result = alert.showAndWait();
             if (dontShowAgain.isSelected()) {
                 DLClassifierPreferences.setBoundedCacheNoticeDismissed(true);
+            }
+            return result.isPresent() && result.get() == ButtonType.OK;
+        }
+
+        /**
+         * Nudge shown when a small/Fast network is selected for many classes.
+         * Returns true to proceed, false to return to the dialog and change settings.
+         */
+        private boolean showTinyNetManyClassesNotice(int numClasses, String modelType) {
+            String netName = "fast-pretrained".equals(modelType) ? "Fast Pretrained" : "Tiny UNet";
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Small network, many classes");
+            alert.setHeaderText(netName + " is a small network meant for simple tasks");
+
+            Label message = new Label(String.format(
+                    "You are training %s on %d classes.\n\n"
+                            + "The small / Fast networks are designed for simple, visually-obvious "
+                            + "segmentation (2-5 classes such as background / tissue / artifact). With "
+                            + "many or subtle classes they tend to underfit, and several classes may "
+                            + "never be learned.\n\n"
+                            + "For a task like this, consider switching to a Small or Medium UNet "
+                            + "(pretrained) in the model selector. You can also proceed with the small "
+                            + "network if you are just iterating quickly.",
+                    netName, numClasses));
+            message.setWrapText(true);
+            message.setMaxWidth(520);
+
+            CheckBox dontShowAgain = new CheckBox("Do not show this notice again on this machine");
+
+            VBox content = new VBox(10, message, dontShowAgain);
+            content.setPadding(new Insets(10, 0, 0, 0));
+            alert.getDialogPane().setContent(content);
+            alert.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
+            ((Button) alert.getDialogPane().lookupButton(ButtonType.OK)).setText("Train anyway");
+            ((Button) alert.getDialogPane().lookupButton(ButtonType.CANCEL)).setText("Back to Settings");
+
+            var result = alert.showAndWait();
+            if (dontShowAgain.isSelected()) {
+                DLClassifierPreferences.setTinyNetManyClassesNoticeDismissed(true);
             }
             return result.isPresent() && result.get() == ButtonType.OK;
         }

@@ -25,7 +25,12 @@ class TrainingDiagnostics:
         diag.run_all_checks(training_history)
     """
 
-    def __init__(self, classes: List[str], limited_data_classes: Optional[set] = None):
+    def __init__(
+        self,
+        classes: List[str],
+        limited_data_classes: Optional[set] = None,
+        early_stopping_metric: str = "mean_iou",
+    ):
         self.classes = classes
         # Classes with too few source slides for their val IoU to be
         # meaningful. The "never learned" check skips them because the
@@ -34,6 +39,10 @@ class TrainingDiagnostics:
         self.limited_data_classes = (
             set(limited_data_classes) if limited_data_classes else set()
         )
+        # Which metric early stopping / best-model selection tracks. Used by
+        # the metric-mismatch check: when it is not mean_iou, the saved "best"
+        # epoch can segment worse than a later epoch.
+        self.early_stopping_metric = early_stopping_metric
         self._warned: set = set()  # track which warnings have been issued
 
     def run_checks(
@@ -79,6 +88,7 @@ class TrainingDiagnostics:
         warnings.extend(self._check_loss_spikes(history))
         warnings.extend(self._check_class_weight_imbalance(history))
         warnings.extend(self._check_val_better_than_train(history))
+        warnings.extend(self._check_metric_mismatch(history))
         return warnings
 
     def _warn_once(self, key: str, message: str) -> Optional[str]:
@@ -406,6 +416,44 @@ class TrainingDiagnostics:
                 f"Focus Class to optimize for '{worst_class}' specifically."
             )
             w = self._warn_once("class_imbalance", msg)
+            if w:
+                warnings.append(w)
+
+        return warnings
+
+    def _check_metric_mismatch(self, history: List[Dict[str, Any]]) -> List[str]:
+        """Detect when early stopping on validation loss saves a weaker model.
+
+        When the early-stop / best-model metric is validation loss, the saved
+        "best" epoch is the one with the lowest val_loss -- which, for
+        segmentation with boundary/OHEM losses, can have a much lower mIoU than
+        a later epoch. Only meaningful when the metric is NOT already mean_iou.
+        """
+        warnings = []
+        if self.early_stopping_metric == "mean_iou":
+            return warnings
+        if len(history) < 10:
+            return warnings
+
+        # Epoch with the lowest validation loss (what val_loss early stop keeps).
+        best_vl_entry = min(history, key=lambda e: e.get("val_loss", float("inf")))
+        best_vl_miou = best_vl_entry.get("mean_iou", 0.0)
+        peak_miou = max(e.get("mean_iou", 0.0) for e in history)
+
+        # Fire only when the gap is meaningful in both absolute and relative terms.
+        if (
+            peak_miou > 0.05
+            and (peak_miou - best_vl_miou) > 0.03
+            and best_vl_miou < peak_miou * 0.8
+        ):
+            msg = (
+                f"Early stopping is tracking validation loss, but the "
+                f"lowest-val-loss epoch (mIoU {best_vl_miou:.3f}) segments worse "
+                f"than the best epoch (mIoU {peak_miou:.3f}). The saved model may "
+                f"not be the best-segmenting one. Set the Early Stop Metric to "
+                f"'Mean IoU' so the highest-IoU checkpoint is kept."
+            )
+            w = self._warn_once("metric_mismatch", msg)
             if w:
                 warnings.append(w)
 

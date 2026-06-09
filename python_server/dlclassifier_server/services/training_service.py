@@ -2666,7 +2666,9 @@ class TrainingService:
         from .training_diagnostics import TrainingDiagnostics
 
         _diagnostics = TrainingDiagnostics(
-            classes=classes, limited_data_classes=limited_data_classes
+            classes=classes,
+            limited_data_classes=limited_data_classes,
+            early_stopping_metric=early_stopping_metric,
         )
 
         def _is_best(current, best):

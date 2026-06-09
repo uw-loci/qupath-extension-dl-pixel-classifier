@@ -11,6 +11,7 @@ import javafx.beans.property.BooleanProperty;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Hyperlink;
@@ -48,6 +49,11 @@ import qupath.lib.gui.prefs.PathPrefs;
 public final class InteractionWarningService {
 
     private static final Logger logger = LoggerFactory.getLogger(InteractionWarningService.class);
+
+    // Buttons for non-blocking warnings: proceed, or return to the dialog to change settings.
+    private static final ButtonType START_TRAINING = new ButtonType("Start Training", ButtonBar.ButtonData.OK_DONE);
+    private static final ButtonType BACK_TO_SETTINGS =
+            new ButtonType("Back to Settings", ButtonBar.ButtonData.CANCEL_CLOSE);
 
     private static final String PREF_KEY_PREFIX = "dlclassifier.warning.";
     private static final String PREF_KEY_SUFFIX = ".suppressed";
@@ -161,10 +167,12 @@ public final class InteractionWarningService {
     /**
      * Show a single popup summarising the triggered warnings.
      * <p>
-     * Return value: when all triggered warnings are non-blocking
-     * the Alert defaults to OK and users can proceed. If any
-     * warning is BLOCKING the popup offers OK / Cancel and this
-     * method returns {@code false} when the user cancelled.
+     * Return value: non-blocking warnings offer "Start Training" /
+     * "Back to Settings" and this method returns {@code false} when
+     * the user chose "Back to Settings" (or closed the dialog), so the
+     * caller can keep the settings dialog open. If any warning is
+     * BLOCKING the popup offers OK / Cancel and this method returns
+     * {@code false} when the user cancelled.
      *
      * @param warnings triggered watchers (already filtered via
      *     {@link #filterVisible(List)} if desired)
@@ -181,8 +189,9 @@ public final class InteractionWarningService {
             if (hasBlocking(warnings)) {
                 result[0] = choice.isPresent() && choice.get() == ButtonType.OK;
             } else {
-                // Non-blocking popups always allow proceed.
-                result[0] = true;
+                // Non-blocking: proceed only on "Start Training". "Back to
+                // Settings" (or closing the dialog) returns to the settings.
+                result[0] = choice.isPresent() && choice.get() == START_TRAINING;
             }
         };
         if (Platform.isFxApplicationThread()) {
@@ -248,9 +257,13 @@ public final class InteractionWarningService {
         if (parent != null) {
             alert.initOwner(parent);
         }
-        // Blocking alerts get OK / Cancel; warnings get OK only.
+        // Blocking alerts get OK / Cancel; non-blocking warnings get
+        // "Start Training" / "Back to Settings" so the user can return to the
+        // dialog and change settings instead of being forced to proceed.
         if (blocking) {
             alert.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
+        } else {
+            alert.getButtonTypes().setAll(START_TRAINING, BACK_TO_SETTINGS);
         }
 
         // Body: one entry per warning, with description, docs link,

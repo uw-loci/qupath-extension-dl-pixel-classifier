@@ -311,6 +311,9 @@ public final class DLClassifierPreferences {
     private static final BooleanProperty boundedCacheNoticeDismissed =
             PathPrefs.createPersistentPreference("dlclassifier.boundedCacheNoticeDismissed", false);
 
+    private static final BooleanProperty tinyNetManyClassesNoticeDismissed =
+            PathPrefs.createPersistentPreference("dlclassifier.tinyNetManyClassesNoticeDismissed", false);
+
     // One-time overlay notice dismissed
     private static final BooleanProperty overlayNoticeDismissed =
             PathPrefs.createPersistentPreference("dlclassifier.overlayNoticeDismissed", false);
@@ -1551,6 +1554,14 @@ public final class DLClassifierPreferences {
 
     public static void setBoundedCacheNoticeDismissed(boolean dismissed) {
         boundedCacheNoticeDismissed.set(dismissed);
+    }
+
+    public static boolean isTinyNetManyClassesNoticeDismissed() {
+        return tinyNetManyClassesNoticeDismissed.get();
+    }
+
+    public static void setTinyNetManyClassesNoticeDismissed(boolean dismissed) {
+        tinyNetManyClassesNoticeDismissed.set(dismissed);
     }
 
     public static BooleanProperty boundedCacheNoticeDismissedProperty() {

@@ -1838,18 +1838,43 @@ public class TrainingWorkflow {
             // Build diagnostic hints from final training metrics
             String completionMessage = "Training completed successfully";
             List<String> hints = new ArrayList<>();
-            if (serverResult.bestMeanIoU() < 0.5) {
+            boolean lowAccuracy = serverResult.bestMeanIoU() < 0.5;
+            if (lowAccuracy) {
                 hints.add("Low accuracy. Try: more annotations, different downsample, longer training.");
+            }
+            // From-scratch models converge slowly and noisily; suggest more
+            // runway and the IoU-based stop metric when results are weak.
+            if (lowAccuracy && !trainingConfig.isUsePretrainedWeights()) {
+                String hint = String.format(
+                        "Training from scratch ('%s', no pretrained weights) converges slowly. "
+                                + "Try: more epochs (2-3x the current %d), a higher early-stopping patience, "
+                                + "and a lower learning rate if the loss oscillated.",
+                        trainingConfig.getModelType(), trainingConfig.getEpochs());
+                if (!"mean_iou".equals(trainingConfig.getEarlyStoppingMetric())) {
+                    hint += " Also set the Early Stop Metric to 'Mean IoU' so the best-segmenting "
+                            + "checkpoint is kept (Validation Loss can save a weaker model).";
+                }
+                hints.add(hint);
             }
             double tl = lastTrainLoss.get(), vl = lastValLoss.get();
             if (tl > 0 && vl > 0 && vl > tl * 2.0) {
                 hints.add("Possible overfitting. Try: more augmentation, smaller model, more data.");
             }
+            boolean anyNeverLearned = false;
             for (var iouEntry : lastPerClassIoU.get().entrySet()) {
                 if (iouEntry.getValue() != null && iouEntry.getValue() == 0.0) {
+                    anyNeverLearned = true;
                     hints.add(String.format(
                             "Class '%s' was never learned. Check annotation quality/quantity.", iouEntry.getKey()));
                 }
+            }
+            // Fine structures are easily lost at coarse downsample; nudge toward
+            // higher resolution when a class failed to learn at >= 4x.
+            if (anyNeverLearned && trainingConfig.getDownsample() >= 4.0) {
+                hints.add(String.format(
+                        "Some classes were never learned at downsample %.0fx. Fine structures (e.g. small "
+                                + "cells) may be too coarse to resolve -- try a lower downsample (higher resolution).",
+                        trainingConfig.getDownsample()));
             }
             if (!hints.isEmpty()) {
                 completionMessage += "\n\nDiagnostic hints:\n- " + String.join("\n- ", hints);
