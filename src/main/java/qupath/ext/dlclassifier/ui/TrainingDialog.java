@@ -841,7 +841,8 @@ public class TrainingDialog {
             // Basic mode hint (hidden in advanced)
             Label basicHint = new Label("Select images, load classes, pick a model size, "
                     + "name your classifier, and click Start Training. "
-                    + "Start with Small or Medium -- larger models need more data and time.");
+                    + "Use Fast for simple, obvious classes (background/tissue/artifact); "
+                    + "otherwise start with Small or Medium -- larger models need more data and time.");
             basicHint.setWrapText(true);
             basicHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
             basicHint.visibleProperty().bind(advancedMode.not());
@@ -3043,7 +3044,10 @@ public class TrainingDialog {
             row++;
 
             // Basic mode guidance (hidden in advanced)
-            Label basicModelHint = new Label("Small: Fast training, low VRAM. Good starting point.\n"
+            Label basicModelHint = new Label("Fast: tiny network for simple, obvious classes "
+                    + "(background/tissue/artifact). Auto-uses a pretrained encoder for RGB images "
+                    + "or a small from-scratch net for multi-channel data.\n"
+                    + "Small: Fast training, low VRAM. Good general starting point.\n"
                     + "Medium: Best balance of speed and accuracy (recommended).\n"
                     + "Large: Most capacity, needs more data and VRAM.");
             basicModelHint.setWrapText(true);
@@ -3151,9 +3155,36 @@ public class TrainingDialog {
                     break;
             }
 
+            // Basic-mode "Fast (simple tasks)" preset: translate the sentinel tier into a concrete
+            // small network chosen by channel count. 3-channel (RGB) -> Fast Pretrained (pretrained
+            // mobile encoder); 1-7 channels -> Tiny UNet (from scratch). Both small nets cap at 7
+            // channels, so anything outside that falls back to the standard Small UNet (resnet18).
+            String effectiveType = architectureCombo.getValue();
+            String effectiveBackbone = backboneCombo.getValue();
+            boolean effectiveUsePretrained = usePretrained;
+            if (!advancedMode.get() && BASIC_FAST_PRESET.equals(effectiveBackbone)) {
+                int numCh = (channelPanel != null && channelPanel.isValid())
+                        ? channelPanel.getChannelConfiguration().getNumChannels()
+                        : 0;
+                if (numCh == 3) {
+                    effectiveType = "fast-pretrained";
+                    effectiveBackbone = "timm-tf_efficientnet_lite0";
+                    effectiveUsePretrained = true;
+                } else if (numCh >= 1 && numCh <= 7) {
+                    effectiveType = "tiny-unet";
+                    effectiveBackbone = "tiny-16x4";
+                    effectiveUsePretrained = false;
+                } else {
+                    // >7 channels (or unknown): the small nets cap at 7 channels.
+                    effectiveType = "unet";
+                    effectiveBackbone = "resnet18";
+                    effectiveUsePretrained = true;
+                }
+            }
+
             return TrainingConfig.builder()
-                    .classifierType(architectureCombo.getValue())
-                    .backbone(backboneCombo.getValue())
+                    .classifierType(effectiveType)
+                    .backbone(effectiveBackbone)
                     .epochs(epochsSpinner.getValue())
                     .batchSize(batchSizeSpinner.getValue())
                     .learningRate(learningRateSpinner.getValue())
@@ -3169,7 +3200,7 @@ public class TrainingDialog {
                     .augmentation(buildAugmentationConfig())
                     .augmentationParams(AdvancedAugmentationDialog.buildParamsFromPreferences())
                     .intensityAugMode(mapIntensityModeFromDisplay(intensityAugCombo.getValue()))
-                    .usePretrainedWeights(usePretrained)
+                    .usePretrainedWeights(effectiveUsePretrained)
                     .frozenLayers(frozenLayers)
                     .lineStrokeWidth(lineStrokeWidthSpinner.getValue())
                     .minAnnotationCoverage(minAnnotationCoveragePctSpinner.getValue() / 100.0)
@@ -3421,6 +3452,9 @@ public class TrainingDialog {
 
             String architecture = architectureCombo.getValue();
             String encoder = backboneCombo.getValue();
+
+            // The Fast tier sentinel is not a real encoder; skip the per-layer load.
+            if (BASIC_FAST_PRESET.equals(encoder)) return;
 
             if (architecture != null && encoder != null && channelPanel != null) {
                 // Guard: channel panel may not have channels selected yet during init
@@ -6103,10 +6137,18 @@ public class TrainingDialog {
         /** Backbones shown in basic mode (simple ResNets only). */
         private static final List<String> BASIC_BACKBONES = List.of("resnet18", "resnet34", "resnet50");
 
+        /**
+         * Sentinel "Model size" value for the basic-mode Fast tier. Not a real backbone -- at
+         * config-build time it is translated to a small network (Fast Pretrained for RGB, Tiny UNet
+         * for multi-channel) chosen by channel count. See {@code buildTrainingConfig}.
+         */
+        private static final String BASIC_FAST_PRESET = "__fast_simple__";
+
         /** User-friendly labels for basic mode backbone selection. */
         private static String getBasicModeBackboneLabel(String backbone) {
             return switch (backbone) {
-                case "resnet18" -> "Small -- ResNet18 (fast, good starting point)";
+                case BASIC_FAST_PRESET -> "Fast -- tiny network for simple tasks (background/tissue/artifact)";
+                case "resnet18" -> "Small -- ResNet18 (good general starting point)";
                 case "resnet34" -> "Medium -- ResNet34 (recommended)";
                 case "resnet50" -> "Large -- ResNet50 (best accuracy, needs more data)";
                 default -> backbone;
@@ -6129,13 +6171,15 @@ public class TrainingDialog {
                 backboneList.addAll(List.of("resnet34", "resnet50", "efficientnet-b0"));
             }
 
-            // In basic mode, show only the simple ResNets
+            // In basic mode, show only the simple ResNets, plus the Fast tier at the top.
             if (!advancedMode.get()) {
                 backboneList.retainAll(BASIC_BACKBONES);
                 if (backboneList.isEmpty()) {
                     // Fallback if handler has none of the basic backbones
                     backboneList.addAll(BASIC_BACKBONES);
                 }
+                // Fast (simple tasks) tier -- a small network auto-picked by channel count.
+                backboneList.add(0, BASIC_FAST_PRESET);
             }
 
             backboneCombo.setItems(FXCollections.observableArrayList(backboneList));
@@ -6169,12 +6213,19 @@ public class TrainingDialog {
                 }
             });
 
-            // Restore last used backbone from preferences if it's available for this architecture
+            // Restore last used backbone from preferences if it's available for this architecture.
+            // Never auto-select the Fast sentinel: it is opt-in, so when there is no concrete saved
+            // backbone, default to the first real backbone (skipping the sentinel).
             String savedBackbone = DLClassifierPreferences.getLastBackbone();
-            if (backboneList.contains(savedBackbone)) {
+            if (savedBackbone != null
+                    && !BASIC_FAST_PRESET.equals(savedBackbone)
+                    && backboneList.contains(savedBackbone)) {
                 backboneCombo.setValue(savedBackbone);
-            } else if (!backboneList.isEmpty()) {
-                backboneCombo.setValue(backboneList.get(0));
+            } else {
+                backboneList.stream()
+                        .filter(b -> !BASIC_FAST_PRESET.equals(b))
+                        .findFirst()
+                        .ifPresent(backboneCombo::setValue);
             }
         }
 
@@ -6604,7 +6655,10 @@ public class TrainingDialog {
         private TrainingDialogResult buildResult() {
             // Save dialog settings to preferences for next session
             DLClassifierPreferences.setLastArchitecture(architectureCombo.getValue());
-            DLClassifierPreferences.setLastBackbone(backboneCombo.getValue());
+            // Do not persist the Fast sentinel as a backbone: it is opt-in and is not a real encoder.
+            if (!BASIC_FAST_PRESET.equals(backboneCombo.getValue())) {
+                DLClassifierPreferences.setLastBackbone(backboneCombo.getValue());
+            }
             DLClassifierPreferences.setDefaultEpochs(epochsSpinner.getValue());
             DLClassifierPreferences.setDefaultBatchSize(batchSizeSpinner.getValue());
             DLClassifierPreferences.setDefaultLearningRate(learningRateSpinner.getValue());
@@ -6658,6 +6712,19 @@ public class TrainingDialog {
 
             // Build training config from unified weight init strategy
             TrainingConfig trainingConfig = buildTrainingConfig();
+
+            // Surface which small network the basic-mode Fast tier resolved to, so the user knows
+            // what is being trained (the auto-pick is by channel count).
+            if (!advancedMode.get() && BASIC_FAST_PRESET.equals(backboneCombo.getValue())) {
+                String resolved =
+                        switch (trainingConfig.getModelType()) {
+                            case "fast-pretrained" ->
+                                "Fast Pretrained (small, pretrained encoder) for 3-channel (RGB) data";
+                            case "tiny-unet" -> "Tiny UNet (small, trained from scratch) for multi-channel data";
+                            default -> "Small UNet -- the Fast tiny networks need 7 or fewer channels";
+                        };
+                showTemporaryNotification("Fast preset: training " + resolved + ".");
+            }
 
             // Run pairwise interaction checks against the built config.
             // BLOCKING watchers (e.g. overlap + no-per-image-split-roles)
@@ -7642,11 +7709,26 @@ public class TrainingDialog {
             content.setPadding(new Insets(10));
             content.setPrefWidth(480);
 
-            Label intro = new Label("In basic mode, you choose between three model sizes. All three "
-                    + "use the same proven UNet architecture -- they differ only in "
-                    + "capacity (how much the model can learn).");
+            Label intro = new Label("In basic mode, you pick a model size. Small, Medium, and Large "
+                    + "use the same proven UNet architecture and differ only in capacity (how much "
+                    + "the model can learn). Fast is a separate, much smaller network for simple "
+                    + "tasks -- it trains in seconds to minutes.");
             intro.setWrapText(true);
             content.getChildren().add(intro);
+
+            content.getChildren()
+                    .add(createModelEntry(
+                            "Fast (simple tasks)",
+                            "A tiny network for simple, visually-obvious classes such as background "
+                                    + "vs tissue vs artifact. Trains fastest and uses the least GPU "
+                                    + "memory. The dialog picks the right small net automatically: a "
+                                    + "pretrained mobile encoder for 3-channel (RGB) images, or a "
+                                    + "from-scratch Tiny UNet for multi-channel data. For simple "
+                                    + "class separation, pretraining is not needed -- a small "
+                                    + "from-scratch model learns the task quickly. Best for 2-5 "
+                                    + "obvious classes; step up to Small/Medium for subtler tasks.",
+                            null,
+                            null));
 
             content.getChildren()
                     .add(createModelEntry(

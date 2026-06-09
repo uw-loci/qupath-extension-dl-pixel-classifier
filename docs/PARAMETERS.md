@@ -34,6 +34,8 @@ Dialog sections appear in this order:
 
 ### Model Architecture
 
+> **Basic mode** hides the Architecture and Encoder controls and instead offers a single **Model size** selector: **Fast**, **Small**, **Medium**, **Large**. Small/Medium/Large are UNet with pretrained ResNet18/34/50. **Fast** is a tiny network for simple, visually-obvious classes (background/tissue/artifact): the dialog auto-picks **Fast Pretrained** (pretrained mobile encoder) for 3-channel RGB images, or **Tiny UNet** (from scratch) for multi-channel data. If the image has more than 7 channels, Fast falls back to Small UNet. Switch to advanced (All Settings) for the full Architecture/Encoder controls below.
+
 | Parameter | Options | Description |
 |-----------|---------|-------------|
 | **Architecture** | UNet, Tiny UNet, Fast Pretrained, MuViT (Transformer), Custom ONNX Model | Segmentation architecture. UNet is the best general-purpose choice. **Tiny UNet** is a lightweight depthwise-separable UNet (no pretrained weights) for simple 2-5 class tasks and non-RGB data -- see [Tiny UNet](TINY_MODEL.md). **Fast Pretrained** is a compact UNet with mobile ImageNet-pretrained encoders for small RGB H&E datasets -- see [Fast Pretrained](FAST_PRETRAINED.md). MuViT uses multi-resolution Vision Transformer feature fusion for multi-scale context. Custom ONNX allows importing externally trained models. See [UNet paper](https://arxiv.org/abs/1505.04597). |
