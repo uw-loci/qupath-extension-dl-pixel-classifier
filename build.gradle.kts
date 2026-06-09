@@ -117,6 +117,11 @@ sourceSets.main {
 }
 
 tasks.withType<JavaCompile> {
+    // QuPath 0.7 runs on Java 21. Pin the bytecode target so the extension loads
+    // there regardless of the JDK that compiles it -- without this the jar inherits
+    // the build JDK (e.g. 25 -> class file version 69), and QuPath's Java 21 runtime
+    // rejects it with UnsupportedClassVersionError on load.
+    options.release.set(21)
     options.compilerArgs.add("-Xlint:deprecation")
     options.compilerArgs.add("-Xlint:unchecked")
 }
