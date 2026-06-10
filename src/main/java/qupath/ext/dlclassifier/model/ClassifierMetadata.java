@@ -348,8 +348,24 @@ public class ClassifierMetadata {
 
     @Override
     public String toString() {
-        return String.format(
-                "ClassifierMetadata{id='%s', name='%s', type=%s, classes=%d}", id, name, modelType, classes.size());
+        // Human-readable: name first, then metadata. This string is what the
+        // classifier choosers (Load Saved Training Area Issues, Manage
+        // Classifiers, etc.) render for each entry, so keep it scannable.
+        StringBuilder sb = new StringBuilder(name != null && !name.isEmpty() ? name : "(unnamed)");
+        sb.append("  -  ");
+        if (modelType != null && !modelType.isEmpty()) {
+            sb.append(modelType);
+            if (backbone != null && !backbone.isEmpty()) {
+                sb.append('/').append(backbone);
+            }
+            sb.append(", ");
+        }
+        int n = classes.size();
+        sb.append(n).append(n == 1 ? " class" : " classes");
+        if (createdAt != null) {
+            sb.append(", ").append(createdAt.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+        }
+        return sb.toString();
     }
 
     public static Builder builder() {

@@ -541,6 +541,125 @@ public class ApposeService {
     }
 
     /**
+     * Recreates ONLY the Python worker subprocess (not the pixi environment),
+     * killing any stale or zombie worker first.
+     * <p>
+     * Used to recover from an Appose "thread death": a worker that has gone
+     * idle/stale emits a FAILURE on its next task <em>before any Python runs</em>,
+     * which makes Appose's {@code Service} drop the task and then relaunch it as
+     * an unobservable zombie (every subsequent event hits "No such task"). That
+     * zombie keeps running in the worker. Killing and recreating the worker
+     * terminates the zombie so a retry can run cleanly with no duplicate GPU
+     * process.
+     * <p>
+     * The pixi environment is already built; this just spins up a fresh
+     * subprocess and re-runs {@code init_services.py} so the new worker has
+     * {@code inference_service} / {@code gpu_manager} available.
+     *
+     * @throws IOException if the environment is not built or the worker cannot
+     *                     be recreated
+     */
+    public synchronized void restartWorker() throws IOException {
+        if (environment == null) {
+            throw new IOException("Cannot restart worker: Appose environment not built");
+        }
+        ClassLoader original = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
+        try {
+            // Tear down the existing worker (close stdin -> clean exit, then kill).
+            if (pythonService != null) {
+                try {
+                    pythonService.close();
+                    long deadline = System.currentTimeMillis() + 3000;
+                    while (pythonService.isAlive() && System.currentTimeMillis() < deadline) {
+                        Thread.sleep(50);
+                    }
+                    if (pythonService.isAlive()) {
+                        pythonService.kill();
+                    }
+                } catch (Exception e) {
+                    logger.warn("Error tearing down stale worker: {}", e.getMessage());
+                    try {
+                        pythonService.kill();
+                    } catch (Exception ignored) {
+                        // best effort
+                    }
+                }
+            }
+            // Recreate the worker subprocess from the already-built environment.
+            // The subprocess starts lazily on the next task; init_services.py is
+            // queued here so the fresh worker initializes its services first.
+            pythonService = environment.python();
+            pythonService.debug(msg -> {
+                logger.info("[Appose Python] {}", msg);
+                qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(msg);
+            });
+            String initScript = "import numpy\n" + loadScript("init_services.py");
+            pythonService.init(initScript);
+            logger.info("Appose worker restarted (fresh Python subprocess)");
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Failed to restart Appose worker: " + e.getMessage(), e);
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
+        }
+    }
+
+    /**
+     * Sends a trivial task to the worker to confirm it is responsive before a
+     * long, data-sensitive operation (e.g. training).
+     * <p>
+     * The ~tens-of-seconds training-data export can leave the worker idle long
+     * enough to go stale; a stale worker emits an Appose "thread death" on its
+     * first task afterward. Absorbing that here -- on a task with no data or GPU
+     * at stake -- means the subsequent real task hits a live worker. On
+     * thread-death we restart the worker and warm up once more. Best-effort:
+     * never throws, so a warm-up hiccup cannot block training (the
+     * thread-death recovery in the training path is the backstop).
+     */
+    public synchronized void warmUpWorker() {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            ClassLoader original = Thread.currentThread().getContextClassLoader();
+            Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
+            try {
+                ensureInitialized();
+                Task t = pythonService.task("task.outputs['ok'] = 1\n");
+                t.waitFor();
+                if (t.status == Service.TaskStatus.COMPLETE) {
+                    return; // worker is responsive
+                }
+                String err = t.error == null ? "" : t.error;
+                if (err.toLowerCase().contains("thread death") && attempt == 0) {
+                    logger.warn("Worker warm-up hit 'thread death' (stale worker); "
+                            + "restarting worker and warming up once more.");
+                    restartWorker();
+                    continue;
+                }
+                logger.warn("Worker warm-up did not complete (status={}, error={}); proceeding anyway.", t.status, err);
+                return;
+            } catch (Exception e) {
+                String msg = e.getMessage() == null ? "" : e.getMessage();
+                if (msg.toLowerCase().contains("thread death") && attempt == 0) {
+                    logger.warn("Worker warm-up hit 'thread death' (stale worker); "
+                            + "restarting worker and warming up once more.");
+                    try {
+                        restartWorker();
+                    } catch (Exception re) {
+                        logger.warn("Worker restart during warm-up failed: {}; proceeding anyway.", re.getMessage());
+                        return;
+                    }
+                    continue;
+                }
+                logger.warn("Worker warm-up failed ({}); proceeding anyway.", msg);
+                return;
+            } finally {
+                Thread.currentThread().setContextClassLoader(original);
+            }
+        }
+    }
+
+    /**
      * Gracefully shuts down the Python service and environment.
      * Closes stdin first (lets Python exit cleanly), then force-kills
      * if the process doesn't exit within 5 seconds.

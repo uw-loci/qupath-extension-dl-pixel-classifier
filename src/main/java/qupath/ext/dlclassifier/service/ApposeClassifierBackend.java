@@ -428,18 +428,19 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         ClassLoader originalCL = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(extensionCL);
 
-        // No auto-retry on "thread death" for training. Appose can fire
-        // FAILURE *and then* LAUNCH for the same task; the FAILURE arrives
-        // before any UPDATE event, so the pythonStarted flag stays false,
-        // but Python actually does start running on the subsequent LAUNCH.
-        // A naive retry then dispatches a second task while the first is
-        // alive, producing two parallel GPU training processes that race
-        // on the same export tile dir -- one cleans it up, the other
-        // crashes with FileNotFoundError mid-iteration. There is no way
-        // to tell the two patterns apart from the FAILURE event alone, so
-        // we propagate the error and let the user re-launch manually.
-        // (The pretraining paths keep their retry: their cleanup is now
-        // deferred via terminalCleanup, so a duplicate is harmless there.)
+        // "thread death" handling for training -- two layers (see warmUpWorker /
+        // restartWorker / executeTrainingTask):
+        //   1. PREEMPT: the long export above can leave the Appose worker idle
+        //      long enough to go stale; a stale worker emits "thread death" on
+        //      its first task afterward. Warm it up here on a trivial task so
+        //      the data-sensitive training task hits a live worker.
+        //   2. RECOVER: if a thread-death still slips through before Python
+        //      starts, executeTrainingTask restarts the worker (killing the
+        //      zombie relaunch Appose spawns) and retries the task once on the
+        //      fresh worker. Killing the worker first is what prevents the
+        //      duplicate GPU process that originally ruled out a naive retry --
+        //      the export dir stays intact (cleanup runs only after we return).
+        appose.warmUpWorker();
         try {
             return executeTrainingTask(appose, inputs, jobId, extensionCL, progressCallback, cancelledCheck);
         } finally {
@@ -1194,10 +1195,55 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     }
 
     /**
-     * Executes a training task via Appose. No retry -- training is a long-running
-     * stateful operation and retrying risks duplicate GPU processes.
+     * Executes a training task via Appose, recovering once from a stale-worker
+     * "thread death".
+     * <p>
+     * If the worker emits "thread death" <em>before any Python ran</em>
+     * (pythonStarted == false), Appose has dropped the task and relaunched it as
+     * an unobservable zombie in the same worker. We restart the worker -- which
+     * kills that zombie, so there is never a duplicate GPU training process --
+     * and retry the task once on the fresh worker. The export data dir is still
+     * intact at this point (the caller cleans it up only after this method
+     * returns or throws), so the retry has everything it needs. Any other
+     * failure, or a thread-death after Python started, propagates unchanged.
      */
     private ClassifierClient.TrainingResult executeTrainingTask(
+            ApposeService appose,
+            Map<String, Object> inputs,
+            String jobId,
+            ClassLoader extensionCL,
+            Consumer<ClassifierClient.TrainingProgress> progressCallback,
+            Supplier<Boolean> cancelledCheck)
+            throws IOException {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return executeTrainingTaskOnce(appose, inputs, jobId, extensionCL, progressCallback, cancelledCheck);
+            } catch (TrainingStartedException e) {
+                boolean threadDeath =
+                        e.getMessage() != null && e.getMessage().toLowerCase().contains("thread death");
+                if (!e.pythonStarted && threadDeath && attempt == 0) {
+                    logger.warn("Training hit 'thread death' before Python started (stale Appose worker). "
+                            + "Restarting the worker to kill any zombie relaunch, then retrying once.");
+                    try {
+                        appose.restartWorker();
+                    } catch (IOException re) {
+                        logger.error("Worker restart after thread-death failed: {}", re.getMessage());
+                        throw e; // give up; surface the original failure
+                    }
+                    // Keep the same TCCL the caller set for Appose JSON serialization.
+                    Thread.currentThread().setContextClassLoader(extensionCL);
+                    continue;
+                }
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Executes a training task via Appose exactly once. No retry -- the retry
+     * decision (and stale-worker recovery) lives in {@link #executeTrainingTask}.
+     */
+    private ClassifierClient.TrainingResult executeTrainingTaskOnce(
             ApposeService appose,
             Map<String, Object> inputs,
             String jobId,
