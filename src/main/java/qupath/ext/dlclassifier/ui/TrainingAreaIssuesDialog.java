@@ -38,6 +38,7 @@ import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.TrainingIssuesOverlayController;
 import qupath.ext.dlclassifier.service.TrainingIssuesOverlayController.OverlayMode;
 import qupath.ext.dlclassifier.service.TrainingIssuesSessionStore;
+import qupath.ext.dlclassifier.utilities.HeatmapColormap;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.viewer.OverlayOptions;
@@ -101,6 +102,11 @@ public class TrainingAreaIssuesDialog {
     private final ComboBox<String> overlaySelector;
     private static final String OVERLAY_DISAGREEMENT = "Disagreement";
     private static final String OVERLAY_LOSS_HEATMAP = "Loss Heatmap";
+    // Per-pixel model confidence, colorized in Java with the same colormap as
+    // the loss heatmap. This is the exact quantity the confidence slider
+    // thresholds, so it is the overlay shown while adjusting (the green changes
+    // are composited on top of it live as the slider moves).
+    private static final String OVERLAY_CONFIDENCE = "Confidence";
 
     // Watches QuPath's active image so we can clear the overlay/selection
     // when the user (or any non-dialog action) navigates away from the image
@@ -126,6 +132,29 @@ public class TrainingAreaIssuesDialog {
     private VBox transitionCheckBoxesBox;
     private final Map<AnnotationAdjuster.TransitionKey, CheckBox> transitionCheckBoxes = new LinkedHashMap<>();
     private final Set<AnnotationAdjuster.TransitionKey> allowedTransitions = new HashSet<>();
+
+    // ---- Live confidence preview ----
+    // A cached session for the selected tile (loaded maps + rasterized
+    // annotations) so the confidence slider can re-threshold the green preview
+    // live as it is dragged. Non-null only while a live preview is active.
+    private AnnotationAdjuster.PreviewSession previewSession;
+    // The row + viewer the live session belongs to.
+    private TileRow previewSessionRow;
+    // Transitions the user explicitly unchecked; preserved across live threshold
+    // changes so a box stays unchecked when the slider repopulates the list.
+    private final Set<AnnotationAdjuster.TransitionKey> userUnchecked = new HashSet<>();
+    // Frame-rate-throttled live updater: many slider value changes per frame
+    // coalesce into one recompute, avoiding overlay/repaint flooding.
+    private javafx.animation.AnimationTimer liveTimer;
+    private volatile boolean liveDirty;
+    private List<AnnotationAdjuster.TransitionKey> lastLiveTransitionKeys = new ArrayList<>();
+    // Confidence legend threshold marker (repositioned as the slider moves).
+    private Region confidenceLegendMarker;
+    private double confidenceLegendWidth = 200;
+    // Confidence heatmap (cropped to the core tile), computed once per live
+    // session and reused each frame -- only the green changes layer is rebuilt
+    // as the slider moves, so we don't re-read PNGs + recolorize every frame.
+    private BufferedImage liveConfidenceBase;
 
     // Confusion Matrix tab: rebuilt whenever allRows changes (initial load,
     // session reload). Cell click sets the (gt, pred) filter and switches
@@ -476,9 +505,12 @@ public class TrainingAreaIssuesDialog {
         previewTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;");
 
         overlaySelector = new ComboBox<>();
-        overlaySelector.getItems().addAll(OVERLAY_LOSS_HEATMAP, OVERLAY_DISAGREEMENT);
+        overlaySelector.getItems().addAll(OVERLAY_LOSS_HEATMAP, OVERLAY_CONFIDENCE, OVERLAY_DISAGREEMENT);
         overlaySelector.setValue(OVERLAY_LOSS_HEATMAP);
         overlaySelector.setTooltip(TooltipHelper.create("Loss Heatmap: per-pixel loss intensity (blue=low, red=high).\n"
+                + "Confidence: per-pixel model confidence, same colormap. This is\n"
+                + "what the adjustment slider thresholds -- pixels above the slider\n"
+                + "value (toward red) are the ones that get changed (green).\n"
                 + "Disagreement: colored pixels where model prediction\n"
                 + "differs from the ground truth annotation."));
         overlaySelector.setOnAction(e -> {
@@ -486,13 +518,20 @@ public class TrainingAreaIssuesDialog {
             previewTitle.setText(selected + " Preview");
             if (OVERLAY_LOSS_HEATMAP.equals(selected)) {
                 buildLossHeatmapLegend();
+            } else if (OVERLAY_CONFIDENCE.equals(selected)) {
+                buildConfidenceLegend();
             } else {
                 buildDisagreementLegend();
             }
             TileRow currentRow = table.getSelectionModel().getSelectedItem();
             if (currentRow != null) {
                 updateOverlayImage(currentRow);
-                showViewerOverlay(currentRow);
+                // While a live preview is active the viewer shows the
+                // confidence+green composite; don't stomp it with the plain
+                // overlay (the legend still updates above).
+                if (previewSession == null) {
+                    showViewerOverlay(currentRow);
+                }
             }
         });
 
@@ -607,6 +646,7 @@ public class TrainingAreaIssuesDialog {
         // Release the custom pixel-layer overlay slot and restore the
         // production DL overlay (if it had been running) when the dialog closes.
         stage.setOnHidden(e -> {
+            clearLiveSession();
             overlayController.dispose();
             uninstallImageSwitchListener();
         });
@@ -1170,9 +1210,14 @@ public class TrainingAreaIssuesDialog {
         QuPathViewer viewer = qupath.getViewer();
         if (viewer == null) return;
 
-        OverlayMode mode = OVERLAY_DISAGREEMENT.equals(overlaySelector.getValue())
-                ? OverlayMode.DISAGREEMENT
-                : OverlayMode.LOSS_HEATMAP;
+        OverlayMode mode;
+        if (OVERLAY_DISAGREEMENT.equals(overlaySelector.getValue())) {
+            mode = OverlayMode.DISAGREEMENT;
+        } else if (OVERLAY_CONFIDENCE.equals(overlaySelector.getValue())) {
+            mode = OverlayMode.CONFIDENCE;
+        } else {
+            mode = OverlayMode.LOSS_HEATMAP;
+        }
         overlayController.showTile(viewer, row, mode, patchSize, downsample);
     }
 
@@ -1184,6 +1229,13 @@ public class TrainingAreaIssuesDialog {
     }
 
     private void updateOverlayImage(TileRow row) {
+        if (OVERLAY_CONFIDENCE.equals(overlaySelector.getValue())) {
+            // Confidence is colorized in Java (no PNG on disk); render it to a
+            // JavaFX image for the thumbnail pane.
+            java.awt.image.BufferedImage conf = overlayController.renderConfidenceHeatmap(row);
+            disagreeImageView.setImage(conf == null ? null : javafx.embed.swing.SwingFXUtils.toFXImage(conf, null));
+            return;
+        }
         String overlayPath;
         String overlayKind;
         if (OVERLAY_LOSS_HEATMAP.equals(overlaySelector.getValue())) {
@@ -1252,6 +1304,7 @@ public class TrainingAreaIssuesDialog {
 
     private void buildDisagreementLegend() {
         legendBox.getChildren().clear();
+        confidenceLegendMarker = null;
         if (classColors.isEmpty()) return;
 
         Label legendTitle = new Label("Class Colors:");
@@ -1280,6 +1333,7 @@ public class TrainingAreaIssuesDialog {
 
     private void buildLossHeatmapLegend() {
         legendBox.getChildren().clear();
+        confidenceLegendMarker = null;
 
         Label legendTitle = new Label("Loss Intensity:");
         legendTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #888;");
@@ -1306,6 +1360,65 @@ public class TrainingAreaIssuesDialog {
         legendBox.getChildren().addAll(gradientBar, labels);
     }
 
+    /**
+     * Legend for the confidence overlay: the same blue -> yellow -> red ramp
+     * the overlay uses, with a marker at the current slider threshold. Pixels to
+     * the right of the marker (more confident) are the ones the adjustment turns
+     * green. Kept visually consistent with the slider track, which is painted
+     * with the same colormap.
+     */
+    private void buildConfidenceLegend() {
+        legendBox.getChildren().clear();
+
+        Label legendTitle = new Label("Model Confidence (slider threshold marked):");
+        legendTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #888;");
+        legendBox.getChildren().add(legendTitle);
+
+        double w = confidenceLegendWidth;
+        double h = 14;
+        Region gradientBar = new Region();
+        gradientBar.setPrefSize(w, h);
+        gradientBar.setMinSize(w, h);
+        gradientBar.setMaxSize(w, h);
+        gradientBar.setStyle("-fx-background-color: "
+                + HeatmapColormap.cssLinearGradient("to right", 0.0, 1.0, 9)
+                + "; -fx-border-color: #666; -fx-border-width: 0.5;");
+
+        // Threshold marker line; repositioned by updateConfidenceLegendMarker.
+        Region marker = new Region();
+        marker.setMouseTransparent(true);
+        marker.setPrefSize(2, h + 4);
+        marker.setMinSize(2, h + 4);
+        marker.setMaxSize(2, h + 4);
+        marker.setStyle("-fx-background-color: white; -fx-border-color: black; -fx-border-width: 0.5;");
+        confidenceLegendMarker = marker;
+
+        Pane barPane = new Pane(gradientBar, marker);
+        barPane.setPrefSize(w, h);
+        barPane.setMaxWidth(w);
+
+        Label lowLabel = new Label("Low");
+        lowLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888;");
+        Label highLabel = new Label("High -> changes");
+        highLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888;");
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        HBox labels = new HBox(lowLabel, spacer, highLabel);
+        labels.setMaxWidth(w);
+        labels.setPrefWidth(w);
+
+        legendBox.getChildren().addAll(barPane, labels);
+        updateConfidenceLegendMarker(confidenceSlider != null ? confidenceSlider.getValue() : 0.80);
+    }
+
+    /** Moves the confidence-legend threshold marker to {@code threshold} (0-1). */
+    private void updateConfidenceLegendMarker(double threshold) {
+        if (confidenceLegendMarker == null) return;
+        double frac = Math.max(0.0, Math.min(1.0, threshold));
+        confidenceLegendMarker.setLayoutX(frac * confidenceLegendWidth - 1);
+        confidenceLegendMarker.setLayoutY(-2);
+    }
+
     // ==================== Annotation Adjustment ====================
 
     /**
@@ -1327,13 +1440,28 @@ public class TrainingAreaIssuesDialog {
         confidenceSlider.setBlockIncrement(0.05);
         confidenceSlider.setPrefWidth(250);
         confidenceSlider.setTooltip(TooltipHelper.create("Minimum model confidence to accept a prediction.\n"
-                + "Higher = more conservative (only fix obvious errors).\n"
-                + "Lower = more aggressive (change more borders).\n"
+                + "The track is colored with the confidence colormap: the handle\n"
+                + "sits at its threshold color, and pixels more confident than it\n"
+                + "(toward red) are the ones turned green.\n"
+                + "Higher = more conservative; lower = more aggressive.\n"
                 + "0.80 is a good starting point."));
+        // Paint the track with the same colormap as the confidence overlay, so
+        // the handle's position/color corresponds to a confidence value on the
+        // map. Sampled across the slider's own range (0.50-0.99).
+        confidenceSlider.getStyleClass().add("conf-ramp-slider");
+        applyConfidenceSliderRamp(confidenceSlider);
         confidenceSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
-            confLabel.setText(String.format("Confidence: %.0f%%", newVal.doubleValue() * 100));
-            cancelPendingPreview();
-            recomputeAllDisagreementCounts(newVal.doubleValue());
+            double t = newVal.doubleValue();
+            confLabel.setText(String.format("Confidence: %.0f%%", t * 100));
+            recomputeAllDisagreementCounts(t);
+            updateConfidenceLegendMarker(t);
+            if (previewSession != null) {
+                // Live mode: re-threshold the green preview on the next frame.
+                liveDirty = true;
+            } else {
+                // No live session active: a stale one-shot preview is now invalid.
+                cancelPendingPreview();
+            }
         });
         // Apply the initial slider value to any rows already loaded -- without
         // this, opening the dialog shows the raw total (slider default = 0.80
@@ -1434,9 +1562,10 @@ public class TrainingAreaIssuesDialog {
      * No-op if no preview is pending.
      */
     private void cancelPendingPreview() {
-        if (pendingPreview == null) {
+        if (pendingPreview == null && previewSession == null) {
             return;
         }
+        clearLiveSession();
         pendingPreview = null;
         basePreview = null;
         allowedTransitions.clear();
@@ -1523,9 +1652,17 @@ public class TrainingAreaIssuesDialog {
         }
 
         try {
-            // Compute preview (always, for stats and the adjusted mask).
-            // computePreview rasterises the LIVE annotations as the "from"
-            // mask, so a redo of the same tile sees the post-adjustment state.
+            if (previewCheckBox.isSelected()) {
+                // Live preview: cache the tile (maps + rasterized annotations)
+                // once, then let the confidence slider re-threshold the green
+                // preview live. The viewer shows the confidence heatmap with the
+                // green changes composited on top, so the user adjusts against
+                // the exact quantity the slider controls.
+                startLivePreviewSession(viewer, row, threshold);
+                return;
+            }
+
+            // No preview -- compute once, confirm, and apply directly.
             AnnotationAdjuster.PreviewResult preview = annotationAdjuster.computePreview(
                     viewer,
                     row.getX(),
@@ -1541,24 +1678,7 @@ public class TrainingAreaIssuesDialog {
                 return;
             }
 
-            if (previewCheckBox.isSelected()) {
-                // Stash the unfiltered preview so checkbox toggles can
-                // re-filter without re-loading prediction maps.
-                basePreview = preview;
-                allowedTransitions.clear();
-                allowedTransitions.addAll(preview.changesPerTransition().keySet());
-                pendingPreview = preview;
-
-                populateTransitionCheckBoxes(preview.changesPerTransition(), viewer, row);
-                showAdjustmentPreviewOverlay(viewer, row, preview.previewImage());
-                updateAdjustmentSummaryLabel();
-                adjustButton.setText("Apply previewed adjustment");
-                cancelPreviewButton.setVisible(true);
-                cancelPreviewButton.setManaged(true);
-                return;
-            }
-
-            // No preview -- confirm and apply directly (using all transitions).
+            // Confirm and apply directly (using all transitions).
             StringBuilder changeSummary = new StringBuilder();
             changeSummary.append(String.format("%d pixels would change:\n", preview.totalChangedPixels()));
             for (Map.Entry<String, Integer> entry : preview.changesPerClass().entrySet()) {
@@ -1610,13 +1730,17 @@ public class TrainingAreaIssuesDialog {
             AnnotationAdjuster.TransitionKey key = e.getKey();
             int pixels = e.getValue();
             CheckBox cb = new CheckBox(String.format("%s -> %s : %,d px", key.fromClass(), key.toClass(), pixels));
-            cb.setSelected(true);
+            // Honor any prior explicit uncheck so the box keeps its state when
+            // the slider repopulates this list at a new threshold.
+            cb.setSelected(!userUnchecked.contains(key));
             cb.setStyle("-fx-font-size: 11px;");
             cb.selectedProperty().addListener((obs, oldV, newV) -> {
                 if (Boolean.TRUE.equals(newV)) {
                     allowedTransitions.add(key);
+                    userUnchecked.remove(key);
                 } else {
                     allowedTransitions.remove(key);
+                    userUnchecked.add(key);
                 }
                 refilterPreview(viewer, row);
             });
@@ -1635,7 +1759,12 @@ public class TrainingAreaIssuesDialog {
     private void refilterPreview(QuPathViewer viewer, TileRow row) {
         if (basePreview == null || annotationAdjuster == null) return;
         pendingPreview = annotationAdjuster.rebuildPreviewFromFilter(basePreview, allowedTransitions, classColors);
-        showAdjustmentPreviewOverlay(viewer, row, pendingPreview.previewImage());
+        if (previewSession != null) {
+            // Live mode: keep the confidence heatmap under the green changes.
+            showLivePreviewOverlay(viewer, row, pendingPreview);
+        } else {
+            showAdjustmentPreviewOverlay(viewer, row, pendingPreview.previewImage());
+        }
         updateAdjustmentSummaryLabel();
     }
 
@@ -1673,6 +1802,7 @@ public class TrainingAreaIssuesDialog {
         adjustStatusLabel.setText(
                 result.summary() + String.format("\n(%d pixels changed)", preview.totalChangedPixels()));
         undoButton.setDisable(false);
+        clearLiveSession();
         pendingPreview = null;
         basePreview = null;
         allowedTransitions.clear();
@@ -1686,8 +1816,182 @@ public class TrainingAreaIssuesDialog {
         cancelPreviewButton.setVisible(false);
         cancelPreviewButton.setManaged(false);
 
-        // Re-install the loss/disagreement overlay
+        // Re-install the selected overlay (loss / confidence / disagreement)
         showViewerOverlay(row);
+    }
+
+    // ==================== Live confidence preview ====================
+
+    /**
+     * Begins a live preview for the given tile: caches the tile's maps +
+     * rasterized annotations once, switches the displayed overlay to Confidence,
+     * starts the per-frame updater, and renders the first composite. From here,
+     * dragging the confidence slider updates the green changes live.
+     */
+    private void startLivePreviewSession(QuPathViewer viewer, TileRow row, double threshold) {
+        try {
+            previewSession = annotationAdjuster.beginPreviewSession(
+                    viewer, row.getX(), row.getY(), row.getPredictionMapPath(), row.getConfidenceMapPath());
+        } catch (Exception ex) {
+            logger.error("Failed to begin live preview session", ex);
+            adjustStatusLabel.setText("Error: " + ex.getMessage());
+            previewSession = null;
+            return;
+        }
+        previewSessionRow = row;
+        userUnchecked.clear();
+        lastLiveTransitionKeys = new ArrayList<>();
+
+        // Colorize the confidence heatmap once for this tile; reused each frame.
+        BufferedImage confFull = overlayController.renderConfidenceHeatmap(row);
+        liveConfidenceBase = confFull == null ? null : centerCrop(confFull, patchSize);
+
+        // Show the confidence overlay (the quantity the slider thresholds) so
+        // the user never decides against an unseen quantity. previewSession is
+        // already set, so the selector's handler won't stomp the composite.
+        if (!OVERLAY_CONFIDENCE.equals(overlaySelector.getValue())) {
+            overlaySelector.setValue(OVERLAY_CONFIDENCE);
+        } else {
+            buildConfidenceLegend();
+        }
+
+        cancelPreviewButton.setVisible(true);
+        cancelPreviewButton.setManaged(true);
+        adjustButton.setText("Apply previewed adjustment");
+
+        ensureLiveTimer();
+        liveDirty = false;
+        doLiveThresholdUpdate();
+
+        if (basePreview != null && basePreview.totalChangedPixels() == 0) {
+            adjustStatusLabel.setText(
+                    "No changes at this confidence.\n" + "Drag the slider left (lower) to include more pixels.");
+        }
+    }
+
+    /** Recomputes the green preview at the current slider threshold (live). */
+    private void doLiveThresholdUpdate() {
+        if (previewSession == null || annotationAdjuster == null) return;
+        TileRow row = previewSessionRow;
+        QuPathGUI qupath = QuPathGUI.getInstance();
+        if (row == null || qupath == null) return;
+        QuPathViewer viewer = qupath.getViewer();
+        if (viewer == null) return;
+
+        double threshold = confidenceSlider.getValue();
+        AnnotationAdjuster.PreviewResult base =
+                annotationAdjuster.previewAtThreshold(previewSession, threshold, classColors);
+        basePreview = base;
+
+        // allowed = all present transitions minus the ones the user unchecked.
+        allowedTransitions.clear();
+        for (AnnotationAdjuster.TransitionKey k : base.changesPerTransition().keySet()) {
+            if (!userUnchecked.contains(k)) {
+                allowedTransitions.add(k);
+            }
+        }
+
+        // Rebuild the checkbox list only when the set of transitions changes,
+        // so dragging the slider does not rebuild nodes every frame.
+        List<AnnotationAdjuster.TransitionKey> keys =
+                new ArrayList<>(base.changesPerTransition().keySet());
+        if (!keys.equals(lastLiveTransitionKeys)) {
+            populateTransitionCheckBoxes(base.changesPerTransition(), viewer, row);
+            lastLiveTransitionKeys = keys;
+        }
+
+        pendingPreview =
+                allowedTransitions.size() == base.changesPerTransition().size()
+                        ? base
+                        : annotationAdjuster.rebuildPreviewFromFilter(base, allowedTransitions, classColors);
+
+        showLivePreviewOverlay(viewer, row, pendingPreview);
+        updateAdjustmentSummaryLabel();
+    }
+
+    /**
+     * Shows the live preview as confidence heatmap (background) with the green
+     * changed pixels composited on top, so the green visibly "overtakes" the
+     * higher-confidence end of the map as the slider lowers.
+     */
+    private void showLivePreviewOverlay(QuPathViewer viewer, TileRow row, AnnotationAdjuster.PreviewResult preview) {
+        BufferedImage green = preview.previewImage();
+        int ps = green.getWidth();
+        BufferedImage composite = new BufferedImage(ps, ps, BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D g = composite.createGraphics();
+        if (liveConfidenceBase != null) {
+            // Cached confidence heatmap may be a different patch size than this
+            // preview only if patchSize changed mid-session (it does not);
+            // re-crop defensively to match.
+            BufferedImage base =
+                    liveConfidenceBase.getWidth() == ps ? liveConfidenceBase : centerCrop(liveConfidenceBase, ps);
+            g.drawImage(base, 0, 0, null);
+        }
+        g.drawImage(green, 0, 0, null);
+        g.dispose();
+        showAdjustmentPreviewOverlay(viewer, row, composite);
+    }
+
+    /** Center-crops {@code src} to a {@code size}x{@code size} RGBA image. */
+    private static BufferedImage centerCrop(BufferedImage src, int size) {
+        int sw = src.getWidth();
+        int sh = src.getHeight();
+        BufferedImage out = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+        int ox = Math.max(0, (sw - size) / 2);
+        int oy = Math.max(0, (sh - size) / 2);
+        int cw = Math.min(size, sw - ox);
+        int ch = Math.min(size, sh - oy);
+        java.awt.Graphics2D g = out.createGraphics();
+        g.drawImage(src.getSubimage(ox, oy, cw, ch), 0, 0, null);
+        g.dispose();
+        return out;
+    }
+
+    /** Starts (or restarts) the per-frame live updater. */
+    private void ensureLiveTimer() {
+        if (liveTimer == null) {
+            liveTimer = new javafx.animation.AnimationTimer() {
+                @Override
+                public void handle(long now) {
+                    if (liveDirty) {
+                        liveDirty = false;
+                        doLiveThresholdUpdate();
+                    }
+                }
+            };
+        }
+        liveTimer.start();
+    }
+
+    /** Ends the live preview session and stops the per-frame updater. */
+    private void clearLiveSession() {
+        previewSession = null;
+        previewSessionRow = null;
+        liveConfidenceBase = null;
+        userUnchecked.clear();
+        lastLiveTransitionKeys = new ArrayList<>();
+        liveDirty = false;
+        if (liveTimer != null) {
+            liveTimer.stop();
+        }
+    }
+
+    /**
+     * Paints the confidence slider's track with the heatmap colormap, sampled
+     * across the slider's value range, via an injected data-URI stylesheet. The
+     * handle then sits at the color for its threshold value, matching the
+     * confidence overlay and legend.
+     */
+    private void applyConfidenceSliderRamp(Slider slider) {
+        String ramp = HeatmapColormap.cssLinearGradient("to right", slider.getMin(), slider.getMax(), 9);
+        String css = ".conf-ramp-slider .track {"
+                + " -fx-background-color: " + ramp + ";"
+                + " -fx-background-insets: 0;"
+                + " -fx-background-radius: 3;"
+                + " -fx-pref-height: 8; }";
+        String uri = "data:text/css;base64,"
+                + java.util.Base64.getEncoder().encodeToString(css.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        slider.getStylesheets().add(uri);
     }
 
     /**
@@ -2257,6 +2561,16 @@ public class TrainingAreaIssuesDialog {
         @Override
         public String disagreementImagePath() {
             return getDisagreementImagePath();
+        }
+
+        @Override
+        public String confidenceMapPath() {
+            return getConfidenceMapPath();
+        }
+
+        @Override
+        public String groundTruthMaskPath() {
+            return getGroundTruthMaskPath();
         }
     }
 }

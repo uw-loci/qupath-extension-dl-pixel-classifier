@@ -104,6 +104,25 @@ public class AnnotationAdjuster {
             double confidenceThreshold,
             Map<String, Integer> classColors)
             throws IOException {
+        PreviewSession session = beginPreviewSession(viewer, tileX, tileY, predictionMapPath, confidenceMapPath);
+        return previewAtThreshold(session, confidenceThreshold, classColors);
+    }
+
+    /**
+     * Loads the prediction + confidence maps and rasterizes the current
+     * annotations ONCE, returning a reusable {@link PreviewSession}.
+     * <p>
+     * The expensive step is rasterizing the live annotations; caching it lets
+     * the confidence slider re-threshold the preview live (every drag event)
+     * via {@link #previewAtThreshold} without touching the viewer or disk again.
+     *
+     * @param predictionMapPath path to the argmax prediction PNG (uint8)
+     * @param confidenceMapPath path to the confidence PNG (uint8 0-255)
+     * @throws IOException if any map file cannot be read
+     */
+    public PreviewSession beginPreviewSession(
+            QuPathViewer viewer, int tileX, int tileY, String predictionMapPath, String confidenceMapPath)
+            throws IOException {
         int[][] predMap = loadGrayscaleMap(predictionMapPath, "prediction");
         int[][] confMap = loadGrayscaleMap(confidenceMapPath, "confidence");
 
@@ -128,8 +147,21 @@ public class AnnotationAdjuster {
         }
 
         int[][] currentMask = rasterizeCurrentAnnotations(viewer, tileX, tileY);
-        int h = predMap.length;
-        int w = predMap[0].length;
+        return new PreviewSession(predMap, confMap, currentMask);
+    }
+
+    /**
+     * Re-thresholds a cached {@link PreviewSession} into a {@link PreviewResult}.
+     * Cheap (a single pass over already-loaded arrays), so it is safe to call on
+     * every confidence-slider drag event for a live preview.
+     */
+    public PreviewResult previewAtThreshold(
+            PreviewSession session, double confidenceThreshold, Map<String, Integer> classColors) {
+        int[][] predMap = session.predMap;
+        int[][] confMap = session.confMap;
+        int[][] currentMask = session.currentMask;
+        int h = session.h;
+        int w = session.w;
 
         // Build the FULL unfiltered adjusted mask + per-transition counts.
         // The UI can later filter these via rebuildPreviewFromFilter().
@@ -552,6 +584,29 @@ public class AnnotationAdjuster {
     }
 
     // ==================== Data Classes ====================
+
+    /**
+     * Cached per-tile inputs (loaded prediction + confidence maps and the
+     * rasterized current-annotation mask) so the confidence slider can
+     * re-threshold the preview live without re-reading disk or re-rendering the
+     * viewer. Created by {@link #beginPreviewSession}; consumed by
+     * {@link #previewAtThreshold}.
+     */
+    public static final class PreviewSession {
+        private final int[][] predMap;
+        private final int[][] confMap;
+        private final int[][] currentMask;
+        private final int h;
+        private final int w;
+
+        private PreviewSession(int[][] predMap, int[][] confMap, int[][] currentMask) {
+            this.predMap = predMap;
+            this.confMap = confMap;
+            this.currentMask = currentMask;
+            this.h = predMap.length;
+            this.w = predMap.length > 0 ? predMap[0].length : 0;
+        }
+    }
 
     /**
      * Identifies a single (from-class -> to-class) transition. Used to break
