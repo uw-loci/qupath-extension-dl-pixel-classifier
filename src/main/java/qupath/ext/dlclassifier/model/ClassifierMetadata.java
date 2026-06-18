@@ -42,6 +42,17 @@ public class ClassifierMetadata {
     // Channel configuration
     private final List<String> expectedChannelNames;
     private final ChannelConfiguration.NormalizationStrategy normalizationStrategy;
+    // Normalization preprocessing flags. These MUST round-trip from training to
+    // inference: if inference normalizes differently than training did, the
+    // model sees inputs it never trained on and a whole output class can vanish
+    // (a DAB/brown class disappeared at inference because per_channel was false
+    // at training but true at apply -- 2026-06-17). The default false/99.0 is
+    // the training-safe value (AnnotationExtractor hardcodes per_channel=false),
+    // so older models that never persisted the flag fall back correctly.
+    // ANY new preprocessing field added here must follow the full round-trip
+    // checklist in docs/NORMALIZATION_ROUNDTRIP.md.
+    private final boolean perChannelNormalization;
+    private final double clipPercentile;
     private final int bitDepthTrained;
 
     // Classes
@@ -82,6 +93,8 @@ public class ClassifierMetadata {
         this.contextScale = builder.contextScale;
         this.expectedChannelNames = Collections.unmodifiableList(new ArrayList<>(builder.expectedChannelNames));
         this.normalizationStrategy = builder.normalizationStrategy;
+        this.perChannelNormalization = builder.perChannelNormalization;
+        this.clipPercentile = builder.clipPercentile;
         this.bitDepthTrained = builder.bitDepthTrained;
         this.classes = Collections.unmodifiableList(new ArrayList<>(builder.classes));
         // trainingImageName removed (clinical persona m3); see comment above.
@@ -210,6 +223,25 @@ public class ClassifierMetadata {
         return normalizationStrategy;
     }
 
+    /**
+     * Returns whether the model was trained with per-channel normalization.
+     * <p>
+     * This must be applied identically at inference. Defaults to {@code false}
+     * for models that did not persist the flag, matching what training always
+     * exports. See {@code docs/NORMALIZATION_ROUNDTRIP.md}.
+     */
+    public boolean isPerChannelNormalization() {
+        return perChannelNormalization;
+    }
+
+    /**
+     * Returns the clip percentile the model was trained with (default 99.0).
+     * Must be applied identically at inference.
+     */
+    public double getClipPercentile() {
+        return clipPercentile;
+    }
+
     public int getBitDepthTrained() {
         return bitDepthTrained;
     }
@@ -303,6 +335,15 @@ public class ClassifierMetadata {
         Map<String, Object> channelConfig = new HashMap<>();
         channelConfig.put("expected_channels", expectedChannelNames);
         channelConfig.put("normalization_strategy", normalizationStrategy.name());
+        // Persist the full normalization contract (nested block) so a model
+        // re-saved through toMap() keeps the flags inference reads back. Keep
+        // this in sync with ModelManager's parser and the round-trip checklist
+        // in docs/NORMALIZATION_ROUNDTRIP.md.
+        Map<String, Object> normMap = new HashMap<>();
+        normMap.put("strategy", normalizationStrategy.name());
+        normMap.put("per_channel", perChannelNormalization);
+        normMap.put("clip_percentile", clipPercentile);
+        channelConfig.put("normalization", normMap);
         channelConfig.put("bit_depth_trained", bitDepthTrained);
         map.put("channel_config", channelConfig);
 
@@ -401,6 +442,11 @@ public class ClassifierMetadata {
         private List<String> expectedChannelNames = new ArrayList<>();
         private ChannelConfiguration.NormalizationStrategy normalizationStrategy =
                 ChannelConfiguration.NormalizationStrategy.PERCENTILE_99;
+        // Training-safe defaults: training always exports per_channel=false, so
+        // a model that omits the flag must be applied that way. See
+        // docs/NORMALIZATION_ROUNDTRIP.md.
+        private boolean perChannelNormalization = false;
+        private double clipPercentile = 99.0;
         private int bitDepthTrained = 8;
         private List<ClassInfo> classes = new ArrayList<>();
         // trainingImageName removed (clinical persona m3).
@@ -480,6 +526,22 @@ public class ClassifierMetadata {
 
         public Builder normalizationStrategy(ChannelConfiguration.NormalizationStrategy strategy) {
             this.normalizationStrategy = strategy;
+            return this;
+        }
+
+        /**
+         * Sets whether the model was trained with per-channel normalization.
+         * Must reflect what training actually used, not a UI default, so that
+         * inference reconstructs the same preprocessing.
+         */
+        public Builder perChannelNormalization(boolean perChannel) {
+            this.perChannelNormalization = perChannel;
+            return this;
+        }
+
+        /** Sets the clip percentile the model was trained with (default 99.0). */
+        public Builder clipPercentile(double clipPercentile) {
+            this.clipPercentile = clipPercentile;
             return this;
         }
 

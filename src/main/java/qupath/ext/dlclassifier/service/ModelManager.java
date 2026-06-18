@@ -220,6 +220,58 @@ public class ModelManager {
                     ? chanConfig.get("bit_depth_trained").getAsInt()
                     : 8;
 
+            // Normalization preprocessing flags -- these MUST round-trip to
+            // inference or the model sees inputs it never trained on (a brown
+            // output class vanished at apply because per_channel was false at
+            // training but defaulted to true at inference -- 2026-06-17). The
+            // authoritative record is the nested "normalization" block written
+            // by both training_service (input_config.normalization) and
+            // AnnotationExtractor (channel_config.normalization). Search both
+            // parents; default to the training-safe values (per_channel=false,
+            // clip=99) and WARN when neither is present so a silently-degraded
+            // older model is visible in the log. See
+            // docs/NORMALIZATION_ROUNDTRIP.md.
+            boolean perChannelNorm = false;
+            double clipPercentile = 99.0;
+            boolean foundNormBlock = false;
+            for (String parent : new String[] {"channel_config", "input_config"}) {
+                if (!obj.has(parent) || !obj.get(parent).isJsonObject()) {
+                    continue;
+                }
+                JsonObject p = obj.getAsJsonObject(parent);
+                if (!p.has("normalization") || !p.get("normalization").isJsonObject()) {
+                    continue;
+                }
+                JsonObject norm = p.getAsJsonObject("normalization");
+                if (norm.has("per_channel")) {
+                    try {
+                        perChannelNorm = norm.get("per_channel").getAsBoolean();
+                        foundNormBlock = true;
+                    } catch (ClassCastException | IllegalStateException e) {
+                        logger.debug("Could not parse {}.normalization.per_channel: {}", parent, e.getMessage());
+                    }
+                }
+                if (norm.has("clip_percentile")) {
+                    try {
+                        clipPercentile = norm.get("clip_percentile").getAsDouble();
+                    } catch (NumberFormatException | IllegalStateException e) {
+                        logger.debug("Could not parse {}.normalization.clip_percentile: {}", parent, e.getMessage());
+                    }
+                }
+                if (foundNormBlock) {
+                    break;
+                }
+            }
+            if (!foundNormBlock) {
+                logger.warn(
+                        "Model '{}' metadata has no normalization.per_channel flag; "
+                                + "defaulting to per_channel=false to match how training exports data. "
+                                + "If this model was actually trained with per-channel normalization, "
+                                + "inference may be degraded (e.g. a color-defined class missing) -- "
+                                + "retrain so the flag is embedded. See NORMALIZATION_ROUNDTRIP.md.",
+                        name);
+            }
+
             // Classes
             List<ClassifierMetadata.ClassInfo> classes = new ArrayList<>();
             if (obj.has("classes")) {
@@ -302,6 +354,8 @@ public class ModelManager {
                     .contextScale(contextScale)
                     .expectedChannelNames(channelNames)
                     .normalizationStrategy(ChannelConfiguration.NormalizationStrategy.valueOf(normStrategy))
+                    .perChannelNormalization(perChannelNorm)
+                    .clipPercentile(clipPercentile)
                     .bitDepthTrained(bitDepth)
                     .classes(classes)
                     .trainingEpochs(trainingEpochs)

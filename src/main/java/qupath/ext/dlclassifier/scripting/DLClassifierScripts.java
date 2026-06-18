@@ -130,6 +130,10 @@ public class DLClassifierScripts {
         ChannelConfiguration channels = ChannelConfiguration.builder()
                 .channelNames(source.getExpectedChannelNames())
                 .normalizationStrategy(source.getNormalizationStrategy())
+                // Carry the trained normalization flags forward -- see
+                // NORMALIZATION_ROUNDTRIP.md.
+                .perChannelNormalization(source.isPerChannelNormalization())
+                .clipPercentile(source.getClipPercentile())
                 .bitDepth(source.getBitDepthTrained())
                 .build();
         List<String> classes = source.getClasses().stream()
@@ -219,6 +223,10 @@ public class DLClassifierScripts {
                                 : classifier.getExpectedChannelNames())
                 .bitDepth(classifier.getBitDepthTrained())
                 .normalizationStrategy(classifier.getNormalizationStrategy())
+                // Carry the trained normalization flags so inference matches
+                // training -- see NORMALIZATION_ROUNDTRIP.md.
+                .perChannelNormalization(classifier.isPerChannelNormalization())
+                .clipPercentile(classifier.getClipPercentile())
                 .build();
 
         // Run classification
@@ -274,6 +282,10 @@ public class DLClassifierScripts {
                 .channelNames(channelNames)
                 .bitDepth(classifier.getBitDepthTrained())
                 .normalizationStrategy(classifier.getNormalizationStrategy())
+                // Carry the trained normalization flags so inference matches
+                // training -- see NORMALIZATION_ROUNDTRIP.md.
+                .perChannelNormalization(classifier.isPerChannelNormalization())
+                .clipPercentile(classifier.getClipPercentile())
                 .build();
 
         InferenceConfig config = InferenceConfig.builder()

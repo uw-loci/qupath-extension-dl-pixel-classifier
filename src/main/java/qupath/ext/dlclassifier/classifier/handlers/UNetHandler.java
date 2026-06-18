@@ -237,6 +237,11 @@ public class UNetHandler implements ClassifierHandler {
                 .contextScale(config.getContextScale())
                 .expectedChannelNames(channelConfig.getChannelNames())
                 .normalizationStrategy(channelConfig.getNormalizationStrategy())
+                // Persist the normalization flags into the trained model so
+                // inference reconstructs identical preprocessing -- see
+                // NORMALIZATION_ROUNDTRIP.md.
+                .perChannelNormalization(channelConfig.isPerChannelNormalization())
+                .clipPercentile(channelConfig.getClipPercentile())
                 .bitDepthTrained(channelConfig.getBitDepth())
                 .trainingEpochs(config.getEpochs());
 

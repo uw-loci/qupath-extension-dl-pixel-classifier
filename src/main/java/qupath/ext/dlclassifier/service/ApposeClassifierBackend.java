@@ -2217,6 +2217,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         Map<String, Object> normalization = new HashMap<>();
         normalization.put(
                 "strategy", channelConfig.getNormalizationStrategy().name().toLowerCase());
+        // per_channel and clip MUST reflect what the model trained with. For the
+        // apply path, callers build channelConfig from the model metadata
+        // (ModelManager parses normalization.per_channel / clip_percentile), so
+        // these values match training. Do NOT let a UI/live default leak in here
+        // -- that desync erased a color-defined output class at inference
+        // (2026-06-17). See docs/NORMALIZATION_ROUNDTRIP.md.
         normalization.put("per_channel", channelConfig.isPerChannelNormalization());
         normalization.put("clip_percentile", channelConfig.getClipPercentile());
         // Include fixed range values (previously missing for FIXED_RANGE strategy)

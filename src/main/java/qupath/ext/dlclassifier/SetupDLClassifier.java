@@ -2189,6 +2189,10 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                 : classifier.getExpectedChannelNames())
                 .bitDepth(classifier.getBitDepthTrained())
                 .normalizationStrategy(classifier.getNormalizationStrategy())
+                // Carry the trained normalization flags so inference matches
+                // training -- see NORMALIZATION_ROUNDTRIP.md.
+                .perChannelNormalization(classifier.isPerChannelNormalization())
+                .clipPercentile(classifier.getClipPercentile())
                 .build();
         Map<String, Object> inputConfig = ApposeClassifierBackend.buildInputConfig(channelConfig);
 
@@ -2430,6 +2434,10 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 .channelNames(expectedChannels)
                 .bitDepth(metadata.getBitDepthTrained())
                 .normalizationStrategy(metadata.getNormalizationStrategy())
+                // Carry the trained normalization flags so inference matches
+                // training -- see NORMALIZATION_ROUNDTRIP.md.
+                .perChannelNormalization(metadata.isPerChannelNormalization())
+                .clipPercentile(metadata.getClipPercentile())
                 .build();
 
         // Store selection and create overlay

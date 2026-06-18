@@ -1428,6 +1428,15 @@ public class AnnotationExtractor {
         }
         json.append("],\n");
         json.append("    \"bit_depth\": ").append(channelConfig.getBitDepth()).append(",\n");
+        // NORMALIZATION CONTRACT (see docs/NORMALIZATION_ROUNDTRIP.md):
+        // training currently always exports single-range (joint) normalization
+        // -- per_channel is hardcoded false here. This is the source of truth
+        // that the model's metadata records and that inference MUST reproduce.
+        // If you ever make per_channel configurable, you MUST drive it from
+        // channelConfig.isPerChannelNormalization() here AND keep the value
+        // flowing through ClassifierMetadata -> ModelManager parse -> the
+        // apply-path ChannelConfiguration, or inference will silently desync
+        // from training (a brown output class vanished this way, 2026-06-17).
         json.append("    \"normalization\": {\n");
         json.append("      \"strategy\": \"").append(normStrategy).append("\",\n");
         json.append("      \"per_channel\": false,\n");
@@ -1962,6 +1971,15 @@ public class AnnotationExtractor {
         }
         json.append("],\n");
         json.append("    \"bit_depth\": ").append(channelConfig.getBitDepth()).append(",\n");
+        // NORMALIZATION CONTRACT (see docs/NORMALIZATION_ROUNDTRIP.md):
+        // training currently always exports single-range (joint) normalization
+        // -- per_channel is hardcoded false here. This is the source of truth
+        // that the model's metadata records and that inference MUST reproduce.
+        // If you ever make per_channel configurable, you MUST drive it from
+        // channelConfig.isPerChannelNormalization() here AND keep the value
+        // flowing through ClassifierMetadata -> ModelManager parse -> the
+        // apply-path ChannelConfiguration, or inference will silently desync
+        // from training (a brown output class vanished this way, 2026-06-17).
         json.append("    \"normalization\": {\n");
         json.append("      \"strategy\": \"").append(normStrategy).append("\",\n");
         json.append("      \"per_channel\": false,\n");

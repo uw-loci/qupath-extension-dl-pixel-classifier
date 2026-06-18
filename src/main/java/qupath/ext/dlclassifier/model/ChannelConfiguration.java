@@ -201,7 +201,12 @@ public class ChannelConfiguration {
         private List<String> channelNames = new ArrayList<>();
         private int bitDepth = 8;
         private NormalizationStrategy normalizationStrategy = NormalizationStrategy.PERCENTILE_99;
-        private boolean perChannelNormalization = true;
+        // Default false to match what training always exports (AnnotationExtractor
+        // hardcodes per_channel=false). A true default silently desynced inference
+        // from training and erased a color-defined output class (2026-06-17).
+        // Any apply-path builder that omits perChannelNormalization() now inherits
+        // the training-safe value. See NORMALIZATION_ROUNDTRIP.md.
+        private boolean perChannelNormalization = false;
         private double clipPercentile = 99.0;
         private double fixedMin = 0.0;
         private double fixedMax = 255.0;
