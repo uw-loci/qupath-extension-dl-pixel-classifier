@@ -51,6 +51,19 @@ public class ApposeService {
     private static final String SCRIPTS_BASE = RESOURCE_BASE + "scripts/";
     private static final String ENV_NAME = "dl-pixel-classifier";
 
+    // --- Appose debug-log de-duplication ---------------------------------
+    // Appose hands our debug listener the full request JSON for every task,
+    // including the (large) bundled Python script. Inference re-sends the
+    // identical script for every tile, so a few hundred tiles bury the log.
+    // We log each distinct script in full ONCE, then elide the script body
+    // to a short fingerprint on repeats. Errors are always logged in full.
+    // Matches a JSON "script":"..." field, honoring backslash escapes so the
+    // escaped quotes/newlines inside the script value don't end the match.
+    private static final java.util.regex.Pattern SCRIPT_FIELD_PATTERN =
+            java.util.regex.Pattern.compile("\"script\":\"(?:\\\\.|[^\"\\\\])*\"");
+    private static final java.util.Set<String> SEEN_SCRIPT_FINGERPRINTS =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private static ApposeService instance;
 
     private Environment environment;
@@ -266,8 +279,9 @@ public class ApposeService {
                 // Register debug output handler -- log Python stderr at INFO level
                 // so diagnostic messages (device info, training config) are visible
                 pythonService.debug(msg -> {
-                    logger.info("[Appose Python] {}", msg);
-                    qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(msg);
+                    String condensed = condenseDebugMessage(msg);
+                    logger.info("[Appose Python] {}", condensed);
+                    qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(condensed);
                 });
 
                 // Set the init script that runs when the Python subprocess starts.
@@ -559,6 +573,49 @@ public class ApposeService {
      * @throws IOException if the environment is not built or the worker cannot
      *                     be recreated
      */
+    /**
+     * Condenses an Appose debug message before it is logged.
+     * <p>
+     * Appose delivers the full request JSON -- including the bundled Python
+     * script -- to the debug listener for every task. Inference re-runs the
+     * same script for every tile, which floods the log with kilobytes of
+     * identical source. This logs each distinct script in full the first time
+     * it is seen, then replaces the script body with a short fingerprint on
+     * repeats so the per-tile launch/completion lines stay readable. Messages
+     * that signal a failure or crash are always returned unchanged so error
+     * detail is never elided.
+     *
+     * @param msg raw debug message from Appose (may be a request or response)
+     * @return the message with repeated script bodies elided, or {@code msg}
+     *         unchanged when it has no script field or indicates an error
+     */
+    static String condenseDebugMessage(String msg) {
+        if (msg == null || msg.isEmpty()) {
+            return msg;
+        }
+        // Never elide anything when the worker reports trouble.
+        if (msg.contains("\"responseType\":\"FAILURE\"")
+                || msg.contains("\"responseType\":\"CRASH\"")
+                || msg.contains("\"error\"")) {
+            return msg;
+        }
+        java.util.regex.Matcher m = SCRIPT_FIELD_PATTERN.matcher(msg);
+        if (!m.find()) {
+            return msg;
+        }
+        // Strip the surrounding "script":" ... " to fingerprint just the body.
+        String field = m.group();
+        String body = field.substring("\"script\":\"".length(), field.length() - 1);
+        String fingerprint = Integer.toHexString(body.hashCode());
+        // First sighting of this script -> keep it in full (recorded once).
+        if (SEEN_SCRIPT_FINGERPRINTS.add(fingerprint)) {
+            return msg;
+        }
+        String replacement = java.util.regex.Matcher.quoteReplacement(
+                "\"script\":\"<repeat, " + body.length() + " chars, fp=" + fingerprint + ">\"");
+        return m.replaceAll(replacement);
+    }
+
     public synchronized void restartWorker() throws IOException {
         if (environment == null) {
             throw new IOException("Cannot restart worker: Appose environment not built");
