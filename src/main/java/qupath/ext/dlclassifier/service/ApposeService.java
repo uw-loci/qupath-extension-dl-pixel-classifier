@@ -57,10 +57,14 @@ public class ApposeService {
     // identical script for every tile, so a few hundred tiles bury the log.
     // We log each distinct script in full ONCE, then elide the script body
     // to a short fingerprint on repeats. Errors are always logged in full.
-    // Matches a JSON "script":"..." field, honoring backslash escapes so the
-    // escaped quotes/newlines inside the script value don't end the match.
-    private static final java.util.regex.Pattern SCRIPT_FIELD_PATTERN =
-            java.util.regex.Pattern.compile("\"script\":\"(?:\\\\.|[^\"\\\\])*\"");
+    //
+    // The script field is located and elided with a MANUAL CHARACTER SCAN,
+    // never a regex. A "(?:\\.|[^"\\])*" pattern recurses once per character
+    // in java.util.regex and threw StackOverflowError on the multi-KB scripts,
+    // which killed the Appose stdout pump -> training never finalized and every
+    // inference overlay tile failed (regression fixed 2026-06-18). Keep this
+    // allocation-light and recursion-free; it runs on the message-pump thread.
+    private static final String SCRIPT_FIELD_KEY = "\"script\":\"";
     private static final java.util.Set<String> SEEN_SCRIPT_FINGERPRINTS =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
@@ -279,9 +283,18 @@ public class ApposeService {
                 // Register debug output handler -- log Python stderr at INFO level
                 // so diagnostic messages (device info, training config) are visible
                 pythonService.debug(msg -> {
-                    String condensed = condenseDebugMessage(msg);
-                    logger.info("[Appose Python] {}", condensed);
-                    qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(condensed);
+                    // Guard the entire listener. This runs on Appose's stdout
+                    // pump thread; an exception escaping here stops all further
+                    // message processing (the COMPLETION for the running task
+                    // included), which strands training and inference. Logging
+                    // must never be able to break the worker pipeline.
+                    try {
+                        String condensed = condenseDebugMessage(msg);
+                        logger.info("[Appose Python] {}", condensed);
+                        qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(condensed);
+                    } catch (Throwable t) {
+                        logger.warn("Appose debug logging failed (message dropped): {}", t.toString());
+                    }
                 });
 
                 // Set the init script that runs when the Python subprocess starts.
@@ -590,30 +603,51 @@ public class ApposeService {
      *         unchanged when it has no script field or indicates an error
      */
     static String condenseDebugMessage(String msg) {
-        if (msg == null || msg.isEmpty()) {
+        try {
+            if (msg == null || msg.isEmpty()) {
+                return msg;
+            }
+            // Never elide anything when the worker reports trouble.
+            if (msg.contains("\"responseType\":\"FAILURE\"")
+                    || msg.contains("\"responseType\":\"CRASH\"")
+                    || msg.contains("\"error\"")) {
+                return msg;
+            }
+            int keyIdx = msg.indexOf(SCRIPT_FIELD_KEY);
+            if (keyIdx < 0) {
+                return msg;
+            }
+            int valStart = keyIdx + SCRIPT_FIELD_KEY.length();
+            // Walk forward to the closing unescaped quote, honoring backslash
+            // escapes. Linear, recursion-free -- NOT a regex (see field note).
+            int i = valStart;
+            int n = msg.length();
+            while (i < n) {
+                char c = msg.charAt(i);
+                if (c == '\\') {
+                    i += 2; // skip the escaped character
+                    continue;
+                }
+                if (c == '"') {
+                    break;
+                }
+                i++;
+            }
+            int valEnd = Math.min(i, n); // index of the closing quote (or end)
+            String body = msg.substring(valStart, valEnd);
+            String fingerprint = Integer.toHexString(body.hashCode());
+            // First sighting of this script -> keep it in full (recorded once).
+            if (SEEN_SCRIPT_FINGERPRINTS.add(fingerprint)) {
+                return msg;
+            }
+            String elided = "\"script\":\"<repeat, " + body.length() + " chars, fp=" + fingerprint + ">\"";
+            int after = valEnd < n ? valEnd + 1 : n; // skip past closing quote
+            return msg.substring(0, keyIdx) + elided + msg.substring(after);
+        } catch (Throwable t) {
+            // Condensing must never break the caller (the message pump). On any
+            // failure, fall back to logging the raw message untouched.
             return msg;
         }
-        // Never elide anything when the worker reports trouble.
-        if (msg.contains("\"responseType\":\"FAILURE\"")
-                || msg.contains("\"responseType\":\"CRASH\"")
-                || msg.contains("\"error\"")) {
-            return msg;
-        }
-        java.util.regex.Matcher m = SCRIPT_FIELD_PATTERN.matcher(msg);
-        if (!m.find()) {
-            return msg;
-        }
-        // Strip the surrounding "script":" ... " to fingerprint just the body.
-        String field = m.group();
-        String body = field.substring("\"script\":\"".length(), field.length() - 1);
-        String fingerprint = Integer.toHexString(body.hashCode());
-        // First sighting of this script -> keep it in full (recorded once).
-        if (SEEN_SCRIPT_FINGERPRINTS.add(fingerprint)) {
-            return msg;
-        }
-        String replacement = java.util.regex.Matcher.quoteReplacement(
-                "\"script\":\"<repeat, " + body.length() + " chars, fp=" + fingerprint + ">\"");
-        return m.replaceAll(replacement);
     }
 
     public synchronized void restartWorker() throws IOException {
