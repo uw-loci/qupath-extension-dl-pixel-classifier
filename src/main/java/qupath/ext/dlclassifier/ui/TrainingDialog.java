@@ -6240,13 +6240,16 @@ public class TrainingDialog {
                 }
             });
 
-            // Restore last used backbone from preferences if it's available for this architecture.
-            // Never auto-select the Fast sentinel: it is opt-in, so when there is no concrete saved
-            // backbone, default to the first real backbone (skipping the sentinel).
+            // Restore the last-used model tier from preferences when it is
+            // available for this architecture. In basic mode the Fast sentinel
+            // is a valid choice, so restore it too (the user's pick should
+            // stick). In advanced mode backboneList never contains the sentinel,
+            // so the contains() check falls through to a real encoder there.
+            // When nothing is restorable, default to the first real backbone
+            // (skip the sentinel so Fast is never auto-selected for someone who
+            // didn't choose it).
             String savedBackbone = DLClassifierPreferences.getLastBackbone();
-            if (savedBackbone != null
-                    && !BASIC_FAST_PRESET.equals(savedBackbone)
-                    && backboneList.contains(savedBackbone)) {
+            if (savedBackbone != null && backboneList.contains(savedBackbone)) {
                 backboneCombo.setValue(savedBackbone);
             } else {
                 backboneList.stream()
@@ -6682,8 +6685,11 @@ public class TrainingDialog {
         private TrainingDialogResult buildResult() {
             // Save dialog settings to preferences for next session
             DLClassifierPreferences.setLastArchitecture(architectureCombo.getValue());
-            // Do not persist the Fast sentinel as a backbone: it is opt-in and is not a real encoder.
-            if (!BASIC_FAST_PRESET.equals(backboneCombo.getValue())) {
+            // Persist the selected model tier, INCLUDING the Fast sentinel, so
+            // basic mode remembers it next session. The sentinel is an internal
+            // key; advanced mode never lists it, so updateBackboneOptions falls
+            // back to a real encoder there.
+            if (backboneCombo.getValue() != null) {
                 DLClassifierPreferences.setLastBackbone(backboneCombo.getValue());
             }
             DLClassifierPreferences.setDefaultEpochs(epochsSpinner.getValue());
