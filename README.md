@@ -108,7 +108,16 @@ If you encounter an issue or have feedback, use the built-in bug reporter:
 
 **Extensions > DL Pixel Classifier > Report a Bug...**
 
-This dialog lets you describe the issue and optionally include system information, QuPath logs, and a window screenshot. Reports are submitted directly to the development team without requiring a GitHub account.
+This dialog requires:
+- **Summary** (8–80 characters) — a one-line description of the issue that becomes the GitHub issue title
+- **Description** (minimum 20 characters) — detailed explanation of the problem
+
+Optionally include:
+- System information (versions, OS)
+- QuPath logs
+- Window screenshot
+
+Reports are submitted directly to the development team without requiring a GitHub account.
 
 ### Recommended workflow: separate training and production projects
 
