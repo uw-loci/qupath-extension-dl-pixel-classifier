@@ -213,3 +213,9 @@ else
     echo "=== All tracked screenshots are up-to-date with their UI source ==="
     [ "$SUPPRESSED_COUNT" -gt 0 ] && echo "    ($SUPPRESSED_COUNT had source edits with no UI-visible effect -- not flagged.)"
 fi
+
+# Explicit success exit. Without this, `set -e` would propagate the non-zero
+# status of the trailing `[ ... ] && echo` test above (false when the suppressed
+# count is 0) and make a clean run exit 1. The only intended failure is the
+# `--ci` + stale path, which exits 1 explicitly inside the block above.
+exit 0
