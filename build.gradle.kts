@@ -47,14 +47,19 @@ dependencies {
     shadow(libs.qupath.fxtras)
     shadow(libs.gson)
 
+    // QuPath's log-viewer API (provided at runtime by QuPath) -- lets the bug
+    // reporter capture the live log in memory when file logging is disabled.
+    shadow("io.github.qupath:logviewer-api:0.2.0")
+
     // Appose for embedded Java-Python IPC with shared memory
-    implementation("org.apposed:appose:0.11.0")
+    implementation("org.apposed:appose:0.12.0")
 
     // Groovy for scripting support
     shadow(libs.bundles.groovy)
 
     // For testing
     testImplementation(libs.bundles.qupath)
+    testImplementation("io.github.qupath:logviewer-api:0.2.0")
     testImplementation("io.github.qupath:qupath-app:0.7.0")
     testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.4")

@@ -38,6 +38,7 @@ import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
+import qupath.ext.dlclassifier.service.SessionLogBuffer;
 import qupath.ext.dlclassifier.service.warnings.InteractionWarningRegistration;
 import qupath.ext.dlclassifier.ui.AdaBNDialog;
 import qupath.ext.dlclassifier.ui.BugReportDialog;
@@ -121,6 +122,10 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
     @Override
     public void installExtension(QuPathGUI qupath) {
         logger.info("Installing extension: {}", EXTENSION_NAME);
+
+        // Start capturing QuPath's live log in memory so the bug reporter can
+        // attach it even when file logging is disabled (the default).
+        SessionLogBuffer.init();
 
         // Register persistent preferences
         DLClassifierPreferences.installPreferences(qupath);
