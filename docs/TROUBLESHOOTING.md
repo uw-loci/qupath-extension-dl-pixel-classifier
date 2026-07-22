@@ -332,6 +332,31 @@ This is especially common with:
 
 **Fix:** This is fixed in current releases. If you see it, use **Utilities > Rebuild DL Environment...** to ensure the Python environment matches the installed extension.
 
+### Validation loss is lower than training loss
+
+**Symptom:** `val_loss` sits below `train_loss`, often crossing over partway through the run: the two curves track together early, then training loss climbs while validation loss stays low or keeps falling.
+
+![Training Progress loss chart: train and validation loss track together for the first ~45 epochs, then after a pause/resume the training-loss curve rises steadily while the validation-loss curve drops below it and stays low, with occasional validation spikes](images/training-loss-ohem-crossover.png)
+
+This looks backwards -- validation is supposed to be the harder number -- but in this extension it is usually **expected and benign**. Judge the model by mIoU and per-class IoU, not by the train/val loss gap.
+
+**Primary cause: OHEM (hard-pixel mining).** When the loss includes OHEM (shown in the config summary as `Loss: ... + OHEM (anneal 100% -> 10%, ...)`), the two losses are computed over **different pixels**:
+
+- **Training loss** is averaged over only the hardest top-K pixels each batch (K = the OHEM hard-pixel ratio). Averaging over just the hardest pixels gives a deliberately high number.
+- **Validation loss** is averaged over **all** labeled pixels, using the pre-OHEM criterion. Including all the easy, confidently-correct pixels pulls the average down.
+
+So training loss is measured on a smaller, harder subset than validation loss, and `val_loss < train_loss` falls out by design. When the OHEM ratio **anneals** (the default schedule tightens from 100% down to 10% over the first 75% of epochs), the crossover appears partway through training as the hard-pixel selection kicks in -- which is exactly what the chart above shows after the resume near epoch 45. A rising training-loss curve here does **not** mean the model is getting worse; it means the loss is being measured on progressively harder pixels while learning rate has also dropped.
+
+**Secondary causes (present with or without OHEM):**
+
+- **Regularization is training-only.** Dropout and weight decay are active during training but not during evaluation, and BatchNorm/BatchRenorm uses noisy batch statistics while training but stable running averages at eval. The model runs at full, quieter capacity during validation.
+- **Augmentation is training-only.** Elastic deformation, color jitter, brightness/contrast/gamma, noise, and scale jitter are applied to training patches but not to validation patches, so the validation images are cleaner and easier to classify.
+- **Split composition and timing.** Training loss is averaged across the whole epoch (including early batches when the weights were less optimized), while validation loss is measured once at the end with the fully updated weights. If the split also happens to put more easy/background pixels in validation, that widens the gap further.
+
+**When it IS worth a second look:** if OHEM is **disabled** and validation loss is still much lower than training loss (roughly less than half), that can point to a validation split that is too easy or not representative, or data leakage between the train and validation splits (e.g. tiles from the same annotation on both sides). See [One class has wildly inconsistent IoU or loss across epochs](#one-class-has-wildly-inconsistent-iou-or-loss-across-epochs) for the related split-leakage pattern.
+
+> **Automated report:** The training diagnostics detect this pattern and, at pause and at completion, log a `TRAINING DIAGNOSTIC:` line explaining it -- reassuring when OHEM is active, or flagging a possible easy-split/leakage issue when it is not. See [Saved log files](#saved-log-files).
+
 ### Continue-training produces worse results than original
 
 **Symptom:** Continuing training from a saved model oscillates wildly or diverges instead of improving.

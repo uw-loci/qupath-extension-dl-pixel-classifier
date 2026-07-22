@@ -62,6 +62,7 @@ import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.plugins.workflow.DefaultScriptableWorkflowStep;
+import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
 import qupath.lib.roi.interfaces.ROI;
 import qupath.lib.scripting.QP;
@@ -945,7 +946,9 @@ public class TrainingWorkflow {
                     finalClassifierId,
                     finalModelOutputDir,
                     trainingDataPathHolder,
-                    modelPathHolder));
+                    modelPathHolder,
+                    trainOnlyImages,
+                    valOnlyImages));
         });
 
         // Wire complete-early callback -- uses the SAME classifierId/modelOutputDir
@@ -963,7 +966,9 @@ public class TrainingWorkflow {
                     classColors,
                     finalClassifierId,
                     finalModelOutputDir,
-                    modelPathHolder));
+                    modelPathHolder,
+                    trainOnlyImages,
+                    valOnlyImages));
         });
 
         // Wire continue-training callback -- resumes from completion checkpoint
@@ -982,7 +987,9 @@ public class TrainingWorkflow {
                     finalClassifierId,
                     finalModelOutputDir,
                     trainingDataPathHolder,
-                    modelPathHolder));
+                    modelPathHolder,
+                    trainOnlyImages,
+                    valOnlyImages));
         });
 
         // Suspend overlay during training to prevent Appose "thread death" races
@@ -1017,6 +1024,7 @@ public class TrainingWorkflow {
                     if (result.message() != null && result.message().contains("cancelled")) {
                         completionMsg = result.message();
                     } else {
+                        tagImageTrainingRoles(selectedImages, trainOnlyImages, valOnlyImages, classifierName);
                         StringBuilder sb = new StringBuilder();
                         sb.append(String.format(
                                 "Classifier trained successfully!\nBest model: epoch %d\n"
@@ -1714,7 +1722,7 @@ public class TrainingWorkflow {
                         .trainingEpochs(serverResult.lastEpoch())
                         .finalLoss(serverResult.finalLoss())
                         .finalAccuracy(serverResult.finalAccuracy())
-                        .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                        .trainingSettings(buildTrainingSettingsMap(trainingConfig, trainOnlyImages, valOnlyImages))
                         .createdAt(LocalDateTime.now())
                         .build();
                 boolean filesInPlace = modelOutputDir != null;
@@ -1776,7 +1784,7 @@ public class TrainingWorkflow {
                     .trainingEpochs(trainingConfig.getEpochs())
                     .finalLoss(serverResult.finalLoss())
                     .finalAccuracy(serverResult.finalAccuracy())
-                    .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                    .trainingSettings(buildTrainingSettingsMap(trainingConfig, trainOnlyImages, valOnlyImages))
                     .createdAt(LocalDateTime.now())
                     .build();
 
@@ -1967,7 +1975,9 @@ public class TrainingWorkflow {
             String classifierId,
             Path modelOutputDir,
             Path[] trainingDataPathHolder,
-            String[] modelPathHolder) {
+            String[] modelPathHolder,
+            Set<String> trainOnlyImages,
+            Set<String> valOnlyImages) {
         Path tempDir = null;
         try {
             // 1. Check for unsaved changes (on FX thread)
@@ -2088,8 +2098,12 @@ public class TrainingWorkflow {
                         trainingConfig.getDownsample(),
                         trainingConfig.getContextScale(),
                         contextPadding,
-                        java.util.Collections.<String>emptySet(),
-                        java.util.Collections.<String>emptySet(),
+                        // Preserve the original per-image train/val roles across
+                        // resume. Without this, every image falls into the "Both"
+                        // branch and is tile-split within the image, so overlapping
+                        // tiles from one slide leak across train and val.
+                        trainOnlyImages != null ? trainOnlyImages : java.util.Collections.<String>emptySet(),
+                        valOnlyImages != null ? valOnlyImages : java.util.Collections.<String>emptySet(),
                         trainingConfig.getMinAnnotationCoverage(),
                         trainingConfig.getMinTileLabelFraction(),
                         trainingConfig.getOverlap());
@@ -2293,11 +2307,14 @@ public class TrainingWorkflow {
                             .trainingEpochs(serverResult.lastEpoch())
                             .finalLoss(serverResult.finalLoss())
                             .finalAccuracy(serverResult.finalAccuracy())
-                            .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                            // Roles are preserved across resume, so recorded split
+                            // provenance matches the original run.
+                            .trainingSettings(buildTrainingSettingsMap(trainingConfig, trainOnlyImages, valOnlyImages))
                             .createdAt(LocalDateTime.now())
                             .build();
                     ModelManager rManager = new ModelManager();
                     rManager.saveClassifier(rMeta, Path.of(savedPath), true, false);
+                    tagImageTrainingRoles(selectedImages, trainOnlyImages, valOnlyImages, classifierName);
                     // Populate the model-path holder so the Review Training
                     // Areas button (enabled by progress.complete(true,...))
                     // can find the model. Without this, Review reports
@@ -2337,7 +2354,9 @@ public class TrainingWorkflow {
                         .trainingEpochs(params.totalEpochs())
                         .finalLoss(serverResult.finalLoss())
                         .finalAccuracy(serverResult.finalAccuracy())
-                        .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                        // Roles are preserved across resume, so recorded split
+                        // provenance matches the original run.
+                        .trainingSettings(buildTrainingSettingsMap(trainingConfig, trainOnlyImages, valOnlyImages))
                         .createdAt(LocalDateTime.now())
                         .build();
 
@@ -2345,6 +2364,7 @@ public class TrainingWorkflow {
                 ModelManager modelManager = new ModelManager();
                 modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()), true, filesInPlace);
                 progress.log("Classifier saved: " + metadata.getId());
+                tagImageTrainingRoles(selectedImages, trainOnlyImages, valOnlyImages, classifierName);
 
                 // Update jobId so "Continue Training" can find the new checkpoint
                 currentJobId[0] = serverResult.jobId();
@@ -2413,7 +2433,9 @@ public class TrainingWorkflow {
             Map<String, Integer> classColors,
             String classifierId,
             Path modelOutputDir,
-            String[] modelPathHolder) {
+            String[] modelPathHolder,
+            Set<String> trainOnlyImages,
+            Set<String> valOnlyImages) {
         try {
             ClassifierBackend backend = BackendFactory.getBackend();
             if (!(backend instanceof ApposeClassifierBackend apposeBackend)) {
@@ -2491,7 +2513,9 @@ public class TrainingWorkflow {
                     .trainingEpochs(checkpoint.lastEpoch())
                     .finalLoss(serverResult.finalLoss())
                     .finalAccuracy(serverResult.finalAccuracy())
-                    .trainingSettings(buildTrainingSettingsMap(trainingConfig))
+                    // Roles are preserved across resume, so recorded split
+                    // provenance matches the original run.
+                    .trainingSettings(buildTrainingSettingsMap(trainingConfig, trainOnlyImages, valOnlyImages))
                     .createdAt(LocalDateTime.now())
                     .build();
 
@@ -2499,6 +2523,7 @@ public class TrainingWorkflow {
             ModelManager modelManager = new ModelManager();
             modelManager.saveClassifier(metadata, Path.of(serverResult.modelPath()), true, filesInPlace);
             progress.log("Classifier saved: " + metadata.getId());
+            tagImageTrainingRoles(selectedImages, trainOnlyImages, valOnlyImages, classifierName);
 
             // Set model path so Review Training Areas can find the model
             if (modelPathHolder != null && modelPathHolder.length > 0) {
@@ -2676,6 +2701,108 @@ public class TrainingWorkflow {
      * @param config the training configuration
      * @return map of parameter names to values
      */
+    /** Prefix for the per-image training-role project metadata key; the
+     * classifier name is appended so each classifier keeps an independent,
+     * sortable column in the QuPath project pane. */
+    private static final String ROLE_METADATA_PREFIX = "DL role: ";
+
+    /**
+     * Tags each training image's project entry with its train/val/both role for
+     * this classifier, so the user can sort/filter the QuPath project by
+     * training status. The key is namespaced by classifier name
+     * ({@code "DL role: <name>"}) so different classifiers do not clobber each
+     * other; re-training a classifier refreshes its own column to reflect the
+     * most recent run (images dropped from the run lose the tag). Non-fatal: any
+     * failure is logged and training completion proceeds.
+     */
+    private static void tagImageTrainingRoles(
+            List<ProjectImageEntry<BufferedImage>> selectedImages,
+            Set<String> trainOnlyImages,
+            Set<String> valOnlyImages,
+            String classifierName) {
+        if (selectedImages == null || selectedImages.isEmpty() || classifierName == null) {
+            return;
+        }
+        try {
+            Project<BufferedImage> project =
+                    QuPathGUI.getInstance() != null ? QuPathGUI.getInstance().getProject() : null;
+            if (project == null) {
+                return;
+            }
+            Set<String> trainOnly = trainOnlyImages != null ? trainOnlyImages : Collections.emptySet();
+            Set<String> valOnly = valOnlyImages != null ? valOnlyImages : Collections.emptySet();
+            String key = ROLE_METADATA_PREFIX + classifierName;
+            // Clear this classifier's key everywhere first so the column reflects
+            // only the most recent run.
+            for (ProjectImageEntry<BufferedImage> entry : project.getImageList()) {
+                entry.getMetadata().remove(key);
+            }
+            for (ProjectImageEntry<BufferedImage> entry : selectedImages) {
+                String name = entry.getImageName();
+                String role = trainOnly.contains(name) ? "Train" : valOnly.contains(name) ? "Val" : "Both";
+                entry.getMetadata().put(key, role);
+            }
+            project.syncChanges();
+            logger.info(
+                    "Tagged {} image(s) with training role under project metadata key '{}'",
+                    selectedImages.size(),
+                    key);
+        } catch (Exception e) {
+            logger.warn("Could not tag image training roles in project metadata: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Overload that also records train/val split provenance.
+     *
+     * <p>Captures how the partition was produced so it can be shown in Manage
+     * Classifiers and inspected later:
+     * <ul>
+     *   <li>{@code split_method} -- {@code "image_roles"} when whole images were
+     *       assigned to train or val (Auto Distribute or manual per-image roles),
+     *       so no image contributes tiles to both sides; {@code "tile_stratified"}
+     *       when images in the default "Both" role had their tiles split by
+     *       fraction within each image (overlapping tiles from one image can then
+     *       land on opposite sides); {@code "none"} when there is no validation
+     *       split.
+     *   <li>{@code train_only_images} / {@code val_only_images} -- the exact
+     *       per-image role assignments (sorted), or empty when tile-stratified.
+     * </ul>
+     *
+     * @param trainOnlyImages images assigned exclusively to training (may be null/empty)
+     * @param valOnlyImages   images assigned exclusively to validation (may be null/empty)
+     */
+    public static Map<String, Object> buildTrainingSettingsMap(
+            TrainingConfig config, Set<String> trainOnlyImages, Set<String> valOnlyImages) {
+        Map<String, Object> settings = buildTrainingSettingsMap(config);
+
+        java.util.List<String> trainOnly =
+                new java.util.ArrayList<>(trainOnlyImages == null ? Collections.emptySet() : trainOnlyImages);
+        java.util.List<String> valOnly =
+                new java.util.ArrayList<>(valOnlyImages == null ? Collections.emptySet() : valOnlyImages);
+        Collections.sort(trainOnly);
+        Collections.sort(valOnly);
+
+        String method;
+        if (!trainOnly.isEmpty() || !valOnly.isEmpty()) {
+            method = "image_roles";
+        } else if (config.getValidationSplit() > 0.0) {
+            method = "tile_stratified";
+        } else {
+            method = "none";
+        }
+        settings.put("split_method", method);
+        // Only record the role lists when present, so tile-stratified / resumed
+        // models don't show empty rows in Manage Classifiers.
+        if (!trainOnly.isEmpty()) {
+            settings.put("train_only_images", trainOnly);
+        }
+        if (!valOnly.isEmpty()) {
+            settings.put("val_only_images", valOnly);
+        }
+        return settings;
+    }
+
     public static Map<String, Object> buildTrainingSettingsMap(TrainingConfig config) {
         Map<String, Object> settings = new LinkedHashMap<>();
         settings.put("learning_rate", config.getLearningRate());

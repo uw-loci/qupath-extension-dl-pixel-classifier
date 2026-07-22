@@ -30,8 +30,22 @@ class TrainingDiagnostics:
         classes: List[str],
         limited_data_classes: Optional[set] = None,
         early_stopping_metric: str = "mean_iou",
+        ohem_active: bool = False,
+        ohem_anneals: bool = False,
+        ohem_hard_ratio: float = 1.0,
+        ohem_hard_ratio_start: float = 1.0,
     ):
         self.classes = classes
+        # OHEM (hard-pixel mining) context. When OHEM is active the training
+        # loss is averaged over only the hardest top-K pixels while the
+        # validation loss uses the pre-OHEM criterion over ALL labeled pixels
+        # (see the eval_criterion snapshot in training_service). That asymmetry
+        # makes val_loss < train_loss BY DESIGN, so the "val better than train"
+        # check reports it as expected rather than as a leakage warning.
+        self.ohem_active = ohem_active
+        self.ohem_anneals = ohem_anneals
+        self.ohem_hard_ratio = ohem_hard_ratio
+        self.ohem_hard_ratio_start = ohem_hard_ratio_start
         # Classes with too few source slides for their val IoU to be
         # meaningful. The "never learned" check skips them because the
         # user has already been warned at training launch and the ceiling
@@ -462,30 +476,66 @@ class TrainingDiagnostics:
     def _check_val_better_than_train(self, history: List[Dict[str, Any]]) -> List[str]:
         """Detect validation loss consistently lower than training loss.
 
-        This can indicate: data leakage, augmentation only applied to
-        training (expected and normal), or dropout/regularization effects.
-        Only warn if the gap is very large.
+        With OHEM (hard-pixel mining) active this is expected by design --
+        training loss is averaged over only the hardest top-K pixels while
+        validation loss is averaged over all labeled pixels -- so it is
+        reported as a benign explanation rather than a warning. Without OHEM a
+        large, consistent gap can instead indicate data leakage, an unusually
+        easy validation split, or very aggressive augmentation.
         """
         warnings = []
         if len(history) < 15:
             return warnings
 
         recent = history[-10:]
-        count_val_better = sum(
+        # "strong" = val below HALF of train (a large gap, the leakage/too-easy
+        # signal). "mild" = val below train at all (the crossover OHEM produces
+        # as its ratio anneals down). OHEM gets the more sensitive trigger so
+        # the expected pattern is explained the moment it shows up consistently.
+        strong = sum(
             1 for e in recent if e.get("val_loss", 999) < e.get("train_loss", 0) * 0.5
         )
+        mild = sum(
+            1 for e in recent if e.get("val_loss", 999) < e.get("train_loss", 999)
+        )
+        avg_train = sum(e.get("train_loss", 0) for e in recent) / len(recent)
+        avg_val = sum(e.get("val_loss", 0) for e in recent) / len(recent)
 
-        if count_val_better >= 8:
-            avg_train = sum(e.get("train_loss", 0) for e in recent) / len(recent)
-            avg_val = sum(e.get("val_loss", 0) for e in recent) / len(recent)
+        if self.ohem_active and mild >= 8:
+            anneal_note = ""
+            if self.ohem_anneals:
+                anneal_note = (
+                    f" The OHEM ratio anneals from "
+                    f"{self.ohem_hard_ratio_start * 100:.0f}% to "
+                    f"{self.ohem_hard_ratio * 100:.0f}%, so the crossover "
+                    f"typically appears partway through training as the "
+                    f"hardest-pixel selection tightens ('hard pixels kick in')."
+                )
+            msg = (
+                f"Validation loss ({avg_val:.4f}) is lower than training loss "
+                f"({avg_train:.4f}) over the last 10 epochs. With OHEM "
+                f"(hard-pixel mining) active this is EXPECTED, not a problem: "
+                f"training loss is averaged over only the hardest "
+                f"{self.ohem_hard_ratio * 100:.0f}% of pixels, while validation "
+                f"loss is averaged over all labeled pixels using the pre-OHEM "
+                f"criterion.{anneal_note} Judge convergence by mIoU and "
+                f"per-class IoU, not the train/val loss gap. See Troubleshooting: "
+                f"'Validation loss is lower than training loss'."
+            )
+            w = self._warn_once("val_better_than_train_ohem", msg)
+            if w:
+                warnings.append(w)
+        elif strong >= 8:
             msg = (
                 f"Validation loss ({avg_val:.4f}) is consistently much "
                 f"lower than training loss ({avg_train:.4f}) over the last "
-                f"10 epochs. A small gap is normal (augmentation is only "
-                f"applied during training). A large gap may indicate: "
-                f"(1) the validation set is too easy (not representative), "
-                f"(2) data leakage between train/val splits, or "
-                f"(3) very aggressive augmentation making training harder."
+                f"10 epochs. A small gap is normal (augmentation and dropout "
+                f"apply only during training). A large gap with OHEM disabled "
+                f"may indicate: (1) the validation set is too easy (not "
+                f"representative), (2) data leakage between train/val splits, "
+                f"or (3) very aggressive augmentation making training harder. "
+                f"See Troubleshooting: 'Validation loss is lower than training "
+                f"loss'."
             )
             w = self._warn_once("val_better_than_train", msg)
             if w:

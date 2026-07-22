@@ -99,6 +99,17 @@ Check the project images to include in training. Only images with classified ann
 
 Multi-image training combines patches from all selected images into one training set, improving generalization. If you previously loaded settings from a model, classes matching the source model are auto-selected after loading.
 
+#### Per-image train/val roles and how the split is recorded
+
+In advanced mode each selected image has a **Train / Val / Both** role dropdown (or use **Auto Distribute** to assign whole images automatically). Images set to **Train** or **Val** go entirely to that side; images left as **Both** have their tiles split within the image by the Validation Split fraction.
+
+When training finishes, the split is recorded in two places so you never have to guess how a model was trained:
+
+- **Classifier metadata** (Manage Classifiers info panel): the split method (`image_roles` vs `tile_stratified`) and the exact train-only / val-only image lists.
+- **Project image metadata**: each training image's project entry is tagged with a `DL role: <classifier name>` column set to `Train`, `Val`, or `Both`. Add that column in the QuPath **Project** pane to sort or filter your slides by training status. Each classifier gets its own column, and re-training a classifier refreshes its column to reflect the most recent run. (A run left entirely in the default **Both** role tags every image `Both` -- that is expected, not a bug.)
+
+Loading settings from such a model (see below) restores these per-image roles to the dialog, so continuing training in a later session keeps the original split.
+
 ### Classifier Info
 
 | Setting | Description |

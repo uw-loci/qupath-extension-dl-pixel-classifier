@@ -682,11 +682,24 @@ public class TrainingAreaIssuesDialog {
             if (newData == null) return;
             TileRow selected = table.getSelectionModel().getSelectedItem();
             if (selected == null) return;
-            String newName = newData.getServer() != null
-                    ? newData.getServer().getMetadata().getName()
-                    : null;
-            if (newName == null) return;
-            if (!newName.equals(selected.getSourceImage())) {
+            // Prefer project-entry ID matching so a legitimate dialog-driven
+            // switch to the correct slide does not clear the selection; fall
+            // back to the server metadata name only when the manifest lacks an
+            // ID (older single-image models).
+            var project = qupath.getProject();
+            var newEntry = project != null ? project.getEntry(newData) : null;
+            String newEntryId = newEntry != null ? newEntry.getID() : null;
+            String selId = selected.getSourceImageId();
+            boolean sameImage;
+            if (selId != null && !selId.isEmpty() && newEntryId != null) {
+                sameImage = selId.equals(newEntryId);
+            } else {
+                String newName = newData.getServer() != null
+                        ? newData.getServer().getMetadata().getName()
+                        : null;
+                sameImage = newName != null && newName.equals(selected.getSourceImage());
+            }
+            if (!sameImage) {
                 Platform.runLater(() -> table.getSelectionModel().clearSelection());
             }
         };
@@ -806,10 +819,19 @@ public class TrainingAreaIssuesDialog {
 
         if (project != null && targetImageName != null && !targetImageName.isEmpty()) {
             var currentImageData = qupath.getImageData();
-            String currentImageName = currentImageData != null
-                    ? currentImageData.getServer().getMetadata().getName()
-                    : null;
-            boolean needsSwitch = !targetImageName.equals(currentImageName);
+            // Compare by project-entry identity (ID), not server metadata name:
+            // the tile manifest stores the project-entry name/ID, which can
+            // differ from the server metadata name (renamed / multi-series
+            // entries). A name-based test can both miss a needed switch and,
+            // after switching, fail to confirm the correct slide loaded.
+            var currentEntry = currentImageData != null ? project.getEntry(currentImageData) : null;
+            String currentEntryId = currentEntry != null ? currentEntry.getID() : null;
+            boolean needsSwitch = targetImageId != null && !targetImageId.isEmpty()
+                    ? !targetImageId.equals(currentEntryId)
+                    : !targetImageName.equals(
+                            currentImageData != null
+                                    ? currentImageData.getServer().getMetadata().getName()
+                                    : null);
 
             if (needsSwitch) {
                 @SuppressWarnings("unchecked")
@@ -863,6 +885,9 @@ public class TrainingAreaIssuesDialog {
         // switch is non-interactive and the listener fires cleanly.
         autoSaveCurrentImage(qupath);
 
+        var project = qupath.getProject();
+        String targetEntryId = entry.getID();
+
         var imageDataProp = viewer.imageDataProperty();
         java.util.concurrent.atomic.AtomicReference<
                         ChangeListener<qupath.lib.images.ImageData<java.awt.image.BufferedImage>>>
@@ -872,10 +897,13 @@ public class TrainingAreaIssuesDialog {
             if (newVal == null) return;
             // Confirm this fired for OUR target -- otherwise a stale switch
             // from elsewhere would steal the centering action.
-            String loadedName = newVal.getServer() != null && newVal.getServer().getMetadata() != null
-                    ? newVal.getServer().getMetadata().getName()
-                    : null;
-            if (targetImageName != null && loadedName != null && !targetImageName.equals(loadedName)) {
+            // Confirm this fired for OUR target by project-entry ID (the same
+            // key used to open the entry), not the server metadata name -- those
+            // differ for renamed / multi-series entries, which made the name
+            // test never match on cross-slide navigation, leaving the viewer at
+            // QuPath's default zoom-to-fit.
+            var loadedEntry = project != null ? project.getEntry(newVal) : null;
+            if (loadedEntry != null && !targetEntryId.equals(loadedEntry.getID())) {
                 return;
             }
             var current = listenerRef.getAndSet(null);
@@ -914,12 +942,8 @@ public class TrainingAreaIssuesDialog {
             imageDataProp.removeListener(current);
 
             var loaded = viewer.getImageData();
-            String loadedName = loaded != null
-                            && loaded.getServer() != null
-                            && loaded.getServer().getMetadata() != null
-                    ? loaded.getServer().getMetadata().getName()
-                    : null;
-            if (targetImageName != null && targetImageName.equals(loadedName)) {
+            var loadedEntry = (project != null && loaded != null) ? project.getEntry(loaded) : null;
+            if (loadedEntry != null && targetEntryId.equals(loadedEntry.getID())) {
                 logger.debug("Image-switch listener didn't fire but target is loaded; centering");
                 centerViewerOnTile(qupath, row);
             } else {
@@ -927,7 +951,7 @@ public class TrainingAreaIssuesDialog {
                         "Image-switch wait timed out; target='{}' did not load (loaded='{}'). "
                                 + "If a save-changes dialog appeared, click the row again after handling it.",
                         targetImageName,
-                        loadedName);
+                        loadedEntry != null ? loadedEntry.getImageName() : "none");
             }
         });
         fallback.play();

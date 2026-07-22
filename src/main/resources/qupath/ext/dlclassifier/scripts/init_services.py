@@ -8,6 +8,7 @@ CRITICAL: All output must go to sys.stderr, NOT sys.stdout.
 Appose uses stdout for its JSON-based IPC protocol.
 Any print() call corrupts the protocol and crashes communication.
 """
+
 import sys
 import os
 import logging
@@ -19,7 +20,7 @@ import numpy  # Must be imported during init, not in a task -- see Appose #23
 logging.basicConfig(
     level=logging.INFO,
     stream=sys.stderr,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
 logger = logging.getLogger("dlclassifier.appose")
@@ -32,7 +33,7 @@ logger = logging.getLogger("dlclassifier.appose")
 # Both sides MUST be in sync. This version MUST match pyproject.toml and
 # __init__.py exactly. When EITHER side is updated, ALL THREE version
 # locations must be bumped together (see memory/feedback_version_sync.md).
-_REQUIRED_PYTHON_VERSION = "0.8.5-dev"
+_REQUIRED_PYTHON_VERSION = "0.8.5"
 
 
 def _parse_version(v):
@@ -52,6 +53,7 @@ def _is_dev_version(v):
 
 
 import dlclassifier_server as _dls
+
 _installed_version = getattr(_dls, "__version__", "unknown")
 _installed_tuple = _parse_version(_installed_version)
 _required_tuple = _parse_version(_REQUIRED_PYTHON_VERSION)
@@ -61,12 +63,14 @@ _required_tuple = _parse_version(_REQUIRED_PYTHON_VERSION)
 # major.minor match so completely wrong versions are still caught.
 if _is_dev_version(_REQUIRED_PYTHON_VERSION):
     # Dev mode: accept any version with matching major.minor
-    _version_ok = (_installed_tuple[:2] == _required_tuple[:2]
-                   if len(_installed_tuple) >= 2 and len(_required_tuple) >= 2
-                   else True)
+    _version_ok = (
+        _installed_tuple[:2] == _required_tuple[:2]
+        if len(_installed_tuple) >= 2 and len(_required_tuple) >= 2
+        else True
+    )
 else:
     # Release mode: exact major.minor.patch match
-    _version_ok = (_installed_tuple == _required_tuple)
+    _version_ok = _installed_tuple == _required_tuple
 
 if not _version_ok:
     if _installed_tuple < _required_tuple:
@@ -75,14 +79,16 @@ if not _version_ok:
             "but the extension requires v%s. "
             "Go to Extensions > DL Pixel Classifier > Utilities > "
             "Rebuild DL Environment to update."
-            % (_installed_version, _REQUIRED_PYTHON_VERSION))
+            % (_installed_version, _REQUIRED_PYTHON_VERSION)
+        )
     else:
         _msg = (
             "PYTHON PACKAGE VERSION MISMATCH: installed dlclassifier-server v%s "
             "but the extension expects v%s. "
             "Go to Extensions > DL Pixel Classifier > Utilities > "
             "Rebuild DL Environment to resync."
-            % (_installed_version, _REQUIRED_PYTHON_VERSION))
+            % (_installed_version, _REQUIRED_PYTHON_VERSION)
+        )
     logger.error(_msg)
     # Block initialization -- health check will return unhealthy and the
     # Java side will show the version_warning and disable training.
@@ -93,8 +99,11 @@ if not _version_ok:
     inference_lock = threading.Lock()
 else:
     version_warning = None
-    logger.info("dlclassifier-server v%s (required: %s) -- OK",
-                _installed_version, _REQUIRED_PYTHON_VERSION)
+    logger.info(
+        "dlclassifier-server v%s (required: %s) -- OK",
+        _installed_version,
+        _REQUIRED_PYTHON_VERSION,
+    )
 
     # Import and initialize persistent services.
     # ImportError is NOT caught here -- if critical packages (torch, smp, etc.)
@@ -124,24 +133,30 @@ else:
         # These are optional; failure to load them should not block init.
         try:
             from dlclassifier_server.services.pretrained_models import (
-                PretrainedModelsService)
+                PretrainedModelsService,
+            )
+
             pretrained_service = PretrainedModelsService()
-            logger.info("PretrainedModelsService loaded (%d encoders)",
-                        len(pretrained_service.list_encoders()))
+            logger.info(
+                "PretrainedModelsService loaded (%d encoders)",
+                len(pretrained_service.list_encoders()),
+            )
         except Exception as e:
             pretrained_service = None
             logger.warning("PretrainedModelsService not available: %s", e)
 
         try:
-            from dlclassifier_server.services.muvit_model import (
-                create_muvit_model)
+            from dlclassifier_server.services.muvit_model import create_muvit_model
+
             logger.info("MuViT model factory loaded")
         except Exception as e:
             logger.warning("MuViT model factory not available: %s", e)
 
         try:
             from dlclassifier_server.utils.batchrenorm import (
-                replace_bn_with_batchrenorm)
+                replace_bn_with_batchrenorm,
+            )
+
             logger.info("BatchRenorm utility loaded")
         except Exception as e:
             logger.warning("BatchRenorm utility not available: %s", e)
@@ -162,10 +177,12 @@ else:
 # shutdown hook never runs, so stdin never closes and this process lives
 # forever. This daemon thread polls the parent PID and exits if it dies.
 
+
 def _get_process_create_time_win32(pid):
     """Get process creation time on Windows. Returns int or None."""
     import ctypes
     from ctypes import wintypes
+
     kernel32 = ctypes.windll.kernel32
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
@@ -178,8 +195,10 @@ def _get_process_create_time_win32(pid):
         user = wintypes.FILETIME()
         ok = kernel32.GetProcessTimes(
             handle,
-            ctypes.byref(creation), ctypes.byref(exit_t),
-            ctypes.byref(kern), ctypes.byref(user)
+            ctypes.byref(creation),
+            ctypes.byref(exit_t),
+            ctypes.byref(kern),
+            ctypes.byref(user),
         )
         if ok:
             return (creation.dwHighDateTime << 32) | creation.dwLowDateTime
@@ -195,7 +214,7 @@ def _parent_alive(pid, expected_create_time=None):
     reuse the same PID after QuPath dies.  We compare the process
     creation time to detect recycled PIDs.
     """
-    if sys.platform == 'win32':
+    if sys.platform == "win32":
         create_time = _get_process_create_time_win32(pid)
         if create_time is None:
             return False  # Process does not exist
@@ -222,7 +241,7 @@ def _watch_parent():
     # PID recycling on Windows (where a killed process's PID may be
     # reused by an unrelated process within seconds).
     parent_create_time = None
-    if sys.platform == 'win32':
+    if sys.platform == "win32":
         parent_create_time = _get_process_create_time_win32(ppid)
 
     logger.info("Parent process watcher started (parent PID: %d)", ppid)
@@ -232,13 +251,13 @@ def _watch_parent():
             # Check 1: parent PID changed (Linux reparents to init/systemd)
             current_ppid = os.getppid()
             if current_ppid != ppid:
-                logger.warning("Parent process changed (%d -> %d), exiting",
-                               ppid, current_ppid)
+                logger.warning(
+                    "Parent process changed (%d -> %d), exiting", ppid, current_ppid
+                )
                 os._exit(1)
             # Check 2: parent PID no longer exists (or was recycled)
             if not _parent_alive(ppid, parent_create_time):
-                logger.warning("Parent process %d no longer exists, exiting",
-                               ppid)
+                logger.warning("Parent process %d no longer exists, exiting", ppid)
                 os._exit(1)
         except Exception as e:
             # Never crash the thread -- log and keep watching

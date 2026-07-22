@@ -2669,6 +2669,13 @@ class TrainingService:
             classes=classes,
             limited_data_classes=limited_data_classes,
             early_stopping_metric=early_stopping_metric,
+            # OHEM context lets the "val better than train" check explain the
+            # crossover as expected (train loss on hardest top-K pixels, val
+            # loss on all pixels) instead of flagging it as leakage.
+            ohem_active=(ohem_hard_ratio < 1.0 and not _ohem_incompatible),
+            ohem_anneals=_ohem_anneals,
+            ohem_hard_ratio=ohem_hard_ratio,
+            ohem_hard_ratio_start=ohem_hard_ratio_start,
         )
 
         def _is_best(current, best):

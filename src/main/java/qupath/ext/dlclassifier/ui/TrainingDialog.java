@@ -1790,9 +1790,48 @@ public class TrainingDialog {
                     validationSplitSpinner.getValueFactory().setValue((int) Math.round(vs * 100));
                 }
 
-                // Overlap
+                // Overlap: stored as output-resolution tile pixels; the spinner
+                // is a percentage of the tile size. Convert px -> % using the tile
+                // size loaded just above, and clamp to the spinner's 0-50 range.
                 if (ts.containsKey("overlap")) {
-                    overlapSpinner.getValueFactory().setValue(((Number) ts.get("overlap")).intValue());
+                    int overlapPx = ((Number) ts.get("overlap")).intValue();
+                    int tsize = tileSizeSpinner.getValue();
+                    int pct = tsize > 0 ? (int) Math.round(100.0 * overlapPx / tsize) : 0;
+                    overlapSpinner.getValueFactory().setValue(Math.max(0, Math.min(50, pct)));
+                }
+
+                // Restore per-image train/val roles from a model trained with
+                // image-level splitting (Auto Distribute / manual roles). The
+                // metadata records the exact TRAIN_ONLY / VAL_ONLY image names
+                // (keyed by ProjectImageEntry.getImageName, the same key used at
+                // export); any selected image not listed was "Both". Applied
+                // only when the model used image-role splitting (lists present) --
+                // tile-stratified / older models leave the current roles alone.
+                Set<String> trainOnlyNames = readStringSet(ts.get("train_only_images"));
+                Set<String> valOnlyNames = readStringSet(ts.get("val_only_images"));
+                if (!trainOnlyNames.isEmpty() || !valOnlyNames.isEmpty()) {
+                    // Defer until the image list is fully populated (mirrors the
+                    // frozen-layers restore above).
+                    Platform.runLater(() -> {
+                        if (imageSelectionList == null) return;
+                        int restored = 0;
+                        for (ImageSelectionItem item : imageSelectionList.getItems()) {
+                            String name = item.entry.getImageName();
+                            SplitRole role;
+                            if (trainOnlyNames.contains(name)) {
+                                role = SplitRole.TRAIN_ONLY;
+                            } else if (valOnlyNames.contains(name)) {
+                                role = SplitRole.VAL_ONLY;
+                            } else {
+                                role = SplitRole.BOTH;
+                            }
+                            item.splitRole.set(role);
+                            if (role != SplitRole.BOTH) {
+                                restored++;
+                            }
+                        }
+                        logger.info("Restored {} per-image train/val role(s) from model metadata", restored);
+                    });
                 }
 
                 // Line stroke width
@@ -3215,7 +3254,10 @@ public class TrainingDialog {
                     .validationSplit(validationSplitSpinner.getValue() / 100.0)
                     .tileSize(tileSizeSpinner.getValue())
                     .trainingPixelSizeMicrons(nativePixelSizeMicrons)
-                    .overlap(overlapSpinner.getValue())
+                    // overlapSpinner is a percentage (0-50); TrainingConfig.overlap
+                    // is in output-resolution tile pixels (stride = tileSize - overlap).
+                    // Convert here so "10%" means 10% of the tile, not 10 pixels.
+                    .overlap((int) Math.round(tileSizeSpinner.getValue() * overlapSpinner.getValue() / 100.0))
                     .downsample(parseDownsample(downsampleCombo.getValue()))
                     .contextScale(parseContextScale(contextScaleCombo.getValue()))
                     .augmentation(buildAugmentationConfig())
@@ -4338,8 +4380,10 @@ public class TrainingDialog {
                 if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
             });
 
-            // Overlap (advanced only)
-            overlapSpinner = new Spinner<>(0, 50, DLClassifierPreferences.getTileOverlap(), 5);
+            // Overlap (advanced only). Spinner holds a PERCENTAGE (0-50) and
+            // persists via the percent pref; the pixel-valued getTileOverlap()
+            // pref is reserved for scripting and inference, which use pixels.
+            overlapSpinner = new Spinner<>(0, 50, (int) Math.round(DLClassifierPreferences.getTileOverlapPercent()), 5);
             overlapSpinner.setEditable(true);
             overlapSpinner.setPrefWidth(100);
             Label overlapLabel = new Label("Tile Overlap (%):");
@@ -6295,7 +6339,8 @@ public class TrainingDialog {
                 tileSizeSpinner.getValueFactory().setValue(DLClassifierPreferences.getTileSize());
             }
             if (overlapSpinner != null) {
-                overlapSpinner.getValueFactory().setValue(DLClassifierPreferences.getTileOverlap());
+                overlapSpinner.getValueFactory().setValue((int)
+                        Math.round(DLClassifierPreferences.getTileOverlapPercent()));
             }
             if (downsampleCombo != null) {
                 downsampleCombo.setValue(mapDownsampleToDisplay(DLClassifierPreferences.getDefaultDownsample()));
@@ -6700,7 +6745,7 @@ public class TrainingDialog {
             DLClassifierPreferences.setLastSeed(seedSpinner.getValue());
             DLClassifierPreferences.setValidationSplit(validationSplitSpinner.getValue());
             DLClassifierPreferences.setTileSize(tileSizeSpinner.getValue());
-            DLClassifierPreferences.setTileOverlap(overlapSpinner.getValue());
+            DLClassifierPreferences.setTileOverlapPercent(overlapSpinner.getValue());
             DLClassifierPreferences.setDefaultDownsample(parseDownsample(downsampleCombo.getValue()));
             DLClassifierPreferences.setDefaultContextScale(parseContextScale(contextScaleCombo.getValue()));
             DLClassifierPreferences.setLastLineStrokeWidth(lineStrokeWidthSpinner.getValue());
@@ -8437,6 +8482,24 @@ public class TrainingDialog {
      *   <li>{@code VAL_ONLY} -- all tiles go directly to the validation set</li>
      * </ul>
      */
+    /**
+     * Reads a settings value that should be a list of strings into a set,
+     * tolerating null / non-list values (returns an empty set). Used to restore
+     * the {@code train_only_images} / {@code val_only_images} role lists from a
+     * model's training settings.
+     */
+    private static Set<String> readStringSet(Object value) {
+        Set<String> out = new LinkedHashSet<>();
+        if (value instanceof List<?> list) {
+            for (Object o : list) {
+                if (o != null) {
+                    out.add(String.valueOf(o));
+                }
+            }
+        }
+        return out;
+    }
+
     public enum SplitRole {
         BOTH("Both"),
         TRAIN_ONLY("Train"),
