@@ -18,6 +18,9 @@ dl_training/
 *.tif
 *.png
 !src/**/*.png
+# Documentation screenshots must be tracked (rendered on GitHub + verified by
+# tools/check-doc-images.sh). The *.png ignore above targets training data.
+!docs/images/*.png
 
 # Python
 __pycache__/
