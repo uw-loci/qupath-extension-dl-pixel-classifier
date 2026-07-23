@@ -129,7 +129,7 @@ Reports are submitted directly to the development team without requiring a GitHu
 
 ## Requirements
 
-- QuPath 0.6.0+ (including 0.7.0)
+- QuPath 0.7.0+
 - **Windows 10+ (64-bit)**, **Linux (64-bit)**, or **macOS Apple Silicon (M1+)**
 - NVIDIA GPU with CUDA recommended (Apple Silicon MPS also works; CPU fallback available)
 - Internet connection for first-time environment setup (~2-4 GB download)
