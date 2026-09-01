@@ -93,7 +93,9 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and G
 
 ![DL Pixel Classifier menu under Extensions, showing Train, Apply, Manage Classifiers, Select Overlay Model, Toggle Prediction Overlay, and the Utilities submenu](docs/images/menu-dl-pixel-classifier.png)
 
-1. **Set up the Python environment** -- go to **Extensions > DL Pixel Classifier > Setup DL Environment...** in the QuPath menu bar. This downloads and configures PyTorch, CUDA, and all dependencies automatically (~2-4 GB, first time only).
+1. **(Optional) Choose your environment variant** -- go to **Edit > Preferences > Extensions > DL Pixel Classifier > "Python environment: compute variant"**. Choose **CPU** (default, works anywhere) or **GPU** (CUDA, requires an NVIDIA GPU). Most users should leave this as CPU. See [GPU Support](#gpu-support) for details.
+
+2. **Set up the Python environment** -- go to **Extensions > DL Pixel Classifier > Setup DL Environment...** in the QuPath menu bar. This downloads and configures PyTorch and all dependencies automatically (~2-4 GB, first time only). Your choice in step 1 determines which environment is installed.
 
    > **After updating the extension:** If you install a new version of this extension, you **must** rebuild the Python environment to match. The extension enforces version matching and will block training/inference if the environment is out of date. An error notification will appear with instructions. Go to **Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment...** to update.
 
@@ -131,7 +133,7 @@ Reports are submitted directly to the development team without requiring a GitHu
 
 - QuPath 0.7.0+
 - **Windows 10+ (64-bit)**, **Linux (64-bit)**, or **macOS Apple Silicon (M1+)**
-- NVIDIA GPU with CUDA recommended (Apple Silicon MPS also works; CPU fallback available)
+- (Optional) NVIDIA GPU with CUDA if you select the GPU environment variant; CPU environment works on any machine without a GPU
 - Internet connection for first-time environment setup (~2-4 GB download)
 
 > **Not supported:** Intel Macs (x86_64 macOS) and 32-bit systems. See [Installation Guide](docs/INSTALLATION.md) for full platform details.
@@ -140,7 +142,9 @@ Reports are submitted directly to the development team without requiring a GitHu
 
 ### CUDA / GPU Driver Requirements
 
-The extension bundles **PyTorch with CUDA 12** support. You do **not** need to install CUDA separately -- PyTorch includes its own CUDA runtime. However, you **do** need NVIDIA drivers new enough to support CUDA 12:
+**This section applies only if you select the GPU environment variant in preferences.** The CPU environment requires no GPU or drivers.
+
+If you choose the **GPU variant**, the extension bundles **PyTorch with CUDA 12** support. You do **not** need to install CUDA separately -- PyTorch includes its own CUDA runtime. However, you **do** need NVIDIA drivers new enough to support CUDA 12:
 
 | Component | Version |
 |-----------|---------|
@@ -152,7 +156,7 @@ The extension bundles **PyTorch with CUDA 12** support. You do **not** need to i
 
 To check your NVIDIA driver version, run `nvidia-smi` in a terminal. If your driver is too old, update it from the [NVIDIA Driver Downloads](https://www.nvidia.com/Download/index.aspx) page.
 
-**Apple Silicon (M-series):** Uses MPS backend automatically. No driver installation needed, but training is significantly slower than CUDA. See the hardware warning above.
+**Apple Silicon (M-series):** Choose the CPU variant -- the GPU variant is CUDA and will not install. Note the extension does not currently target the MPS backend: `system_info.py` reports whether MPS is available, but training and inference run on CPU. Expect this to be slow; see the note at the top.
 
 **Intel Mac:** Not supported. Use Windows or Linux with an NVIDIA GPU for best results.
 
@@ -174,13 +178,12 @@ To check your NVIDIA driver version, run `nvidia-smi` in a terminal. If your dri
 
 ## GPU Support
 
-The extension automatically detects and uses available GPU hardware:
+The extension provides **two separate Python environments** that you choose between at startup. You select which one to install in **Edit > Preferences > Extensions > DL Pixel Classifier > "Python environment: compute variant"**:
 
-- **NVIDIA GPUs (CUDA)** -- auto-detected on Windows and Linux. Requires NVIDIA drivers to be installed.
-- **Apple Silicon (MPS)** -- auto-detected on macOS with M-series chips.
-- **CPU fallback** -- automatic when no GPU is available. Training will be slower but functional.
+- **CPU (default)** -- works on any machine; no GPU acceleration. Training will be slower but functional. Choose this if you don't have an NVIDIA GPU or prefer broad compatibility.
+- **GPU (CUDA)** -- uses an NVIDIA GPU for training and inference (~2x faster). **Requires an NVIDIA GPU AND CUDA-compatible drivers -- the environment cannot install without one.** See [CUDA / GPU Driver Requirements](#cuda--gpu-driver-requirements) below.
 
-The setup wizard reports which GPU backend was detected at completion. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) if GPU is not detected.
+Each variant installs as a separate environment (~2-4 GB), so switching between them requires downloading a new set of packages. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for GPU detection issues or if your GPU is not being used.
 
 ## Supported Image Types
 
