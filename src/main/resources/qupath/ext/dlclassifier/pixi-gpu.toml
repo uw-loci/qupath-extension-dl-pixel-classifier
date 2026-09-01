@@ -5,6 +5,14 @@ channels = ["conda-forge", "pytorch"]
 # Intel Macs are not a supported target for this extension.
 platforms = ["linux-64", "osx-arm64", "win-64"]
 
+# GPU VARIANT. pixi validates the __cuda virtual package on EVERY install --
+# which is every QuPath launch -- so this manifest CANNOT install on a machine
+# without an NVIDIA GPU. It does not run slowly there; it refuses to start.
+# That is why pixi.toml (CPU) exists and is the default. Reported from an HPC
+# deployment: qupath-extension-cell-analysis-tools#15.
+[system-requirements]
+cuda = "12"
+
 [dependencies]
 python = "3.11.*"
 pip = ">=23.0"
@@ -20,13 +28,17 @@ pydantic = ">=2.0.0"
 # hold all decoded tiles, and the safe fallback (disk streaming) kicks in.
 psutil = ">=5.9.0"
 
-# CPU VARIANT -- the default, because it installs anywhere. No
-# [system-requirements] cuda entry and no pytorch-gpu target: requiring CUDA
-# makes `pixi install` fail the __cuda check on every launch on a machine
-# without an NVIDIA GPU, so the extension cannot start at all. See pixi-gpu.toml
-# for the CUDA build, chosen in preferences.
+# PyTorch (base dependency for all platforms)
 pytorch = ">=2.1.0"
 torchvision = ">=0.16.0"
+
+# CUDA GPU support: pytorch-gpu steers the resolver to the CUDA variant.
+# Only exists for Linux and Windows (macOS has no NVIDIA GPU support).
+[target.linux-64.dependencies]
+pytorch-gpu = ">=2.1.0"
+
+[target.win-64.dependencies]
+pytorch-gpu = ">=2.1.0"
 
 [pypi-dependencies]
 segmentation-models-pytorch = ">=0.3.3"

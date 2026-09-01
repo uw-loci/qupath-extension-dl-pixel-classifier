@@ -49,7 +49,18 @@ public class ApposeService {
     // Regenerate via tools/regen-pixi-lock.sh when pixi.toml changes.
     private static final String PIXI_LOCK_RESOURCE = RESOURCE_BASE + "pixi.lock";
     private static final String SCRIPTS_BASE = RESOURCE_BASE + "scripts/";
+    /**
+     * Default environment name. The ACTUAL name and manifest come from the
+     * selected {@link qupath.ext.dlclassifier.model.ComputeVariant}, so the CPU
+     * and GPU environments live side by side and switching overwrites neither.
+     */
     private static final String ENV_NAME = "dl-pixel-classifier";
+
+    /** The variant the user selected (CPU unless they chose otherwise). */
+    private static qupath.ext.dlclassifier.model.ComputeVariant variant() {
+        return qupath.ext.dlclassifier.model.ComputeVariant.fromId(
+                qupath.ext.dlclassifier.preferences.DLClassifierPreferences.getEnvVariant());
+    }
 
     // --- Appose debug-log de-duplication ---------------------------------
     // Appose hands our debug listener the full request JSON for every task,
@@ -134,7 +145,8 @@ public class ApposeService {
         }
         // Appose default: ~/.local/share/appose/<env-name>
         return ApposeEnvLocation.resolve(
-                qupath.ext.dlclassifier.preferences.DLClassifierPreferences.getEnvBaseDir(), ENV_NAME);
+                qupath.ext.dlclassifier.preferences.DLClassifierPreferences.getEnvBaseDir(),
+                variant().envName());
     }
 
     /**
@@ -220,7 +232,10 @@ public class ApposeService {
             logger.info("Initializing Appose environment...");
 
             // Load pixi.toml from JAR resources
-            String pixiToml = loadResource(PIXI_TOML_RESOURCE);
+            // Manifest and lock come from the same variant, so they cannot be
+            // paired wrongly (lockResource() is derived from tomlResource()).
+            var computeVariant = variant();
+            String pixiToml = loadResource(RESOURCE_BASE + computeVariant.tomlResource());
 
             // Optionally strip ONNX dependencies to reduce download size.
             // The bundled lock matches the UNMODIFIED manifest, so we only
@@ -231,7 +246,7 @@ public class ApposeService {
                 pixiToml = stripOnnxDependencies(pixiToml);
                 logger.info("ONNX dependencies excluded from environment (lock disabled; will re-resolve)");
             }
-            String pixiLock = useLock ? loadResource(PIXI_LOCK_RESOURCE) : null;
+            String pixiLock = useLock ? loadResource(RESOURCE_BASE + computeVariant.lockResource()) : null;
 
             // ALL Appose operations require the extension classloader as TCCL.
             // Appose and its dependencies (Groovy JSON) use ServiceLoader internally:
@@ -263,7 +278,7 @@ public class ApposeService {
                 var envBuilder = Appose.pixi()
                         .content(pixiToml)
                         .scheme("pixi.toml")
-                        .name(ENV_NAME)
+                        .name(computeVariant.envName())
                         .logDebug();
 
                 // Builder.base() overrides name(), so pass the FULL
@@ -1476,7 +1491,7 @@ public class ApposeService {
         if (base == null || base.isBlank()) {
             return null;
         }
-        return ApposeEnvLocation.resolve(base, ENV_NAME);
+        return ApposeEnvLocation.resolve(base, variant().envName());
     }
 
     /**

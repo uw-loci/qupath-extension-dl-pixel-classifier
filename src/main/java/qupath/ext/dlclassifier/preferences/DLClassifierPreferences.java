@@ -75,6 +75,15 @@ public final class DLClassifierPreferences {
      * without this nothing knows which directory was superseded. Written only
      * after a build verifies.
      */
+    /**
+     * Which bundled environment to install: {@code CPU} or {@code GPU}. Distinct
+     * from "Use GPU for Inference", which picks the device at inference time and
+     * only means anything once a CUDA environment is installed -- on a CPU
+     * environment there is nothing for it to select.
+     */
+    private static final StringProperty envVariant =
+            PathPrefs.createPersistentPreference("dlclassifier.env.variant", "CPU");
+
     private static final StringProperty envLastBuiltDir =
             PathPrefs.createPersistentPreference("dlclassifier.env.lastBuiltDir", "");
 
@@ -438,6 +447,20 @@ public final class DLClassifierPreferences {
                         + "and you are asked about removing it only after the new one works.")
                 .build());
 
+        items.add(new PropertyItemBuilder<>(envVariant, String.class)
+                .propertyType(PropertyItemBuilder.PropertyType.CHOICE)
+                .choices(java.util.List.of("CPU", "GPU"))
+                .name("Python environment: compute variant")
+                .category(CATEGORY)
+                .description("Which environment to install: 'CPU' (default, installs "
+                        + "anywhere) or 'GPU' (CUDA, and REQUIRES an NVIDIA GPU -- it cannot "
+                        + "be installed without one). These cannot be one environment: a "
+                        + "lockfile pins exact builds and a CPU build of PyTorch cannot use a "
+                        + "GPU. Switching builds a separate environment and re-downloads "
+                        + "several GB. 'Use GPU for Inference' below only has an effect once "
+                        + "the GPU environment is installed.")
+                .build());
+
         items.add(new PropertyItemBuilder<>(useGPU, Boolean.class)
                 .name("Use GPU for Inference")
                 .category(CATEGORY)
@@ -733,6 +756,15 @@ public final class DLClassifierPreferences {
 
     public static void setEnvBaseDir(String v) {
         envBaseDir.set(v == null ? "" : v.strip());
+    }
+
+    /** Selected environment variant id ("CPU" or "GPU"). */
+    public static String getEnvVariant() {
+        return envVariant.get();
+    }
+
+    public static void setEnvVariant(String v) {
+        envVariant.set(v);
     }
 
     /** Directory an environment was last successfully built at; "" if none. */
