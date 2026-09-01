@@ -1,5 +1,10 @@
 package qupath.ext.dlclassifier.utilities;
 
+import ij.plugin.filter.EDM;
+import ij.plugin.filter.MaximumFinder;
+import ij.process.ByteProcessor;
+import ij.process.FloatProcessor;
+import ij.process.ImageProcessor;
 import java.awt.image.BufferedImage;
 import java.util.*;
 import java.util.concurrent.ForkJoinPool;
@@ -458,9 +463,18 @@ public class OutputGenerator {
                 targetClass < classes.size() ? classes.get(targetClass).name() : "Class " + targetClass;
         PathClass pathClass = PathClass.fromString(className);
 
-        // Create a SimpleImage where pixels matching targetClass have value targetClass,
-        // and all other pixels have value 0
-        SimpleImage classImage = createClassImage(classMap, targetClass, width, height);
+        // Build the class mask. When touching-object separation is enabled, run a
+        // distance-transform watershed on this class's binary mask first so that
+        // abutting instances are cut apart before tracing; otherwise the mask is
+        // the raw class map and touching instances trace as a single blob.
+        SimpleImage classImage;
+        if (config.isSeparateTouchingObjects()) {
+            boolean[] splitMask =
+                    watershedForeground(classMap, targetClass, width, height, config.getWatershedTolerance());
+            classImage = createClassImageFromMask(splitMask, targetClass, width, height);
+        } else {
+            classImage = createClassImage(classMap, targetClass, width, height);
+        }
 
         // Use ContourTracing to trace geometries for this class value
         Geometry geometry = ContourTracing.createTracedGeometry(classImage, targetClass, targetClass, region);
@@ -468,6 +482,8 @@ public class OutputGenerator {
         if (geometry == null || geometry.isEmpty()) {
             return objects;
         }
+
+        double maxObjectSizeMicrons = config.getMaxObjectSizeMicrons();
 
         // Split multi-geometries into individual objects
         for (int i = 0; i < geometry.getNumGeometries(); i++) {
@@ -481,6 +497,8 @@ public class OutputGenerator {
             // Check minimum size
             double areaMicrons = part.getArea() * pixelSizeMicrons * pixelSizeMicrons;
             if (areaMicrons < config.getMinObjectSizeMicrons()) continue;
+            // Check maximum size (0 = no limit); drops mis-merged sheets
+            if (maxObjectSizeMicrons > 0 && areaMicrons > maxObjectSizeMicrons) continue;
 
             // Convert to ROI
             ROI roi = GeometryTools.geometryToROI(part, ImagePlane.getDefaultPlane());
@@ -496,6 +514,9 @@ public class OutputGenerator {
             // Add area measurements
             pathObject.getMeasurementList().put("Area (um^2)", areaMicrons);
             pathObject.getMeasurementList().put("Area (pixels)", part.getArea());
+            if (config.isAddShapeMeasurements()) {
+                addShapeMeasurements(pathObject, part);
+            }
 
             objects.add(pathObject);
         }
@@ -518,6 +539,93 @@ public class OutputGenerator {
     }
 
     /**
+     * Creates a SimpleImage from a boolean foreground mask (already watershed-cut).
+     * Foreground pixels take the class value; everything else is 0, so the ridge
+     * lines removed by the watershed become background and split the traced blob.
+     */
+    private SimpleImage createClassImageFromMask(boolean[] mask, int targetClass, int width, int height) {
+        float[] data = new float[width * height];
+        for (int i = 0; i < data.length; i++) {
+            data[i] = mask[i] ? targetClass : 0;
+        }
+        return SimpleImages.createFloatImage(data, width, height);
+    }
+
+    /**
+     * Separates touching instances of a single class using a distance-transform
+     * watershed, and returns the resulting foreground mask.
+     * <p>
+     * The pipeline mirrors ImageJ's classic binary watershed: build a binary mask
+     * for the target class, compute its Euclidean distance map (EDM), then run
+     * {@link MaximumFinder} in SEGMENTED mode over the EDM. That places watershed
+     * ridge lines between basins (one basin per distance maximum). The returned
+     * mask is the original foreground with those ridge pixels removed, so a
+     * subsequent contour trace yields one object per instance.
+     *
+     * @param classMap    merged classification map [height][width]
+     * @param targetClass class index to isolate
+     * @param width       map width
+     * @param height      map height
+     * @param tolerance   maxima merge tolerance (higher = fewer cuts)
+     * @return foreground mask (row-major, length width*height); true = keep pixel
+     */
+    static boolean[] watershedForeground(int[][] classMap, int targetClass, int width, int height, double tolerance) {
+        ByteProcessor mask = new ByteProcessor(width, height);
+        byte[] maskPx = (byte[]) mask.getPixels();
+        for (int y = 0; y < height; y++) {
+            int rowOff = y * width;
+            int[] row = classMap[y];
+            for (int x = 0; x < width; x++) {
+                maskPx[rowOff + x] = (row[x] == targetClass) ? (byte) 255 : 0;
+            }
+        }
+
+        boolean[] fg = new boolean[width * height];
+        try {
+            // Euclidean distance map of the foreground (background value 0).
+            FloatProcessor edm = new EDM().makeFloatEDM(mask, 0, false);
+            // Watershed-segment the EDM: 255 = basin interior, 0 = ridge/background.
+            ByteProcessor segmented = new MaximumFinder()
+                    .findMaxima(edm, tolerance, ImageProcessor.NO_THRESHOLD, MaximumFinder.SEGMENTED, false, true);
+            if (segmented == null) {
+                for (int i = 0; i < fg.length; i++) fg[i] = (maskPx[i] & 0xFF) != 0;
+                return fg;
+            }
+            byte[] segPx = (byte[]) segmented.getPixels();
+            // Keep only original-foreground pixels that survived as basin interior.
+            for (int i = 0; i < fg.length; i++) {
+                fg[i] = ((maskPx[i] & 0xFF) != 0) && ((segPx[i] & 0xFF) != 0);
+            }
+        } catch (Exception e) {
+            // Watershed is best-effort; on any failure fall back to the un-split mask
+            // so object creation still succeeds (just without instance separation).
+            logger.warn("Watershed split failed for class {}; using un-split mask: {}", targetClass, e.getMessage());
+            for (int i = 0; i < fg.length; i++) fg[i] = (maskPx[i] & 0xFF) != 0;
+        }
+        return fg;
+    }
+
+    /**
+     * Attaches scale-invariant shape descriptors to an object: circularity
+     * (4*pi*area / perimeter^2, capped at 1.0) and solidity (area / convex-hull
+     * area). Both are computed in the geometry's own units, so pixel scaling
+     * cancels out.
+     */
+    private void addShapeMeasurements(PathObject pathObject, Geometry geometry) {
+        try {
+            double area = geometry.getArea();
+            double perimeter = geometry.getLength();
+            double circularity = perimeter > 0 ? Math.min(1.0, 4.0 * Math.PI * area / (perimeter * perimeter)) : 0.0;
+            double convexArea = geometry.convexHull().getArea();
+            double solidity = convexArea > 0 ? area / convexArea : 0.0;
+            pathObject.getMeasurementList().put("Circularity", circularity);
+            pathObject.getMeasurementList().put("Solidity", solidity);
+        } catch (Exception e) {
+            logger.debug("Failed to compute shape measurements: {}", e.getMessage());
+        }
+    }
+
+    /**
      * Clips objects to the parent ROI using geometric intersection.
      * Objects that don't intersect the parent are removed.
      * Objects that partially intersect are clipped to the parent boundary.
@@ -535,9 +643,11 @@ public class OutputGenerator {
                 Geometry intersection = objGeom.intersection(parentGeom);
                 if (intersection.isEmpty()) continue;
 
-                // Check minimum size after clipping
+                // Check size after clipping (min, and max when set)
                 double areaMicrons = intersection.getArea() * pixelSizeMicrons * pixelSizeMicrons;
                 if (areaMicrons < config.getMinObjectSizeMicrons()) continue;
+                double maxObjectSizeMicrons = config.getMaxObjectSizeMicrons();
+                if (maxObjectSizeMicrons > 0 && areaMicrons > maxObjectSizeMicrons) continue;
 
                 ROI clippedROI = GeometryTools.geometryToROI(intersection, ImagePlane.getDefaultPlane());
 
@@ -552,6 +662,11 @@ public class OutputGenerator {
                 // Copy measurements
                 clippedObj.getMeasurementList().put("Area (um^2)", areaMicrons);
                 clippedObj.getMeasurementList().put("Area (pixels)", intersection.getArea());
+                // Recompute shape measurements on the clipped geometry so boundary
+                // objects keep them (they were dropped by the recreate above).
+                if (config.isAddShapeMeasurements()) {
+                    addShapeMeasurements(clippedObj, intersection);
+                }
 
                 clipped.add(clippedObj);
             } catch (Exception e) {

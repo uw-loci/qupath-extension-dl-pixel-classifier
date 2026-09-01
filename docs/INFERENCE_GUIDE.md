@@ -51,8 +51,42 @@ For unmatched channels, use the dropdown to manually remap to the correct image 
 |--------|-------------|---------------|
 | **Object Type** | DETECTION (lightweight) or ANNOTATION (editable) | DETECTION for quantification |
 | **Min Object Size** | Discard objects smaller than this area (um^2) | 10-100 um^2 |
+| **Max Object Size** | Discard objects larger than this area (um^2); 0 = no limit | 0 (off), or set to drop mis-merged sheets |
 | **Hole Filling** | Fill holes smaller than this area (um^2) | 5-50 um^2 |
 | **Boundary Smoothing** | Simplify jagged boundaries (microns tolerance) | 0.5-2.0 um |
+| **Separate touching objects** | Split abutting instances of the same class into separate objects (watershed) | ON for cells/glands/nuclei; OFF for tissue/tumor regions |
+| **Split Tolerance** | How aggressively to split when separation is on; higher = fewer cuts | 0.5 (matches ImageJ binary watershed) |
+| **Add shape measurements** | Attach circularity and solidity to each object | ON when filtering objects by shape |
+
+### Separating touching objects
+
+By default, object creation is **connected-components**: every contiguous run of one
+class becomes one object. That is correct for continuous regions (a tumor area, a
+tissue compartment) but merges touching instances -- two abutting cells of the same
+class become a single object.
+
+Turn on **Separate touching objects** to split them. It runs a distance-transform
+watershed on each class's mask (over the seamlessly merged, cross-tile classification
+map) before tracing, cutting one object per instance. It is **off by default** because
+it only helps when objects of a class actually touch, and it can over-fragment
+concave shapes.
+
+- **Split Tolerance** controls how eagerly it cuts. Higher tolerance merges nearby
+  seeds -> fewer, larger objects; lower tolerance splits more aggressively. Start at
+  0.5 (ImageJ's classic binary-watershed value). If you see one object cut into
+  several pieces, raise it; if two clearly separate cells stay merged, lower it (or
+  raise **Overlay Prediction Smoothing**, which removes the noisy maxima that cause
+  spurious cuts).
+- The watershed cannot invent a boundary the class map does not support. For densely
+  packed, irregular objects where distance-transform watershed under-performs, the
+  more robust route is to train an explicit *boundary* class (annotate the gaps) so
+  the interiors fall out already separated -- see the classification-to-objects
+  design note. That is a training-data change, not a post-processing toggle.
+
+> Note: instance separation is a **post-processing** step on the pixel classification.
+> The model itself is a semantic classifier -- it labels pixels by class, not by
+> object identity -- so you do **not** retrain it to get objects. This mirrors how
+> LABKIT and ilastik derive segments from their pixel classifiers.
 
 ## Step 5: Configure Processing Options
 

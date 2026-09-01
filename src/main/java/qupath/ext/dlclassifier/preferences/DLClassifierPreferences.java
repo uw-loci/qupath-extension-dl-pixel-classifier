@@ -52,10 +52,48 @@ public final class DLClassifierPreferences {
             PathPrefs.createPersistentPreference("dlclassifier.usePretrainedWeights", true);
 
     // Inference defaults
+    // ==================== Python environment ====================
+    //
+    // DUPLICATED ACROSS THE APPOSE EXTENSIONS. The same pair of preferences and
+    // the same ApposeEnvLocation helper exist in qupath-extension-qpsc's QP-CAT,
+    // -cellAPpose, -ppm and -fiber-analysis. No shared library yet -- see
+    // claude-reports/TODO_LIST.md, "shared Appose env-location library". Change
+    // all five together or they diverge.
+
+    /**
+     * Base directory the Appose environment is built under; blank means the
+     * Appose default. Configurable because that default lives under the
+     * home-directory quota on HPC and managed desktops, where a multi-gigabyte
+     * environment fails with "Quota exceeded (os error 122)".
+     */
+    private static final StringProperty envBaseDir =
+            PathPrefs.createPersistentPreference("dlclassifier.env.baseDir", "");
+
+    /**
+     * Directory an environment was last successfully built at. Bookkeeping, not
+     * a setting: once the location preference changes the old path is gone, so
+     * without this nothing knows which directory was superseded. Written only
+     * after a build verifies.
+     */
+    private static final StringProperty envLastBuiltDir =
+            PathPrefs.createPersistentPreference("dlclassifier.env.lastBuiltDir", "");
+
     private static final BooleanProperty useGPU = PathPrefs.createPersistentPreference("dlclassifier.useGPU", true);
 
     private static final DoubleProperty minObjectSizeMicrons =
             PathPrefs.createPersistentPreference("dlclassifier.minObjectSizeMicrons", 10.0);
+
+    private static final DoubleProperty maxObjectSizeMicrons =
+            PathPrefs.createPersistentPreference("dlclassifier.maxObjectSizeMicrons", 0.0);
+
+    private static final BooleanProperty separateTouchingObjects =
+            PathPrefs.createPersistentPreference("dlclassifier.separateTouchingObjects", false);
+
+    private static final DoubleProperty watershedTolerance =
+            PathPrefs.createPersistentPreference("dlclassifier.watershedTolerance", 0.5);
+
+    private static final BooleanProperty addShapeMeasurements =
+            PathPrefs.createPersistentPreference("dlclassifier.addShapeMeasurements", false);
 
     private static final DoubleProperty holeFillingMicrons =
             PathPrefs.createPersistentPreference("dlclassifier.holeFillingMicrons", 5.0);
@@ -388,6 +426,18 @@ public final class DLClassifierPreferences {
         ObservableList<org.controlsfx.control.PropertySheet.Item> items =
                 qupath.getPreferencePane().getPropertySheet().getItems();
 
+        items.add(new PropertyItemBuilder<>(envBaseDir, String.class)
+                .propertyType(PropertyItemBuilder.PropertyType.DIRECTORY)
+                .name("Python environment location")
+                .category(CATEGORY)
+                .description("Directory the Python environment is built under. Leave blank "
+                        + "for the default (~/.local/share/appose), which is right on most "
+                        + "machines. Set it when the home directory is quota-limited -- on "
+                        + "HPC and managed desktops an environment this size fails there. "
+                        + "Changing it builds a NEW environment; the old one is left alone "
+                        + "and you are asked about removing it only after the new one works.")
+                .build());
+
         items.add(new PropertyItemBuilder<>(useGPU, Boolean.class)
                 .name("Use GPU for Inference")
                 .category(CATEGORY)
@@ -676,6 +726,24 @@ public final class DLClassifierPreferences {
 
     // ==================== Inference Defaults ====================
 
+    /** Base dir for the Appose env, or "" for the Appose default. */
+    public static String getEnvBaseDir() {
+        return envBaseDir.get();
+    }
+
+    public static void setEnvBaseDir(String v) {
+        envBaseDir.set(v == null ? "" : v.strip());
+    }
+
+    /** Directory an environment was last successfully built at; "" if none. */
+    public static String getEnvLastBuiltDir() {
+        return envLastBuiltDir.get();
+    }
+
+    public static void setEnvLastBuiltDir(String v) {
+        envLastBuiltDir.set(v == null ? "" : v);
+    }
+
     public static boolean isUseGPU() {
         return useGPU.get();
     }
@@ -714,6 +782,54 @@ public final class DLClassifierPreferences {
 
     public static DoubleProperty minObjectSizeMicronsProperty() {
         return minObjectSizeMicrons;
+    }
+
+    public static double getMaxObjectSizeMicrons() {
+        return maxObjectSizeMicrons.get();
+    }
+
+    public static void setMaxObjectSizeMicrons(double size) {
+        maxObjectSizeMicrons.set(size);
+    }
+
+    public static DoubleProperty maxObjectSizeMicronsProperty() {
+        return maxObjectSizeMicrons;
+    }
+
+    public static boolean isSeparateTouchingObjects() {
+        return separateTouchingObjects.get();
+    }
+
+    public static void setSeparateTouchingObjects(boolean enabled) {
+        separateTouchingObjects.set(enabled);
+    }
+
+    public static BooleanProperty separateTouchingObjectsProperty() {
+        return separateTouchingObjects;
+    }
+
+    public static double getWatershedTolerance() {
+        return watershedTolerance.get();
+    }
+
+    public static void setWatershedTolerance(double tolerance) {
+        watershedTolerance.set(tolerance);
+    }
+
+    public static DoubleProperty watershedToleranceProperty() {
+        return watershedTolerance;
+    }
+
+    public static boolean isAddShapeMeasurements() {
+        return addShapeMeasurements.get();
+    }
+
+    public static void setAddShapeMeasurements(boolean enabled) {
+        addShapeMeasurements.set(enabled);
+    }
+
+    public static BooleanProperty addShapeMeasurementsProperty() {
+        return addShapeMeasurements;
     }
 
     public static double getHoleFillingMicrons() {

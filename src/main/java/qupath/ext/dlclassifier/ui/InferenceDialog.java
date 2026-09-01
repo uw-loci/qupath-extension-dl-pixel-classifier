@@ -103,8 +103,12 @@ public class InferenceDialog {
         private ComboBox<InferenceConfig.OutputType> outputTypeCombo;
         private ComboBox<OutputObjectType> objectTypeCombo;
         private Spinner<Double> minObjectSizeSpinner;
+        private Spinner<Double> maxObjectSizeSpinner;
         private Spinner<Double> holeFillingSpinner;
         private Spinner<Double> smoothingSpinner;
+        private CheckBox separateTouchingCheck;
+        private Spinner<Double> watershedToleranceSpinner;
+        private CheckBox shapeMeasurementsCheck;
 
         // Channel configuration
         private ChannelSelectionPanel channelPanel;
@@ -389,6 +393,68 @@ public class InferenceDialog {
 
             grid.add(new Label("Boundary Smoothing:"), 0, row);
             grid.add(smoothingSpinner, 1, row);
+            row++;
+
+            // Max object size (0 = no limit) - pairs with min size to bracket the
+            // expected object area and drop mis-merged sheets.
+            maxObjectSizeSpinner =
+                    new Spinner<>(0.0, 10_000_000.0, DLClassifierPreferences.getMaxObjectSizeMicrons(), 1.0);
+            maxObjectSizeSpinner.setEditable(true);
+            maxObjectSizeSpinner.setPrefWidth(100);
+            TooltipHelper.install(
+                    maxObjectSizeSpinner,
+                    "Maximum area threshold in um^2 for generated objects.\n"
+                            + "Objects larger than this are discarded -- useful to drop a\n"
+                            + "mis-segmented region that merged into one huge blob.\n"
+                            + "Set to 0 (default) for no upper limit.");
+
+            grid.add(new Label("Max Object Size (um2):"), 0, row);
+            grid.add(maxObjectSizeSpinner, 1, row);
+            row++;
+
+            // Separate touching objects (watershed split of the class map)
+            separateTouchingCheck = new CheckBox("Separate touching objects");
+            separateTouchingCheck.setSelected(DLClassifierPreferences.isSeparateTouchingObjects());
+            TooltipHelper.install(
+                    separateTouchingCheck,
+                    "Split touching instances of the same class into separate objects.\n\n"
+                            + "Runs a distance-transform watershed on each class before tracing,\n"
+                            + "so two abutting structures become two objects instead of one.\n\n"
+                            + "Leave OFF for large continuous regions (tissue, tumor area) where\n"
+                            + "you want one object per region. Turn ON for packed, countable\n"
+                            + "structures (cells, glands, nuclei) that touch each other.");
+            grid.add(separateTouchingCheck, 0, row, 2, 1);
+            row++;
+
+            // Watershed tolerance (only meaningful when separation is enabled)
+            watershedToleranceSpinner = new Spinner<>(0.0, 20.0, DLClassifierPreferences.getWatershedTolerance(), 0.5);
+            watershedToleranceSpinner.setEditable(true);
+            watershedToleranceSpinner.setPrefWidth(100);
+            watershedToleranceSpinner
+                    .disableProperty()
+                    .bind(separateTouchingCheck.selectedProperty().not());
+            TooltipHelper.install(
+                    watershedToleranceSpinner,
+                    "How aggressively touching objects are split (watershed tolerance).\n"
+                            + "HIGHER values merge nearby seeds -> fewer cuts (less fragmentation).\n"
+                            + "LOWER values split more aggressively.\n"
+                            + "0.5 matches ImageJ's classic binary watershed and is a good start.\n"
+                            + "Only used when 'Separate touching objects' is on.");
+
+            grid.add(new Label("Split Tolerance:"), 0, row);
+            grid.add(watershedToleranceSpinner, 1, row);
+            row++;
+
+            // Shape measurements
+            shapeMeasurementsCheck = new CheckBox("Add shape measurements (circularity, solidity)");
+            shapeMeasurementsCheck.setSelected(DLClassifierPreferences.isAddShapeMeasurements());
+            TooltipHelper.install(
+                    shapeMeasurementsCheck,
+                    "Attach circularity and solidity to each created object.\n"
+                            + "Both are scale-invariant shape ratios that make objects easy to\n"
+                            + "filter downstream (round cells vs irregular debris vs glands).\n"
+                            + "Circularity: 1.0 = perfect circle. Solidity: 1.0 = fully convex.");
+            grid.add(shapeMeasurementsCheck, 0, row, 2, 1);
 
             TitledPane pane = new TitledPane("OUTPUT OPTIONS", grid);
             pane.setExpanded(true);
@@ -905,7 +971,11 @@ public class InferenceDialog {
             DLClassifierPreferences.setDefaultObjectType(
                     objectTypeCombo.getValue().name());
             DLClassifierPreferences.setMinObjectSizeMicrons(minObjectSizeSpinner.getValue());
+            DLClassifierPreferences.setMaxObjectSizeMicrons(maxObjectSizeSpinner.getValue());
             DLClassifierPreferences.setHoleFillingMicrons(holeFillingSpinner.getValue());
+            DLClassifierPreferences.setSeparateTouchingObjects(separateTouchingCheck.isSelected());
+            DLClassifierPreferences.setWatershedTolerance(watershedToleranceSpinner.getValue());
+            DLClassifierPreferences.setAddShapeMeasurements(shapeMeasurementsCheck.isSelected());
 
             ClassifierMetadata classifier = classifierTable.getSelectionModel().getSelectedItem();
 
@@ -920,8 +990,12 @@ public class InferenceDialog {
                     .outputType(outputTypeCombo.getValue())
                     .objectType(objectTypeCombo.getValue())
                     .minObjectSize(minObjectSizeSpinner.getValue())
+                    .maxObjectSize(maxObjectSizeSpinner.getValue())
                     .holeFilling(holeFillingSpinner.getValue())
                     .smoothing(smoothingSpinner.getValue())
+                    .separateTouchingObjects(separateTouchingCheck.isSelected())
+                    .watershedTolerance(watershedToleranceSpinner.getValue())
+                    .addShapeMeasurements(shapeMeasurementsCheck.isSelected())
                     .useGPU(useGPUCheck.isSelected())
                     .useTTA(useTTACheck.isSelected())
                     .multiPassAveraging(DLClassifierPreferences.isMultiPassAveraging())
@@ -952,8 +1026,12 @@ public class InferenceDialog {
                     .outputType(outputTypeCombo.getValue())
                     .objectType(objectTypeCombo.getValue())
                     .minObjectSize(minObjectSizeSpinner.getValue())
+                    .maxObjectSize(maxObjectSizeSpinner.getValue())
                     .holeFilling(holeFillingSpinner.getValue())
                     .smoothing(smoothingSpinner.getValue())
+                    .separateTouchingObjects(separateTouchingCheck.isSelected())
+                    .watershedTolerance(watershedToleranceSpinner.getValue())
+                    .addShapeMeasurements(shapeMeasurementsCheck.isSelected())
                     .useGPU(useGPUCheck.isSelected())
                     .useTTA(useTTACheck.isSelected())
                     .overlaySmoothingSigma(DLClassifierPreferences.getOverlaySmoothing())

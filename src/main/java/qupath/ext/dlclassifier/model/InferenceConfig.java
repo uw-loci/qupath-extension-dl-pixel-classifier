@@ -70,8 +70,14 @@ public class InferenceConfig {
     private final OutputType outputType;
     private final OutputObjectType objectType;
     private final double minObjectSizeMicrons;
+    private final double maxObjectSizeMicrons;
     private final double holeFillingMicrons;
     private final double boundarySmoothing;
+
+    // Instance separation (post-processing objects from the class map)
+    private final boolean separateTouchingObjects;
+    private final double watershedTolerance;
+    private final boolean addShapeMeasurements;
 
     // Processing options
     private final int maxTilesInMemory;
@@ -95,8 +101,12 @@ public class InferenceConfig {
         this.outputType = builder.outputType;
         this.objectType = builder.objectType;
         this.minObjectSizeMicrons = builder.minObjectSizeMicrons;
+        this.maxObjectSizeMicrons = builder.maxObjectSizeMicrons;
         this.holeFillingMicrons = builder.holeFillingMicrons;
         this.boundarySmoothing = builder.boundarySmoothing;
+        this.separateTouchingObjects = builder.separateTouchingObjects;
+        this.watershedTolerance = builder.watershedTolerance;
+        this.addShapeMeasurements = builder.addShapeMeasurements;
         this.maxTilesInMemory = builder.maxTilesInMemory;
         this.useGPU = builder.useGPU;
         this.useTTA = builder.useTTA;
@@ -133,6 +143,56 @@ public class InferenceConfig {
 
     public double getMinObjectSizeMicrons() {
         return minObjectSizeMicrons;
+    }
+
+    /**
+     * Returns the maximum object area in microns^2. Objects larger than this are
+     * discarded. A value of 0 (the default) means no upper limit. Pairs with
+     * {@link #getMinObjectSizeMicrons()} to bracket the expected object size and,
+     * in particular, to drop a mis-segmented sheet that traced as one huge blob.
+     *
+     * @return max object area in microns^2, or 0 for no limit
+     */
+    public double getMaxObjectSizeMicrons() {
+        return maxObjectSizeMicrons;
+    }
+
+    /**
+     * Whether to separate touching instances of the same class when creating
+     * objects. When true, a distance-transform watershed is run per class on the
+     * merged classification map before contour tracing, so two abutting objects
+     * become two objects instead of one merged blob. Off by default: it only
+     * helps when objects of one class actually touch, and it can over-fragment
+     * concave shapes.
+     *
+     * @return true if touching-object separation is enabled
+     */
+    public boolean isSeparateTouchingObjects() {
+        return separateTouchingObjects;
+    }
+
+    /**
+     * Watershed noise tolerance used when {@link #isSeparateTouchingObjects()} is
+     * on. It is the merge tolerance for distance-transform maxima: higher values
+     * merge nearby seeds and produce fewer cuts (less fragmentation); lower values
+     * split more aggressively. ImageJ's classic binary watershed uses 0.5, which
+     * is the default here.
+     *
+     * @return watershed maxima tolerance (EDM units)
+     */
+    public double getWatershedTolerance() {
+        return watershedTolerance;
+    }
+
+    /**
+     * Whether to attach basic shape measurements (circularity, solidity) to each
+     * created object. These are scale-invariant ratios that make objects easy to
+     * filter downstream (e.g. round cells vs. irregular debris vs. glands).
+     *
+     * @return true if shape measurements should be added
+     */
+    public boolean isAddShapeMeasurements() {
+        return addShapeMeasurements;
     }
 
     public double getHoleFillingMicrons() {
@@ -225,8 +285,12 @@ public class InferenceConfig {
                 && overlap == that.overlap
                 && Double.compare(that.overlapPercent, overlapPercent) == 0
                 && Double.compare(that.minObjectSizeMicrons, minObjectSizeMicrons) == 0
+                && Double.compare(that.maxObjectSizeMicrons, maxObjectSizeMicrons) == 0
                 && Double.compare(that.holeFillingMicrons, holeFillingMicrons) == 0
                 && Double.compare(that.boundarySmoothing, boundarySmoothing) == 0
+                && separateTouchingObjects == that.separateTouchingObjects
+                && Double.compare(that.watershedTolerance, watershedTolerance) == 0
+                && addShapeMeasurements == that.addShapeMeasurements
                 && maxTilesInMemory == that.maxTilesInMemory
                 && useGPU == that.useGPU
                 && useTTA == that.useTTA
@@ -248,8 +312,12 @@ public class InferenceConfig {
                 outputType,
                 objectType,
                 minObjectSizeMicrons,
+                maxObjectSizeMicrons,
                 holeFillingMicrons,
                 boundarySmoothing,
+                separateTouchingObjects,
+                watershedTolerance,
+                addShapeMeasurements,
                 maxTilesInMemory,
                 useGPU,
                 useTTA,
@@ -270,7 +338,8 @@ public class InferenceConfig {
                 blendMode,
                 useTTA,
                 multiPassAveraging ? ", multiPass" : "",
-                useCompactArgmaxOutput ? ", argmax8" : "");
+                (useCompactArgmaxOutput ? ", argmax8" : "")
+                        + (separateTouchingObjects ? ", split@" + watershedTolerance : ""));
     }
 
     /**
@@ -382,8 +451,12 @@ public class InferenceConfig {
         private OutputType outputType = OutputType.MEASUREMENTS;
         private OutputObjectType objectType = OutputObjectType.DETECTION;
         private double minObjectSizeMicrons = 10.0;
+        private double maxObjectSizeMicrons = 0.0;
         private double holeFillingMicrons = 5.0;
         private double boundarySmoothing = 2.0;
+        private boolean separateTouchingObjects = false;
+        private double watershedTolerance = 0.5;
+        private boolean addShapeMeasurements = false;
         private int maxTilesInMemory = 50;
         private boolean useGPU = true;
         private boolean useTTA = false;
@@ -461,6 +534,62 @@ public class InferenceConfig {
          */
         public Builder minObjectSize(double minSize) {
             return minObjectSizeMicrons(minSize);
+        }
+
+        /**
+         * Sets the maximum object area in microns^2 (0 = no limit). Objects
+         * larger than this are discarded after tracing.
+         *
+         * @param maxSize max object area in microns^2, or 0 for no limit
+         * @return this builder
+         */
+        public Builder maxObjectSizeMicrons(double maxSize) {
+            this.maxObjectSizeMicrons = Math.max(0.0, maxSize);
+            return this;
+        }
+
+        /**
+         * Alias for maxObjectSizeMicrons() for more readable code.
+         */
+        public Builder maxObjectSize(double maxSize) {
+            return maxObjectSizeMicrons(maxSize);
+        }
+
+        /**
+         * Enables separation of touching instances of the same class via a
+         * distance-transform watershed applied to the merged class map before
+         * contour tracing.
+         *
+         * @param enabled true to split touching objects
+         * @return this builder
+         */
+        public Builder separateTouchingObjects(boolean enabled) {
+            this.separateTouchingObjects = enabled;
+            return this;
+        }
+
+        /**
+         * Sets the watershed maxima merge tolerance used when
+         * {@link #separateTouchingObjects(boolean)} is on. Higher = fewer cuts.
+         *
+         * @param tolerance EDM maxima tolerance (clamped to &gt;= 0)
+         * @return this builder
+         */
+        public Builder watershedTolerance(double tolerance) {
+            this.watershedTolerance = Math.max(0.0, tolerance);
+            return this;
+        }
+
+        /**
+         * Sets whether to attach circularity/solidity measurements to each
+         * created object.
+         *
+         * @param enabled true to add shape measurements
+         * @return this builder
+         */
+        public Builder addShapeMeasurements(boolean enabled) {
+            this.addShapeMeasurements = enabled;
+            return this;
         }
 
         public Builder holeFillingMicrons(double holeFilling) {
