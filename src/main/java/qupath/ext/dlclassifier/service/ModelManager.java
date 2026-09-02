@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
+import com.google.gson.ToNumberPolicy;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,11 +40,35 @@ public class ModelManager {
     private final Path userClassifiersDir;
 
     public ModelManager() {
-        this.gson = new GsonBuilder().setPrettyPrinting().create();
+        this.gson = createMetadataGson();
 
         // User-level classifiers directory
         String userHome = System.getProperty("user.home");
         this.userClassifiersDir = Path.of(userHome, ".qupath", "classifiers", "dl");
+    }
+
+    /**
+     * Builds the Gson used to read and rewrite {@code metadata.json}.
+     * <p>
+     * {@link ToNumberPolicy#LONG_OR_DOUBLE} is essential, not cosmetic. Gson's
+     * default policy deserializes every JSON number into a {@code Double} when
+     * the target type is {@code Object}, which is how the Python-only fields
+     * are merged in {@link #saveClassifier}. Re-serializing then turns integers
+     * into floats: {@code "decoder_channels": [128, 64, ...]} becomes
+     * {@code [128.0, 64.0, ...]}, and the Python inference loader hands those
+     * straight to {@code smp.Unet}, where PyTorch rejects {@code BatchNorm2d(128.0)}
+     * because {@code num_features} must be an integer. The same corruption hits
+     * {@code num_channels}, {@code selected_channels} and {@code input_size}.
+     * LONG_OR_DOUBLE parses an integral literal as {@code Long} and keeps a
+     * genuine decimal as {@code Double}, so both survive the round-trip.
+     *
+     * @return a Gson that preserves integer-valued JSON numbers
+     */
+    static Gson createMetadataGson() {
+        return new GsonBuilder()
+                .setPrettyPrinting()
+                .setObjectToNumberStrategy(ToNumberPolicy.LONG_OR_DOUBLE)
+                .create();
     }
 
     /**

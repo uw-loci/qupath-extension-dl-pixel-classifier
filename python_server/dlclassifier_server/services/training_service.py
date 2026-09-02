@@ -4785,7 +4785,13 @@ class TrainingService:
             # where ImageNet priors are worth keeping.
             if model_type == "fast-pretrained":
                 fp_encoder = architecture.get("backbone", "timm-tf_efficientnet_lite0")
-                fp_decoder = architecture.get("decoder_channels", [128, 64, 32, 16, 8])
+                # int() guards the same float round-trip described in
+                # inference_service._load_model (issue #26); a config
+                # reloaded from JSON can carry 128.0 rather than 128.
+                fp_decoder = [
+                    int(c)
+                    for c in architecture.get("decoder_channels", [128, 64, 32, 16, 8])
+                ]
                 model = smp.Unet(
                     encoder_name=fp_encoder,
                     encoder_weights=encoder_weights,

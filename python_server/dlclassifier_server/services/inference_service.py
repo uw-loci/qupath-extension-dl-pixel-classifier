@@ -1298,7 +1298,15 @@ class InferenceService:
                 # SMP U-Net with a small mobile encoder and scaled decoder.
                 # encoder_weights=None because the saved state_dict already
                 # holds the (possibly fine-tuned) weights.
-                fp_decoder = arch.get("decoder_channels", [128, 64, 32, 16, 8])
+                # int() is required, not defensive style: metadata.json
+                # round-trips through Gson on the Java side, which can
+                # hand back 128.0 instead of 128. smp.Unet forwards the
+                # value to nn.BatchNorm2d, and PyTorch rejects a float
+                # num_features. See issue #26.
+                fp_decoder = [
+                    int(c)
+                    for c in arch.get("decoder_channels", [128, 64, 32, 16, 8])
+                ]
                 model = smp.Unet(
                     encoder_name=smp_encoder_name,
                     encoder_weights=None,
