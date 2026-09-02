@@ -113,7 +113,7 @@ public class InferenceWorkflow {
      *     .classifier(metadata)
      *     .config(inferenceConfig)
      *     .channels(channelConfig)
-     *     .annotations(annotationList)
+     *     .annotations(annotations)   // any Collection of annotations
      *     .build()
      *     .run();
      * }</pre>
@@ -154,9 +154,20 @@ public class InferenceWorkflow {
             return this;
         }
 
-        /** Sets the annotations to classify (required). */
-        public InferenceBuilder annotations(List<PathObject> annotations) {
-            this.annotations = annotations;
+        /**
+         * Sets the annotations to classify (required).
+         * <p>
+         * Accepts any {@link Collection} rather than a {@link List} because the
+         * obvious way to gather annotations in a script,
+         * {@code getSelectedObjects().findAll { it.isAnnotation() }}, yields a
+         * {@code LinkedHashSet} -- Groovy's {@code findAll} preserves the
+         * receiver's type, and QuPath's selection is a set. Requiring a List
+         * made those scripts fail to dispatch at run time (issue #25).
+         *
+         * @param annotations the annotations to classify; copied defensively
+         */
+        public InferenceBuilder annotations(Collection<? extends PathObject> annotations) {
+            this.annotations = annotations == null ? null : new ArrayList<>(annotations);
             return this;
         }
 
