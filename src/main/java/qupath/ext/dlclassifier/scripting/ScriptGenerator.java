@@ -212,7 +212,10 @@ public class ScriptGenerator {
             case SELECTED_ANNOTATIONS:
                 // Fall back to all annotations when the user has nothing
                 // selected at the time the generated script runs.
-                appendLine(sb, "def annotations = getSelectedObjects().findAll { it.isAnnotation() }");
+                // toList() matters: getSelectedObjects() returns a Set, and
+                // Groovy's findAll keeps the receiver's type, so without it the
+                // script hands a LinkedHashSet to a List parameter (issue #25).
+                appendLine(sb, "def annotations = getSelectedObjects().findAll { it.isAnnotation() }.toList()");
                 appendLine(sb, "if (annotations.isEmpty()) {");
                 appendLine(sb, "    annotations = getAnnotationObjects()");
                 appendLine(sb, "}");
