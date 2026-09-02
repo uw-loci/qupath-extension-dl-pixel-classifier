@@ -115,11 +115,19 @@ This dialog requires:
 - **Description** (minimum 20 characters) — detailed explanation of the problem
 
 Optionally include:
+- **GitHub username** — e.g. `alice` or `@alice`; mentioned in the public issue so you receive notifications
+- **image.sc username** — forum username; also visible in the public issue
 - System information (versions, OS)
 - QuPath logs
 - Window screenshot
 
-Reports are submitted directly to the development team without requiring a GitHub account.
+> **Important:** Reports are filed **anonymously** — the issue is created by the reporting service, not from your account, so you will **not** be notified of replies unless you either:
+> - Add a GitHub username to the optional contact fields (which mentions you on the issue and triggers notifications), or
+> - Comment on the issue yourself on GitHub after it's created.
+
+Filing a report needs no GitHub account. "Open the issue in my browser after submitting" is
+checked by default; uncheck it if you would rather not have a browser window open -- the
+success dialog links the issue either way.
 
 ### Recommended workflow: separate training and production projects
 
