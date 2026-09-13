@@ -1050,8 +1050,10 @@ public class TrainingDialog {
             sslEncoderRadio.setUserData(ClassifierHandler.WeightInitStrategy.SSL_ENCODER);
             TooltipHelper.install(
                     sslEncoderRadio,
-                    "Load encoder weights from a self-supervised SimCLR/BYOL pretrained model.\n"
-                            + "Matching encoder layers are loaded; decoder/head are randomly initialized.\n"
+                    "Load encoder weights from a self-supervised\n"
+                            + "SimCLR/BYOL pretrained model.\n"
+                            + "Matching encoder layers are loaded; the decoder\n"
+                            + "and head are randomly initialized.\n"
                             + "Use the 'SSL Pretrain Encoder' utility to create these weights.");
 
             sslEncoderPathField = new TextField();
@@ -1130,7 +1132,8 @@ public class TrainingDialog {
             continueTrainingRadio.setUserData(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
             TooltipHelper.install(
                     continueTrainingRadio,
-                    "Load all weights from a previously trained model as the starting point.\n"
+                    "Load all weights from a previously trained model\n"
+                            + "as the starting point.\n"
                             + "The optimizer and learning rate schedule start fresh.\n"
                             + "Architecture, backbone, tile size, downsample, and context scale\n"
                             + "are locked to match the saved model.\n"
@@ -1237,7 +1240,8 @@ public class TrainingDialog {
             TooltipHelper.install(
                     pane,
                     "Choose how to initialize model weights.\n"
-                            + "Pretrained weights (default) transfer learned features and train faster.\n"
+                            + "Pretrained weights (default) transfer learned\n"
+                            + "features and train faster.\n"
                             + "Continue training picks up from a previously saved model.");
             return pane;
         }
@@ -2452,8 +2456,8 @@ public class TrainingDialog {
             });
             TooltipHelper.install(
                     basicSplitChangeBtn,
-                    "Switch to Advanced mode to override per-image roles, "
-                            + "re-run Auto-Distribute, change the validation split %, "
+                    "Switch to Advanced mode to override per-image roles,\n"
+                            + "re-run Auto-Distribute, change the validation split %,\n"
                             + "or use All-Both.");
             HBox basicSplitBox = new HBox(8, basicSplitStatusLabel, basicSplitChangeBtn);
             basicSplitBox.setAlignment(Pos.CENTER_LEFT);
@@ -4436,7 +4440,8 @@ public class TrainingDialog {
             lineStrokeWidthSpinner.setPrefWidth(100);
             lineStrokeLabel = new Label("Line Stroke Width:");
             TooltipHelper.install(
-                    "Width in pixels for rendering line/polyline annotations as training masks.\n"
+                    "Width in pixels for rendering line and polyline\n"
+                            + "annotations as training masks.\n"
                             + "Pre-filled from QuPath's annotation stroke thickness.\n\n"
                             + "Thin strokes (<5px) produce sparse training signal from polyline\n"
                             + "annotations -- consider increasing for better training.\n"

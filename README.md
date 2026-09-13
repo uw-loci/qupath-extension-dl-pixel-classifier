@@ -19,56 +19,54 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 > - **Start small.** Use ResNet-18 or ResNet-34 with 256px tiles and a small batch size (2-4) first. Only scale up if your hardware handles it comfortably.
 > - **Monitor your system resources** (GPU memory, CPU usage) during training, especially the first time with new settings.
 >
-> This extension makes powerful deep learning accessible within QuPath, but it does not change the fundamental hardware requirements of training neural networks. Plan your model architecture and training parameters according to your available hardware.
+> Running deep learning inside QuPath does not reduce what training a neural network costs. Choose your model architecture and training parameters to fit the hardware you have.
 
 ---
 
 ## Features
-
-Each bullet leads with what you can *do*; the algorithm or architecture name is in parentheses or after an em-dash for when you need to know what's under the hood.
 
 ![Histology section with a few sparse brush annotations drawn in several colors over the tissue](docs/images/annotated-tissue-sparse-annotations.png)
 
 *Sparse brush annotations are enough to start: the extension samples training tiles from the regions you mark.*
 
 ### Train your own classifier
-- **Train custom pixel classifiers from sparse annotations** -- draw a few regions per class, the extension samples training tiles from them
-- **Train across multiple project images in one run** for more representative sampling
-- **Works on brightfield (RGB) and multi-channel fluorescence/spectral images**, with per-channel normalization
-- **Eliminate tile-boundary artifacts** by computing normalization statistics over the whole image instead of per tile
-- **Choose your encoder backbone** -- ResNet / EfficientNet / MobileNet (UNet), MuViT (multi-scale Vision Transformer with multi-resolution feature fusion), or bring your own ONNX model
-- **Start from histology-pretrained weights** (TCGA, Lunit, Kather100K) instead of ImageNet, for better tissue features out of the box
-- **Use foundation-model encoders for richer features** -- h-optimus-0, virchow, hibou-l, hibou-b, midnight, dinov2-large; downloaded on demand from HuggingFace, all under commercially-permissive licenses (Apache 2.0, MIT). Integration inspired by LazySlide (Zheng et al. 2026, Nature Methods)
-- **Tune the training recipe in one place** -- scheduler, loss, early-stopping metric and patience, and mixed precision live together in the collapsed "Training Strategy" panel
-- **Better segmentation by default** -- combined cross-entropy + Dice loss
-- **Stop training when segmentation quality plateaus, not just loss** (mean-IoU-based early stopping)
-- **Train roughly 2x faster on NVIDIA GPUs** (mixed-precision training, AMP)
-- **Reuse a previous model's settings** for fast retraining iterations, with class auto-matching
+- Train custom pixel classifiers from sparse annotations: draw a few regions per class, the extension samples training tiles from them
+- Train across multiple project images in one run for more representative sampling
+- Works on brightfield (RGB) and multi-channel fluorescence/spectral images, with per-channel normalization
+- Eliminate tile-boundary artifacts by computing normalization statistics over the whole image instead of per tile
+- Choose your encoder backbone: ResNet / EfficientNet / MobileNet (UNet), MuViT (multi-scale Vision Transformer with multi-resolution feature fusion), or bring your own ONNX model
+- Start from histology-pretrained weights (TCGA, Lunit, Kather100K) instead of ImageNet, for better tissue features out of the box
+- Use foundation-model encoders for richer features: h-optimus-0, virchow, hibou-l, hibou-b, midnight, dinov2-large; downloaded on demand from HuggingFace, all under commercially-permissive licenses (Apache 2.0, MIT). Integration inspired by LazySlide (Zheng et al. 2026, Nature Methods)
+- Tune the training recipe in one place: scheduler, loss, early-stopping metric and patience, and mixed precision live together in the collapsed "Training Strategy" panel
+- Better segmentation by default: combined cross-entropy + Dice loss
+- Stop training when segmentation quality plateaus, not just loss (mean-IoU-based early stopping)
+- Train roughly 2x faster on NVIDIA GPUs (mixed-precision training, AMP)
+- Reuse a previous model's settings for fast retraining iterations, with class auto-matching
 
 ### Pretrain and adapt to your data
-- **MAE pretraining for MuViT** -- masked-autoencoder self-supervised pretraining on your own unlabeled tiles, using tiles drawn from annotation classes you choose
-- **Adapt an existing trained model to a new microscope, stain, or compression** -- domain-adaptive pretraining seeds MAE from a prior encoder, or AdaBN ("Calibrate model to current image") recomputes BatchNorm stats on a new acquisition in seconds with zero retraining. See [Domain Adaptation Guide](docs/DOMAIN_ADAPTATION_GUIDE.md)
+- MAE pretraining for MuViT: masked-autoencoder self-supervised pretraining on your own unlabeled tiles, using tiles drawn from annotation classes you choose
+- Adapt an existing trained model to a new microscope, stain, or compression: domain-adaptive pretraining seeds MAE from a prior encoder, or AdaBN ("Calibrate model to current image") recomputes BatchNorm stats on a new acquisition in seconds with zero retraining. See [Domain Adaptation Guide](docs/DOMAIN_ADAPTATION_GUIDE.md)
 - **Developer-only:** SimCLR / BYOL self-supervised pretraining for CNN backbones is available behind the "Show Developer Pretraining Options" preference. SSL pretraining is collapse-prone on small datasets and is rarely the right tool for end-user workflows; MAE is the recommended path for most users
 
 ### Run inference
-- **Pick your output** -- per-pixel measurements, detection objects, or classification overlays
-- **Get full per-pixel probability maps** for OBJECTS and OVERLAY outputs, not just argmax labels
-- **Fast embedded Python inference** with zero-copy tile transfer (Appose shared-memory IPC)
-- **Efficient ROI merging** via hierarchical geometry union
-- **Out-of-distribution check** -- warns before inference when the image's pixel distribution (mean, contrast, dynamic range) differs significantly from the training data, helping you catch gross appearance shifts (stain, exposure, sensor changes) that could degrade predictions
+- Pick your output: per-pixel measurements, detection objects, or classification overlays
+- Get full per-pixel probability maps for OBJECTS and OVERLAY outputs, not just argmax labels
+- Fast embedded Python inference with zero-copy tile transfer (Appose shared-memory IPC)
+- Efficient ROI merging via hierarchical geometry union
+- Out-of-distribution check: warns before inference when the image's pixel distribution (mean, contrast, dynamic range) differs significantly from the training data, helping you catch gross appearance shifts (stain, exposure, sensor changes) that could degrade predictions
 
 ### Inspect and iterate
-- **Find your worst annotations and hardest tiles automatically** -- post-training evaluation runs the model over every training tile, ranks by loss, and renders per-tile loss heatmaps and disagreement maps as viewer overlays. Sessions save per classifier version and reload without re-running
-- **Visualize class confusions in a matrix** -- the Training Area Issues dialog includes a Confusion Matrix tab showing pixel-level GT × Predicted aggregates across all tiles, color-coded by error percentage. Click any off-diagonal cell to filter the Tiles tab to just those confusion pairs
-- **Refine annotations with model suggestions** -- the Training Area Issues dialog's Adjust tab lets you preview how model predictions would update a tile's annotations, filtered by confidence threshold. The confidence slider now has a colored track showing the blue→yellow→red heatmap; drag it to see changes update live as a green overlay composited over the confidence visualization. A threshold marker in the legend tracks your slider position. Preview changes before applying, toggle individual class transitions (e.g. "Background → Nucleus") on/off to be selective, and apply only the changes you want. Three overlay modes available: Loss Heatmap (per-pixel loss intensity), Confidence (per-pixel model confidence, the exact quantity the slider controls), and Disagreement (where predictions differ from annotations)
-- **See training progress live** with separate train and validation loss charts
+- Find your worst annotations and hardest tiles automatically: post-training evaluation runs the model over every training tile, ranks by loss, and renders per-tile loss heatmaps and disagreement maps as viewer overlays. Sessions save per classifier version and reload without re-running
+- Visualize class confusions in a matrix: the Training Area Issues dialog includes a Confusion Matrix tab showing pixel-level GT × Predicted aggregates across all tiles, color-coded by error percentage. Click any off-diagonal cell to filter the Tiles tab to just those confusion pairs
+- Refine annotations with model suggestions: the Training Area Issues dialog's Adjust tab lets you preview how model predictions would update a tile's annotations, filtered by confidence threshold. The confidence slider now has a colored track showing the blue→yellow→red heatmap; drag it to see changes update live as a green overlay composited over the confidence visualization. A threshold marker in the legend tracks your slider position. Preview changes before applying, toggle individual class transitions (e.g. "Background → Nucleus") on/off to be selective, and apply only the changes you want. Three overlay modes available: Loss Heatmap (per-pixel loss intensity), Confidence (per-pixel model confidence, the exact quantity the slider controls), and Disagreement (where predictions differ from annotations)
+- See training progress live with separate train and validation loss charts
 
 ### Automate and reproduce
-- **Run from Groovy scripts** for batch processing across a project
-- **Run headless** via the builder API, no GUI required
-- **"Copy as Script" buttons** in every dialog turn a configured run into a reproducible Groovy snippet
-- **Save and load training profiles** -- export your tuned training configuration (parameters, classes, channel setup, name/description) to a JSON file for reuse across projects without retraining
-- **Settings persist across sessions** so you don't re-enter the same training and inference parameters every time
+- Run from Groovy scripts for batch processing across a project
+- Run headless via the builder API, no GUI required
+- "Copy as Script" buttons in every dialog turn a configured run into a reproducible Groovy snippet
+- Save and load training profiles: export your tuned training configuration (parameters, classes, channel setup, name/description) to a JSON file for reuse across projects without retraining
+- Settings persist across sessions so you don't re-enter the same training and inference parameters every time
 
 ## Installation
 
@@ -118,17 +116,17 @@ If you encounter an issue or have feedback, use the built-in bug reporter:
 **Extensions > DL Pixel Classifier > Report a Bug...**
 
 This dialog requires:
-- **Summary** (8–80 characters) — a one-line description of the issue that becomes the GitHub issue title
-- **Description** (minimum 20 characters) — detailed explanation of the problem
+- **Summary** (8-80 characters): a one-line description of the issue, which becomes the GitHub issue title
+- **Description** (minimum 20 characters): a detailed explanation of the problem
 
 Optionally include:
-- **GitHub username** — e.g. `alice` or `@alice`; mentioned in the public issue so you receive notifications
-- **image.sc username** — forum username; also visible in the public issue
+- **GitHub username**, e.g. `alice` or `@alice`. You are mentioned in the public issue, so you receive notifications
+- **image.sc username**, your forum name, also visible in the public issue
 - System information (versions, OS)
 - QuPath logs
 - Window screenshot
 
-> **Important:** Reports are filed **anonymously** — the issue is created by the reporting service, not from your account, so you will **not** be notified of replies unless you either:
+> **Important:** Reports are filed **anonymously**. The issue is created by the reporting service rather than from your account, so you will **not** be notified of replies unless you either:
 > - Add a GitHub username to the optional contact fields (which mentions you on the issue and triggers notifications), or
 > - Comment on the issue yourself on GitHub after it's created.
 
@@ -193,10 +191,10 @@ To check your NVIDIA driver version, run `nvidia-smi` in a terminal. If your dri
 
 ## GPU Support
 
-The extension provides **two separate Python environments** that you choose between at startup. You select which one to install in **Edit > Preferences > Extensions > DL Pixel Classifier > "Python environment: compute variant"**:
+The extension has **two separate Python environments**. The setup wizard asks which one to install, checks for an NVIDIA GPU, and preselects GPU when it finds one. You can also set it directly in **Edit > Preferences > Extensions > DL Pixel Classifier > "Python environment: compute variant"**, or change it later from **Utilities > Compute Environment (CPU / GPU)...**:
 
-- **CPU (default)** -- works on any machine; no GPU acceleration. Training will be slower but functional. Choose this if you don't have an NVIDIA GPU or prefer broad compatibility.
-- **GPU (CUDA)** -- uses an NVIDIA GPU for training and inference (~2x faster). **Requires an NVIDIA GPU AND CUDA-compatible drivers -- the environment cannot install without one.** See [CUDA / GPU Driver Requirements](#cuda--gpu-driver-requirements) below.
+- **CPU**: works on any machine, with no GPU acceleration. Training is much slower but functional. Choose it if you have no NVIDIA GPU or want the widest compatibility; it is also the automatic fallback when the GPU environment cannot be installed.
+- **GPU (CUDA)**: uses an NVIDIA GPU for training and inference. **Requires an NVIDIA GPU AND CUDA-compatible drivers. The environment cannot install without one.** See [CUDA / GPU Driver Requirements](#cuda--gpu-driver-requirements) below.
 
 Each variant installs as a separate environment (~2-4 GB), so switching between them requires downloading a new set of packages. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for GPU detection issues or if your GPU is not being used.
 

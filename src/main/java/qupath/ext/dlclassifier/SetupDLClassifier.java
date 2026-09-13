@@ -456,7 +456,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         MenuItem inferenceOption = new MenuItem(res.getString("menu.inference"));
         TooltipHelper.installOnMenuItem(
                 inferenceOption,
-                "Apply a trained classifier to the current image or selected annotations.\n"
+                "Apply a trained classifier to the current image\n"
+                        + "or selected annotations.\n"
                         + "Results can be added as measurements, detection/annotation objects,\n"
                         + "or live classification overlays.");
         inferenceOption
@@ -621,7 +622,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         TooltipHelper.installOnMenuItem(
                 rebuildItem,
                 "Delete and re-download the Python deep learning environment.\n"
-                        + "Use this if the environment becomes corrupted or you want a fresh install.");
+                        + "Use this if the environment becomes corrupted,\n"
+                        + "or you want a fresh install.");
         rebuildItem.setOnAction(e -> rebuildEnvironment(qupath));
 
         // Compute environment (CPU/GPU) - always visible. This is the discoverable
