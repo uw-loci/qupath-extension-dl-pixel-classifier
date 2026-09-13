@@ -76,7 +76,7 @@ may not have enough samples.
 Trade-offs:
 - Typically ~0.5-1.5 mIoU below BatchRenorm on RGB H&E.
 - Composes cleanly with `torch.compile` and `channels_last`.
-- No running-stat drift -- same behaviour in train and eval mode.
+- No running-stat drift, same behaviour in train and eval mode.
 
 Reference: Wu and He, "Group Normalization", ECCV 2018.
 
@@ -159,7 +159,7 @@ stack quirks and can fail silently on atypical setups.
 Windows caveats: `onnxruntime-gpu` wheels with TRT support exist but
 lag upstream, and cuDNN/CUDA/TRT version combinations are fussy. If
 the TRT provider fails to load, check the server logs for the
-"TensorrtExecutionProvider not in [...] -- using
+"TensorrtExecutionProvider not in [...], using
 CUDAExecutionProvider instead" line and verify
 `onnxruntime.get_available_providers()`. Report issues if you hit an
 incompatibility so we can add it to a known-bad list.

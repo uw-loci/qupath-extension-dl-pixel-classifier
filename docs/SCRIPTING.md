@@ -7,8 +7,8 @@ How to use the Groovy scripting API for batch processing and reproducible workfl
 ## Overview
 
 The DL Pixel Classifier provides two scripting interfaces:
-1. **Simple API** (`DLClassifierScripts`) -- convenience methods for common operations
-2. **Builder API** (`InferenceWorkflow.builder()`, `TrainingWorkflow.builder()`) -- full control over every parameter
+1. **Simple API** (`DLClassifierScripts`), convenience methods for common operations
+2. **Builder API** (`InferenceWorkflow.builder()`, `TrainingWorkflow.builder()`), full control over every parameter
 
 Both dialogs also include a **"Copy as Script"** button that generates a runnable Groovy script from the current settings.
 
@@ -28,7 +28,7 @@ schedule, gradient accumulation, mixed precision, fused optimizer, LR
 Finder, GPU augmentation, torch.compile, in-memory dataset mode, the
 pretrained model path, and inference-side TTA / multi-pass averaging /
 overlay smoothing. Earlier versions silently dropped some of these and
-fell back to defaults when the script was run later -- if you have a
+fell back to defaults when the script was run later, if you have a
 script generated before 0.7.9, regenerate it from the dialog so the
 emitted settings match what the GUI ran.
 

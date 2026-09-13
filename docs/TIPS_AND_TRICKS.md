@@ -8,7 +8,7 @@ Practical workflow tips for getting the best results from the DL Pixel Classifie
 
 1. **Run a short 5-10 epoch training** with your initial annotations
 2. **Toggle the overlay** to see where the model makes mistakes
-3. **Look for the largest errors** -- these usually indicate annotation problems:
+3. **Look for the largest errors**: these usually indicate annotation problems:
    - A region classified as the wrong class may have been annotated incorrectly
    - Boundaries between classes may be drawn too loosely or tightly
    - An entire class may be underrepresented (too few annotations)
@@ -21,7 +21,7 @@ This iterative approach saves hours compared to training for 200 epochs only to 
 
 ## Hard Pixel % (OHEM): Large Homogeneous Regions
 
-If your training images have **large uniform regions** (e.g., background glass, tissue interiors, empty space), most pixels in each batch are "easy" -- the model classifies them correctly very early in training. Without intervention, the model spends most of its training time on these easy pixels, gaining almost nothing.
+If your training images have **large uniform regions** (e.g., background glass, tissue interiors, empty space), most pixels in each batch are "easy", the model classifies them correctly very early in training. Without intervention, the model spends most of its training time on these easy pixels, gaining almost nothing.
 
 **When to use Hard Pixel %:**
 - Your annotations include large area annotations where most of the interior is homogeneous
@@ -33,7 +33,7 @@ If your training images have **large uniform regions** (e.g., background glass, 
 2. If the model plateaus on easy regions but boundary accuracy is poor, reduce to 25-50%
 3. For very large homogeneous regions, try 5-10% to focus almost entirely on boundaries
 
-**Why not always use it?** For small annotations or images with few easy pixels, OHEM can be too aggressive -- it may discard pixels the model genuinely needs to learn. If your annotations are primarily lines or narrow polygons along class boundaries, OHEM provides little benefit because most pixels are already "hard."
+**Why not always use it?** For small annotations or images with few easy pixels, OHEM can be too aggressive. It may discard pixels the model genuinely needs to learn. If your annotations are primarily lines or narrow polygons along class boundaries, OHEM provides little benefit because most pixels are already "hard."
 
 **Alternative: Focal Loss** is a softer approach that down-weights easy pixels rather than completely ignoring them. Try Focal Loss first if you're unsure; switch to OHEM if Focal Loss doesn't focus enough on the hard cases.
 
@@ -41,7 +41,7 @@ If your training images have **large uniform regions** (e.g., background glass, 
 
 **Line annotations along class boundaries are often more effective than large area fills:**
 
-- Lines focus training on the pixels that matter most -- the boundaries between classes
+- Lines focus training on the pixels that matter most, the boundaries between classes
 - Area annotations overrepresent the easy interior pixels (see Hard Pixel % above)
 - Lines are faster to draw and easier to correct
 - The model learns "this is where class A meets class B" rather than "here are 50,000 pixels of class A interior"
@@ -100,28 +100,28 @@ The default learning rate of **0.0001 (1e-4)** works well for nearly all cases. 
 - Works for both fresh training and continue-training from a saved model
 
 **When you might increase it:**
-- You're using **OneCycleLR scheduler** (not ReduceOnPlateau) -- OneCycleLR runs an automatic LR finder that safely determines the optimal peak rate
+- You're using **OneCycleLR scheduler** (not ReduceOnPlateau). OneCycleLR runs an automatic LR finder that safely determines the optimal peak rate
 - Training is converging **very slowly** after 50+ epochs with no improvement
 
 **When you might decrease it:**
-- **Continue-training** from a model that already achieved good results -- try 1e-5 for gentle fine-tuning
-- Training with **all encoder layers unfrozen** -- the full network is more sensitive to large updates
+- **Continue-training** from a model that already achieved good results, try 1e-5 for gentle fine-tuning
+- Training with **all encoder layers unfrozen**, the full network is more sensitive to large updates
 
-**Never go above 1e-3 with ReduceOnPlateau** -- this causes wild oscillation where the model swings between excellent and terrible validation results epoch-to-epoch, especially with high class weights.
+**Never go above 1e-3 with ReduceOnPlateau**, this causes wild oscillation where the model swings between excellent and terrible validation results epoch-to-epoch, especially with high class weights.
 
 ## Sharing and Moving Models Between Projects
 
-Trained classifiers are portable -- you can copy them between projects on the same machine or share them with collaborators. This is the key mechanism for the **recommended workflow of separating training and production projects** (see [Best Practices: Training vs. Production Projects](BEST_PRACTICES.md#training-vs-production-projects)).
+Trained classifiers are portable. You can copy them between projects on the same machine or share them with collaborators. This is the key mechanism for the **recommended workflow of separating training and production projects** (see [Best Practices: Training vs. Production Projects](BEST_PRACTICES.md#training-vs-production-projects)).
 
 **To copy a classifier to another project (or share with someone else):**
 
 1. Navigate to `{project}/classifiers/dl/{model_name}/`
-2. Copy **only** `model.pt` and `metadata.json` -- these two files are all that is needed for inference
+2. Copy **only** `model.pt` and `metadata.json`, these two files are all that is needed for inference
 3. Place both files in a new folder under the target project's `classifiers/dl/` directory (e.g., `{production_project}/classifiers/dl/{model_name}/`)
-4. Open the target project in QuPath -- the classifier appears in the Apply Classifier dialog
-5. Files named `best_in_progress_*.pt` and `checkpoint_*.pt` are training artifacts (5x larger) and are NOT needed for inference -- safe to delete
+4. Open the target project in QuPath: the classifier appears in the Apply Classifier dialog
+5. Files named `best_in_progress_*.pt` and `checkpoint_*.pt` are training artifacts (5x larger) and are NOT needed for inference, safe to delete
 
-**Why this matters:** Your training project should stay clean -- only hand-drawn annotations, no generated objects. Copy the finished classifier to a production project where you can freely apply it across images, generate objects, and run analysis without risking your curated training data.
+**Why this matters:** Your training project should stay clean, only hand-drawn annotations, no generated objects. Copy the finished classifier to a production project where you can freely apply it across images, generate objects, and run analysis without risking your curated training data.
 
 ## Multi-Scale Context
 
@@ -203,11 +203,11 @@ Loss: 0.3644 | Accuracy: 96.04% | mIoU: 0.8975
 
 **Key findings:**
 
-1. **High validation variance** -- loss spikes on individual epochs (e.g., epoch 3 val_loss=4.93, epoch 49 val_loss=2.09) concentrated on the Ignore\* class, suggesting inconsistent annotation boundaries.
+1. **High validation variance**: loss spikes on individual epochs (e.g., epoch 3 val_loss=4.93, epoch 49 val_loss=2.09) concentrated on the Ignore\* class, suggesting inconsistent annotation boundaries.
 
-2. **Gland is the bottleneck** -- never reached the 0.80 IoU focus target. Ranges 0.48-0.76 even in late epochs while Normal hits 0.90+ consistently.
+2. **Gland is the bottleneck**: never reached the 0.80 IoU focus target. Ranges 0.48-0.76 even in late epochs while Normal hits 0.90+ consistently.
 
-3. **No overfitting** -- train loss (~0.25) and val loss (~0.22-0.36) gap is healthy, model has capacity to learn more.
+3. **No overfitting**: train loss (~0.25) and val loss (~0.22-0.36) gap is healthy, model has capacity to learn more.
 
 **Recommendations:**
 
@@ -221,7 +221,7 @@ Loss: 0.3644 | Accuracy: 96.04% | mIoU: 0.8975
 
 **Tips for getting better LLM analysis:**
 
-- Include the **full log**, not just a summary -- the per-epoch per-class breakdown is where the insights are
+- Include the **full log**, not just a summary, the per-epoch per-class breakdown is where the insights are
 - Mention how many images and what tissue type you're working with
 - Include the links to the documentation so the LLM understands the available parameters
 - Ask specifically about what to change for the **next** training run

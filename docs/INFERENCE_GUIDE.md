@@ -17,11 +17,11 @@ Go to **Extensions > DL Pixel Classifier > Apply DL Pixel Classifier...**
 ## Step 3: Select a Classifier
 
 The classifier table shows all available trained models with columns for:
-- **Name** -- classifier identifier
-- **Type** -- architecture (e.g., unet, muvit)
-- **Channels** -- input channel count (with context scale info, e.g., "3 +2x ctx")
-- **Classes** -- number of output classes
-- **Trained** -- training date
+- **Name**: classifier identifier
+- **Type**: architecture (e.g., unet, muvit)
+- **Channels**: input channel count (with context scale info, e.g., "3 +2x ctx")
+- **Classes**: number of output classes
+- **Trained**: training date
 
 The table defaults to sorting by **Trained** date, newest first, so the most recently trained classifier appears at the top. Click any column header to re-sort by that column (click again to reverse the order).
 
@@ -43,7 +43,7 @@ For unmatched channels, use the dropdown to manually remap to the correct image 
 | Output Type | Description | Best for |
 |-------------|-------------|----------|
 | **MEASUREMENTS** | Adds per-class probability values as annotation measurements | Quantification (% area per class) |
-| **OBJECTS** | Creates detection or annotation objects from the classification map. Uses the same unified inference pipeline as the overlay -- predictions are identical. | Spatial analysis, counting structures |
+| **OBJECTS** | Creates detection or annotation objects from the classification map. Uses the same unified inference pipeline as the overlay, predictions are identical. | Spatial analysis, counting structures |
 
 ### Object output options (OBJECTS only)
 
@@ -56,11 +56,11 @@ For unmatched channels, use the dropdown to manually remap to the correct image 
 | **Boundary Smoothing** | Simplify jagged boundaries (microns tolerance) | 0.5-2.0 um |
 | **Add shape measurements** | Attach circularity and solidity to each object | ON when filtering objects by shape |
 
-### Separating touching objects -- work in progress, not yet available
+### Separating touching objects, work in progress, not yet available
 
 Object creation is **connected-components**: every contiguous run of one class becomes
 one object. That is correct for continuous regions (a tumor area, a tissue compartment)
-but merges touching instances -- two abutting cells of the same class become a single
+but merges touching instances, two abutting cells of the same class become a single
 object.
 
 Splitting them automatically (a distance-transform watershed over the merged
@@ -72,14 +72,14 @@ dialog or from a script in this release.
 Until it ships, the options for touching objects are:
 
 - Split them in QuPath after creation, with the standard object tools.
-- Train an explicit *boundary* class -- annotate the gaps between objects so the
+- Train an explicit *boundary* class, annotate the gaps between objects so the
   interiors fall out already separated. This works today, is more robust than
   watershed for densely packed irregular shapes, and is a training-data change rather
   than a post-processing toggle.
 
 > Note for when it does arrive: instance separation is a **post-processing** step on
-> the pixel classification. The model itself is a semantic classifier -- it labels
-> pixels by class, not by object identity -- so you will **not** retrain it to get
+> the pixel classification. The model itself is a semantic classifier, it labels
+> pixels by class, not by object identity, so you will **not** retrain it to get
 > separated objects. This mirrors how LABKIT and ilastik derive segments from their
 > pixel classifiers.
 
@@ -107,9 +107,9 @@ The effective stride (visible pixels per tile) is `tileSize - 2 * effectivePaddi
 
 ### Expanded reads (real context)
 
-Each tile is read from the image as a tileSize-sized region (not just the stride portion). This provides the model with **real neighboring pixel data** at every tile boundary -- no artificial reflection padding. The output is center-cropped to the stride region, discarding edge predictions where the model has less context. This follows the recommendation from Buglakova et al. (ICCV 2025): "Completely remove halo region during stitching."
+Each tile is read from the image as a tileSize-sized region (not just the stride portion). This provides the model with **real neighboring pixel data** at every tile boundary, no artificial reflection padding. The output is center-cropped to the stride region, discarding edge predictions where the model has less context. This follows the recommendation from Buglakova et al. (ICCV 2025): "Completely remove halo region during stitching."
 
-For multi-scale (context-scale) models, the tile read is expanded further, and a second downsampled "context" tile is reconstructed live from the image. The exact geometry -- and how it must line up with how training tiles and the per-tile Training Area Issues preview were built -- is documented in [Context and Downsample Design](CONTEXT_AND_DOWNSAMPLE_DESIGN.md).
+For multi-scale (context-scale) models, the tile read is expanded further, and a second downsampled "context" tile is reconstructed live from the image. The exact geometry, and how it must line up with how training tiles and the per-tile Training Area Issues preview were built, is documented in [Context and Downsample Design](CONTEXT_AND_DOWNSAMPLE_DESIGN.md).
 
 ### Unified pipeline (overlay = objects)
 
@@ -120,9 +120,9 @@ The **OBJECTS** output and the **overlay** use the exact same inference pipeline
 The extension automatically computes normalization statistics across the entire image before starting inference. This ensures all tiles receive identical input normalization, eliminating the "blocky" tile boundary artifacts that occur when each tile independently computes its own statistics.
 
 **Priority order:**
-1. **Training dataset statistics** (best) -- stored in model metadata for newly trained models
-2. **Image-level sampling** -- samples ~16 tiles in a 4x4 grid across the image (~1-3s one-time cost)
-3. **Per-tile normalization** -- fallback if sampling fails
+1. **Training dataset statistics** (best), stored in model metadata for newly trained models
+2. **Image-level sampling**: samples ~16 tiles in a 4x4 grid across the image (~1-3s one-time cost)
+3. **Per-tile normalization**: fallback if sampling fails
 
 This is fully automatic and requires no configuration.
 
@@ -158,10 +158,10 @@ Click **Apply** to start inference. Progress is shown in the QuPath log.
 
 For quick visual inspection without the full inference dialog:
 
-1. **Extensions > DL Pixel Classifier > Select Overlay Model...** -- choose a trained classifier
-2. **Extensions > DL Pixel Classifier > Toggle Prediction Overlay** -- check to enable, uncheck to remove
+1. **Extensions > DL Pixel Classifier > Select Overlay Model...**: choose a trained classifier
+2. **Extensions > DL Pixel Classifier > Toggle Prediction Overlay**: check to enable, uncheck to remove
 3. The overlay renders as you pan and zoom using CENTER_CROP tile handling (artifact-free boundaries)
-4. Toggle off and on again without re-selecting the model -- the selection persists
+4. Toggle off and on again without re-selecting the model, the selection persists
 
 If you toggle the overlay on without selecting a model first, you will be prompted to choose one.
 

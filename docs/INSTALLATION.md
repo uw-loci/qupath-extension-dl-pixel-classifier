@@ -17,7 +17,7 @@ Complete setup instructions for the DL Pixel Classifier extension.
 
 ### NVIDIA Driver Requirements
 
-The extension bundles **PyTorch with CUDA 12**. You do **not** need to install CUDA separately -- PyTorch includes its own CUDA runtime. You **do** need NVIDIA drivers new enough to support CUDA 12:
+The extension bundles **PyTorch with CUDA 12**. You do **not** need to install CUDA separately, PyTorch includes its own CUDA runtime. You **do** need NVIDIA drivers new enough to support CUDA 12:
 
 | Requirement | Version |
 |-------------|---------|
@@ -56,9 +56,9 @@ Download the latest release JAR from the [GitHub Releases](https://github.com/uw
 
 ### Verify installation
 
-Restart QuPath. You should see **Extensions > DL Pixel Classifier** in the menu bar. On first launch, only **Setup DL Environment...** and the **Utilities** submenu will be visible -- this is normal. The training and inference menu items appear after the environment is set up.
+Restart QuPath. You should see **Extensions > DL Pixel Classifier** in the menu bar. On first launch, only **Setup DL Environment...** and the **Utilities** submenu will be visible. This is normal. The training and inference menu items appear after the environment is set up.
 
-## Part 2: Python Environment Setup (Appose -- Default)
+## Part 2: Python Environment Setup (Appose, the default)
 
 The extension uses [Appose](https://github.com/apposed/appose) to automatically manage an embedded Python environment. No manual Python setup is needed.
 
@@ -71,7 +71,7 @@ The extension uses [Appose](https://github.com/apposed/appose) to automatically 
 5. Optionally uncheck **ONNX export support** to reduce download size (~200 MB savings)
 6. Click **Begin Setup**
 7. Wait for the environment to download and configure (may take several minutes depending on connection speed)
-8. When complete, click **Close** -- the training and inference menu items will appear automatically
+8. When complete, click **Close**, the training and inference menu items will appear automatically
 
 ### What gets downloaded
 
@@ -114,11 +114,11 @@ If the environment becomes corrupted, you want a fresh install, or you have inst
 
 After completing the setup wizard, verify that the GPU was detected:
 
-1. **Setup dialog completion message** -- the dialog reports which GPU backend was found (CUDA, MPS, or CPU)
-2. **Python Console** -- go to **Extensions > DL Pixel Classifier > Utilities > Python Console** and look for:
+1. **Setup dialog completion message**: the dialog reports which GPU backend was found (CUDA, MPS, or CPU)
+2. **Python Console**: go to **Extensions > DL Pixel Classifier > Utilities > Python Console** and look for:
    - `CUDA available: True` (NVIDIA GPU)
    - `MPS available: True` (Apple Silicon)
-3. **System Info** -- go to **Extensions > DL Pixel Classifier > Utilities > System Info** for a full diagnostic dump including PyTorch version, CUDA version, and GPU details
+3. **System Info**: go to **Extensions > DL Pixel Classifier > Utilities > System Info** for a full diagnostic dump including PyTorch version, CUDA version, and GPU details
 
 ### Apple Silicon (MPS)
 

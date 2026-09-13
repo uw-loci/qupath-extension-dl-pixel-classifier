@@ -50,7 +50,7 @@ On first launch after installing the extension, only **Setup DL Environment...**
 
 The training and inference menu items now appear automatically. On subsequent launches, the environment is detected on disk and everything is ready immediately.
 
-> **After updating the extension:** If you install a new version, you **must** rebuild the Python environment. The extension enforces version matching -- an error notification will appear and training/inference will be blocked until the environment is rebuilt. Go to **Utilities > Rebuild DL Environment...** to update.
+> **After updating the extension:** If you install a new version, you **must** rebuild the Python environment. The extension enforces version matching, an error notification will appear and training/inference will be blocked until the environment is rebuilt. Go to **Utilities > Rebuild DL Environment...** to update.
 
 > **GPU not detected?** If the setup reports CPU-only but you have an NVIDIA GPU, make sure your NVIDIA drivers are installed and try **Utilities > Rebuild DL Environment...** See [Troubleshooting](docs/TROUBLESHOOTING.md) for details.
 
@@ -65,7 +65,7 @@ The training and inference menu items now appear automatically. On subsequent la
 3. Draw annotations on the image using the brush or polygon tools
 4. Assign each annotation to a class (right-click the annotation > Set class)
 
-> **Minimum requirement:** At least one annotation per class. More annotations = better results. Line/brush annotations work well -- you don't need to label every pixel.
+> **Minimum requirement:** At least one annotation per class. More annotations = better results. Line/brush annotations work well. You don't need to label every pixel.
 
 ### 3b. Open the training dialog
 
@@ -79,7 +79,7 @@ The dialog opens in **Basic mode** by default, showing only what you need:
 2. **Check the annotation classes** you want to train on
 3. **Name your classifier** (e.g., `test_classifier_v1`)
 
-That's it -- all other settings (architecture, epochs, learning rate, etc.) use sensible defaults (UNet + ResNet34, 50 epochs, pretrained weights). Click **"Show All Settings"** in the header to access the full configuration if needed.
+That's it, all other settings (architecture, epochs, learning rate, etc.) use sensible defaults (UNet + ResNet34, 50 epochs, pretrained weights). Click **"Show All Settings"** in the header to access the full configuration if needed.
 
 ### 3d. Start training
 
@@ -105,11 +105,11 @@ When training completes, the classifier is saved to your QuPath project under `c
 3. **Extensions > DL Pixel Classifier > Apply DL Pixel Classifier...**
 4. Select your trained classifier
 5. Choose an output type (the Apply dialog offers two):
-   - **Measurements** -- adds class probabilities as annotation measurements
-   - **Objects** -- creates detection or annotation objects from the classification map
+   - **Measurements**: adds class probabilities as annotation measurements
+   - **Objects**: creates detection or annotation objects from the classification map
 6. Click **Apply**
 
-> For a live color overlay you can pan and zoom, use **Select Overlay Model...** and **Toggle Prediction Overlay** instead -- see [Live Overlay Mode](docs/INFERENCE_GUIDE.md#live-overlay-mode).
+> For a live color overlay you can pan and zoom, use **Select Overlay Model...** and **Toggle Prediction Overlay** instead, see [Live Overlay Mode](docs/INFERENCE_GUIDE.md#live-overlay-mode).
 
 ---
 
@@ -122,7 +122,7 @@ To iterate on a model with updated annotations or adjusted settings:
 3. Click **"Select model..."** and choose the model you want to build on
 4. All parameters (architecture, learning rate, augmentation, etc.) are pre-filled
 5. Adjust any settings as needed
-6. Select images and load classes -- classes matching the source model are auto-selected
+6. Select images and load classes, classes matching the source model are auto-selected
 7. Click **Start Training**
 
 The new classifier is saved separately; the original model is not modified.
@@ -137,7 +137,7 @@ To train from annotations across multiple project images:
 2. Open the training dialog (**Train DL Pixel Classifier...**)
 3. Under **TRAINING DATA SOURCE**, check images to include (only images with classified annotations appear)
 4. Click **"Load Classes from Selected Images"**
-5. Train as usual -- patches from all selected images are combined into one training set
+5. Train as usual, patches from all selected images are combined into one training set
 
 ---
 
@@ -174,15 +174,15 @@ See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for the full troubleshoot
 
 ## Next Steps
 
-- **Use separate projects for training and production** -- keep your annotated training images in one project and apply the finished classifier in a separate project for analysis. This protects your training data from being cluttered with generated objects. See [Best Practices: Training vs. Production Projects](docs/BEST_PRACTICES.md#training-vs-production-projects) for details.
+- **Use separate projects for training and production**: keep your annotated training images in one project and apply the finished classifier in a separate project for analysis. This protects your training data from being cluttered with generated objects. See [Best Practices: Training vs. Production Projects](docs/BEST_PRACTICES.md#training-vs-production-projects) for details.
 - **Increase epochs** once you've verified the pipeline works (50-100 for real training)
-- **Try histology-pretrained backbones** -- select a backbone ending in "(Histology)" for weights pretrained on tissue patches instead of ImageNet. These produce better features for tissue classification and need less layer freezing. ~100MB download on first use (cached afterward).
-- **Try foundation model encoders** -- select h-optimus-0, virchow, hibou-l, hibou-b, midnight, or dinov2-large in the encoder dropdown for large-scale pretrained tissue representations. Downloaded on-demand (~100 MB to ~2 GB, cached after first use). Requires 10-16 GB VRAM for most models. Gated models need a HuggingFace token. See the [Training Guide](docs/TRAINING_GUIDE.md) for details.
-- **Try transfer learning** -- freeze early encoder layers for faster convergence on small datasets
-- **Experiment with backbones** -- try a larger backbone (resnet50) or a histology-pretrained backbone for tissue classification, or import a custom ONNX model
-- **Multi-image training** -- combine annotations from several images for a more robust classifier
-- **Tune training strategy** -- expand the "TRAINING STRATEGY" section in the training dialog to adjust the LR scheduler, loss function, early stopping metric/patience, and mixed precision
-- **MAE pretraining** -- if using the MuViT architecture, pretrain the encoder on unlabeled tiles via **Utilities > MAE Pretrain Encoder...** for better domain-specific features. See the [Training Guide](docs/TRAINING_GUIDE.md#mae-pretraining-muvit-encoder) for details.
+- **Try histology-pretrained backbones**: select a backbone ending in "(Histology)" for weights pretrained on tissue patches instead of ImageNet. These produce better features for tissue classification and need less layer freezing. ~100MB download on first use (cached afterward).
+- **Try foundation model encoders**: select h-optimus-0, virchow, hibou-l, hibou-b, midnight, or dinov2-large in the encoder dropdown for large-scale pretrained tissue representations. Downloaded on-demand (~100 MB to ~2 GB, cached after first use). Requires 10-16 GB VRAM for most models. Gated models need a HuggingFace token. See the [Training Guide](docs/TRAINING_GUIDE.md) for details.
+- **Try transfer learning**: freeze early encoder layers for faster convergence on small datasets
+- **Experiment with backbones**: try a larger backbone (resnet50) or a histology-pretrained backbone for tissue classification, or import a custom ONNX model
+- **Multi-image training**: combine annotations from several images for a more robust classifier
+- **Tune training strategy**: expand the "TRAINING STRATEGY" section in the training dialog to adjust the LR scheduler, loss function, early stopping metric/patience, and mixed precision
+- **MAE pretraining**: if using the MuViT architecture, pretrain the encoder on unlabeled tiles via **Utilities > MAE Pretrain Encoder...** for better domain-specific features. See the [Training Guide](docs/TRAINING_GUIDE.md#mae-pretraining-muvit-encoder) for details.
 - See the [Training Guide](docs/TRAINING_GUIDE.md) and [Inference Guide](docs/INFERENCE_GUIDE.md) for detailed parameter explanations
 
 ---

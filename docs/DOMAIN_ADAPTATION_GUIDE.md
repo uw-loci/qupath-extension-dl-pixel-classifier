@@ -2,16 +2,16 @@
 
 ## The Problem
 
-You trained a pixel classifier on your fly wing images and it works great. Then a colleague sends you their fly wing images -- taken on a different microscope, with different lighting, or saved with different compression -- and your classifier performs poorly. The veins look washed out, the background is a different shade, or the contrast is just different enough that the model gets confused.
+You trained a pixel classifier on your fly wing images and it works great. Then a colleague sends you their fly wing images, taken on a different microscope, with different lighting, or saved with different compression, and your classifier performs poorly. The veins look washed out, the background is a different shade, or the contrast is just different enough that the model gets confused.
 
-You don't have time to annotate hundreds of their images from scratch. And you shouldn't have to -- you already taught the model what veins, hairs, and intervein regions look like. The problem isn't that the model doesn't know what a vein is. The problem is that the new images *look* different enough that the model doesn't recognize them.
+You don't have time to annotate hundreds of their images from scratch. And you shouldn't have to, you already taught the model what veins, hairs, and intervein regions look like. The problem isn't that the model doesn't know what a vein is. The problem is that the new images *look* different enough that the model doesn't recognize them.
 
 ## What SSL Pretraining Does (Simple Explanation)
 
 Your trained classifier has two parts:
 
-1. **The encoder** (the "eyes") -- looks at pixels and extracts visual features like edges, textures, and patterns
-2. **The decoder** (the "brain") -- takes those features and decides "this pixel is a vein, this pixel is background"
+1. **The encoder** (the "eyes"), looks at pixels and extracts visual features like edges, textures, and patterns
+2. **The decoder** (the "brain"), takes those features and decides "this pixel is a vein, this pixel is background"
 
 When your classifier fails on new images, it's usually because the encoder learned features specific to *your* microscope's images. It knows what a vein looks like in *your* images, but the same vein looks different enough in your colleague's images that the encoder doesn't produce the right features.
 
@@ -23,11 +23,11 @@ When your classifier fails on new images, it's usually because the encoder learn
 
 - Your trained classifier (the `.pt` model file)
 - A QuPath project with the new (unannotated) images loaded
-- A small number of annotations on the new images (you'll add these at the end -- even just 2-3 images is often enough)
+- A small number of annotations on the new images (you'll add these at the end, even just 2-3 images is often enough)
 
 ### Step 1: Mark the tissue regions
 
-Open the new images in QuPath and draw rough annotations around the tissue areas. These don't need to be precise -- they just tell the system "extract tiles from here, not from the empty slide background." Any annotation class works (Tissue, Region, or whatever you use).
+Open the new images in QuPath and draw rough annotations around the tissue areas. These don't need to be precise; they just tell the system "extract tiles from here, not from the empty slide background." Any annotation class works (Tissue, Region, or whatever you use).
 
 You do NOT need to label veins, hairs, etc. at this stage. Just outline where the tissue is.
 
@@ -35,8 +35,8 @@ You do NOT need to label veins, hairs, etc. at this stage. Just outline where th
 
 1. Go to **DL Pixel Classifier > Utilities > SSL Pretrain Encoder...**
 2. **SSL Method**: Choose BYOL (works better with smaller datasets)
-3. **Backbone**: Select the same backbone your original classifier used (check your model's `metadata.json` -- look at `architecture.backbone`, e.g., `resnet34`)
-4. **Initialize from trained model**: Click Browse and select your existing trained `model.pt` file. This is the key step -- instead of starting from scratch, the encoder starts with everything it already learned from your images
+3. **Backbone**: Select the same backbone your original classifier used (check your model's `metadata.json`, look at `architecture.backbone`, e.g., `resnet34`)
+4. **Initialize from trained model**: Click Browse and select your existing trained `model.pt` file. This is the key step, instead of starting from scratch, the encoder starts with everything it already learned from your images
 5. **Data section**: Select the new images and check the annotation classes you used to mark tissue regions
 6. **Epochs**: 100 is usually enough
 7. Click **Start Pretraining**
@@ -77,8 +77,8 @@ The domain adaptation scenario above (different microscope, same biology) is the
 **Situation:** You have 500 whole-slide images of fly wings, but labeling veins and hairs is tedious. You can only afford to annotate 5-10 of them thoroughly.
 
 **What to do:**
-1. Draw rough tissue outlines on all 500 images (fast -- just boxes or lasso around the wing)
-2. Run SSL Pretrain on all 500 images (no source model needed -- train from scratch)
+1. Draw rough tissue outlines on all 500 images (fast, just boxes or lasso around the wing)
+2. Run SSL Pretrain on all 500 images (no source model needed, train from scratch)
 3. Annotate veins/hairs/background carefully on 5-10 images
 4. Train using the SSL encoder
 
@@ -109,7 +109,7 @@ The domain adaptation scenario above (different microscope, same biology) is the
 2. Run SSL Pretrain from scratch (no source model) using the matching backbone
 3. Train a supervised classifier using the SSL encoder
 
-**Why it works:** ImageNet-pretrained encoders learned features from natural photographs -- dogs, cars, landscapes. Those features transfer surprisingly well to many microscopy images, but when your images are very different from photographs (polarized light, unusual stains), the transfer is poor. SSL pretraining on your actual images teaches the encoder what features matter for *your* data specifically.
+**Why it works:** ImageNet-pretrained encoders learned features from natural photographs, dogs, cars, landscapes. Those features transfer surprisingly well to many microscopy images, but when your images are very different from photographs (polarized light, unusual stains), the transfer is poor. SSL pretraining on your actual images teaches the encoder what features matter for *your* data specifically.
 
 ### Multi-site or multi-scanner studies
 
@@ -145,7 +145,7 @@ The domain adaptation scenario above (different microscope, same biology) is the
 | Unusual imaging modality | SSL from scratch | No | BYOL |
 | Multi-site study | SSL from scratch on pooled data | No | SimCLR |
 | Improving without more labels | Domain-adaptive SSL | Yes (existing model) | BYOL |
-| Standard H&E histopathology | Skip SSL -- use histology-pretrained backbone | N/A | N/A |
+| Standard H&E histopathology | Skip SSL, use histology-pretrained backbone | N/A | N/A |
 
 For more details on when to use each method (SimCLR vs BYOL), see [Best Practices: SSL Pretraining](BEST_PRACTICES.md#ssl-pretraining-simclr--byol).
 

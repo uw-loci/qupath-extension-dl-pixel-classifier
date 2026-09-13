@@ -32,7 +32,7 @@ Fast Pretrained ships with two encoder choices via the "Backbone" combo:
 
 | Encoder                          | Params | ImageNet top-1 | When to pick |
 | -------------------------------- | ------ | -------------- | ------------ |
-| `timm-tf_efficientnet_lite0`     | ~4.2M  | 75.1%          | Default -- best balance. No SE blocks or hard-swish means it compiles and exports cleanly. |
+| `timm-tf_efficientnet_lite0`     | ~4.2M  | 75.1%          | Default, best balance. No SE blocks or hard-swish means it compiles and exports cleanly. |
 | `timm-mobilenetv3_small_100`     | ~2.0M  | 67.7%          | Smallest, fastest. Pick when VRAM or inference latency is tight. |
 
 Decoder channels are fixed at `[128, 64, 32, 16, 8]` for both encoders
@@ -58,7 +58,7 @@ This is still small compared to the default UNet + ResNet-34 (~24M params).
 | --------------------- | ------- | ---------------------------------------- |
 | Epochs                | 30      | Fine-tuning converges faster than scratch |
 | Batch size            | 16      | Fits easily in memory                    |
-| Learning rate         | 1e-3    | Lower than Tiny UNet -- we are fine-tuning |
+| Learning rate         | 1e-3    | Lower than Tiny UNet; we are fine-tuning |
 | Tile size             | 256     | Good context / speed balance             |
 | Weight initialization | ImageNet| Default; scratch available               |
 | Augmentation          | On      | Flip + rotate + intensity                |

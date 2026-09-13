@@ -44,15 +44,15 @@ The dialog opens in **Basic mode** by default, showing only the essentials: Trai
 
 In advanced mode, the dialog has collapsible titled pane sections:
 
-1. **TRAINING DATA SOURCE** -- select images and load classes
-2. **MODEL ARCHITECTURE** -- architecture and encoder selection
-3. **WEIGHT INITIALIZATION** -- how to initialize model weights
-4. **TRAINING PARAMETERS** -- epochs, batch size, tile size, etc.
-5. **TRAINING STRATEGY** -- scheduler, loss, early stopping (collapsed)
-6. **CHANNEL CONFIGURATION** -- input channel selection and normalization
-7. **ANNOTATION CLASSES** -- class selection and weight balancing
-8. **DATA AUGMENTATION** -- flip, rotation, intensity augmentation (collapsed)
-9. **NAME YOUR CLASSIFIER** -- name and description
+1. **TRAINING DATA SOURCE**: select images and load classes
+2. **MODEL ARCHITECTURE**: architecture and encoder selection
+3. **WEIGHT INITIALIZATION**: how to initialize model weights
+4. **TRAINING PARAMETERS**: epochs, batch size, tile size, etc.
+5. **TRAINING STRATEGY**: scheduler, loss, early stopping (collapsed)
+6. **CHANNEL CONFIGURATION**: input channel selection and normalization
+7. **ANNOTATION CLASSES**: class selection and weight balancing
+8. **DATA AUGMENTATION**: flip, rotation, intensity augmentation (collapsed)
+9. **NAME YOUR CLASSIFIER**: name and description
 
 ## Loading Settings from a Previous Model
 
@@ -67,7 +67,7 @@ This populates:
 - **Architecture, backbone, tile size, downsample, context scale, epochs** from the model metadata
 - **Learning rate, batch size, augmentation, scheduler, loss function, early stopping, and all other hyperparameters** from the model's saved training settings
 - **Classifier name** auto-generated as `Retrain_OriginalName_YYYYMMDD`
-- **Class auto-matching** after you load classes from images -- classes matching the source model are auto-selected
+- **Class auto-matching** after you load classes from images, classes matching the source model are auto-selected
 
 All fields can be adjusted before training. Older models (trained before this feature) will only populate the architecture-level settings; hyperparameters will keep their preference defaults.
 
@@ -106,7 +106,7 @@ In advanced mode each selected image has a **Train / Val / Both** role dropdown 
 When training finishes, the split is recorded in two places so you never have to guess how a model was trained:
 
 - **Classifier metadata** (Manage Classifiers info panel): the split method (`image_roles` vs `tile_stratified`) and the exact train-only / val-only image lists.
-- **Project image metadata**: each training image's project entry is tagged with a `DL role: <classifier name>` column set to `Train`, `Val`, or `Both`. Add that column in the QuPath **Project** pane to sort or filter your slides by training status. Each classifier gets its own column, and re-training a classifier refreshes its column to reflect the most recent run. (A run left entirely in the default **Both** role tags every image `Both` -- that is expected, not a bug.)
+- **Project image metadata**: each training image's project entry is tagged with a `DL role: <classifier name>` column set to `Train`, `Val`, or `Both`. Add that column in the QuPath **Project** pane to sort or filter your slides by training status. Each classifier gets its own column, and re-training a classifier refreshes its column to reflect the most recent run. (A run left entirely in the default **Both** role tags every image `Both`, that is expected, not a bug.)
 
 Loading settings from such a model (see below) restores these per-image roles to the dialog, so continuing training in a later session keeps the original split.
 
@@ -222,7 +222,7 @@ When **Use pretrained backbone weights** is selected, a layer freeze panel appea
 | **Learning Rate** | 0.0001 | Safe default for AdamW. Reduce further if loss oscillates. When using OneCycleLR, an LR finder auto-runs to suggest the optimal max learning rate. |
 | **Validation Split** | 20% | 15-25% typical. Uses stratified sampling for balanced splits. |
 | **Tile Size** | 512 | Must be divisible by 32. 256 for cell-level, 512 for tissue-level. |
-| **Whole image** | Off | Checkbox. Uses entire image as one tile (small images only). Disables tile size, overlap, and context scale -- but downsample stays unlocked so you can adjust resolution to fit within the max tile size. A dynamic warning shows orange (images fit) or red (images will be tiled) based on your actual image dimensions at the current downsample. |
+| **Whole image** | Off | Checkbox. Uses entire image as one tile (small images only). Disables tile size, overlap, and context scale, but downsample stays unlocked so you can adjust resolution to fit within the max tile size. A dynamic warning shows orange (images fit) or red (images will be tiled) based on your actual image dimensions at the current downsample. |
 | **Resolution** | 1x | 1x, 2x, 4x, 8x, 16x. Higher = more context, less detail. Locked when continuing from a saved model. "Preview" button shows the image at selected resolution. |
 | **Context Scale** | 4x (Recommended) | None, 2x, 4x, 8x, 16x. Adds surrounding context at lower resolution alongside the main tile. Hidden for MuViT (handles multi-scale internally). |
 | **Tile Overlap** | 0% | 10-25% generates more patches from limited annotations. |
@@ -249,7 +249,7 @@ When **Use pretrained backbone weights** is selected, a layer freeze panel appea
 The Loss Function combo exposes eight variants. OHEM composes with
 most of them (focal modulation and boundary weighting applied
 BEFORE the top-K hard-pixel sort); the two Lovasz variants are
-the only exceptions (OHEM silently disabled -- Lovasz is a
+the only exceptions (OHEM is silently disabled; Lovasz is a
 sorted-errors Jaccard surrogate, not a per-pixel loss).
 
 | Option | When to pick it |
@@ -259,7 +259,7 @@ sorted-errors Jaccard surrogate, not a per-pixel loss).
 | Focal + Dice | Down-weights easy pixels via `(1-p_t)^gamma`. Use when classes have very different difficulty. With OHEM, `focal_gamma` is preserved inside the hard set via `OHEMFocalLoss`. |
 | Focal | Focal alone, no Dice. |
 | Boundary-softened CE | CE weighted by Euclidean distance to the nearest annotation boundary. Down-weights noisy edge pixels. Use when manual annotations have imprecise boundaries. Parameters: sigma (falloff, default 3px), w_min (floor at exact boundary, default 0.1). |
-| Boundary-softened CE + Dice | The recommended pairing for edge-noisy annotations -- boundary CE handles the edges, Dice optimizes region overlap. With OHEM, boundary weight is applied before top-K so OHEM capacity focuses on interior errors. |
+| Boundary-softened CE + Dice | The recommended pairing for edge-noisy annotations, boundary CE handles the edges, Dice optimizes region overlap. With OHEM, boundary weight is applied before top-K so OHEM capacity focuses on interior errors. |
 | Lovasz-Softmax | Directly optimizes mean IoU. Best after a CE warmup or combined with CE (see next row). No hyperparameters. Per-class weights apply. |
 | CE + Lovasz-Softmax | CE provides stable early gradient, Lovasz pushes directly toward IoU. Safer than bare Lovasz from init. |
 
@@ -271,7 +271,7 @@ tile overlap > 0 combined with no per-image split role).
 
 ### Automatic Optimizations
 
-The following optimizations are applied automatically -- no configuration needed:
+The following optimizations are applied automatically, no configuration needed:
 
 - **Context padding**: Training tiles are automatically extracted with a border of real surrounding image data, matching the geometry used during inference (where QuPath provides real context via `inputPadding`). The padding amount is computed as `max(64, min(max(overlap, tileSize/4), tileSize * 3/8))` pixels per side. The mask border is filled with 255 (ignore_index) so the loss only computes on the annotated center region. This eliminates train/inference geometry mismatch and tile edge artifacts. Disabled for whole-image mode.
 - **AdamW optimizer** with fast.ai-tuned hyperparameters (betas=0.9/0.99, eps=1e-5, weight_decay=0.01). AdamW decouples weight decay from the gradient update, producing better generalization than Adam.
@@ -329,7 +329,7 @@ Click **Cancel** at any time. A dialog offers three choices:
 | **Last Epoch** | The model from the most recently completed epoch |
 | **Do Not Save** | Discards all progress |
 
-After choosing, the dialog becomes closeable immediately -- you do not need to wait for background cleanup. The saved model is fully usable for inference or for continuing training later.
+After choosing, the dialog becomes closeable immediately. You do not need to wait for background cleanup. The saved model is fully usable for inference or for continuing training later.
 
 ### If training is interrupted unexpectedly
 
@@ -348,7 +348,7 @@ See [Troubleshooting: What can I do if training is interrupted?](TROUBLESHOOTING
 
 When training completes successfully, a **"Review Training Areas..."** button appears in the progress dialog. This runs the trained model over all training tiles and ranks them by loss to help you identify annotation errors, hard cases, and model failures.
 
-> **Important:** Training tiles are cleaned up when you close the progress dialog. Review your training areas *before* closing -- or save the session (see below) to reopen later without re-running evaluation.
+> **Important:** Training tiles are cleaned up when you close the progress dialog. Review your training areas *before* closing, or save the session (see below) to reopen later without re-running evaluation.
 
 ### How it works
 
@@ -362,7 +362,7 @@ When training completes successfully, a **"Review Training Areas..."** button ap
 |--------|-------------|
 | **Image** | Source image name (for multi-image training) |
 | **Split** | Whether the tile was in the train or val split |
-| **Loss** | Cross-entropy loss -- higher = model disagrees more with annotation |
+| **Loss** | Cross-entropy loss, higher = model disagrees more with annotation |
 | **Disagree%** | Percentage of pixels where prediction differs from annotation |
 | **mIoU** | Mean Intersection-over-Union across classes present in the tile |
 | **Worst Confusion** | The most frequent ground-truth-to-prediction class confusion in the tile (hover for the full breakdown) |
@@ -378,7 +378,7 @@ The dialog has two tabs: the tile list described above, and a **Confusion Matrix
 
 ### Apply Annotation Adjustment
 
-The **Apply Annotation Adjustment** panel proposes corrections to your annotations based on where the model disagrees with them. It presents a list of **per-transition checkboxes** -- each checkbox is a single class-to-class transition (e.g., "Stroma -> Tumor") with the pixel count that would be reassigned. All transitions are checked by default. Toggling any checkbox updates the preview overlay live so you can see exactly which pixels each transition affects before committing the adjustment.
+The **Apply Annotation Adjustment** panel proposes corrections to your annotations based on where the model disagrees with them. It presents a list of **per-transition checkboxes**: each checkbox is a single class-to-class transition (e.g., "Stroma -> Tumor") with the pixel count that would be reassigned. All transitions are checked by default. Toggling any checkbox updates the preview overlay live so you can see exactly which pixels each transition affects before committing the adjustment.
 
 ### Filtering and navigation
 
@@ -403,11 +403,11 @@ While a row is selected, the tile's diagnostic image is overlaid in the QuPath v
 
 The **Save Session...** and **Load Session...** buttons persist a Training Area Issues session so you can revisit it later without re-running evaluation.
 
-- **Save Session...** -- confirms the classifier identity, tile count, estimated disk usage, and on-disk location before writing. Sessions are stored under `<classifier_dir>/training_issues_sessions/<yyyyMMdd_HHmmss>/` alongside the model files, so they travel with the classifier.
-- **Load Session...** -- lists saved sessions for the current classifier and reopens the one you pick. If the classifier has been retrained since the session was saved (different model file size or modification time), a warning confirms whether to open the (now-stale) results.
+- **Save Session...**: confirms the classifier identity, tile count, estimated disk usage, and on-disk location before writing. Sessions are stored under `<classifier_dir>/training_issues_sessions/<yyyyMMdd_HHmmss>/` alongside the model files, so they travel with the classifier.
+- **Load Session...**: lists saved sessions for the current classifier and reopens the one you pick. If the classifier has been retrained since the session was saved (different model file size or modification time), a warning confirms whether to open the (now-stale) results.
 - Sessions duplicate the PNG assets into the session folder, so they survive even after the transient `disagreement/` folder is cleared.
 
-You can also reopen saved sessions from outside the training workflow via **Extensions > DL Pixel Classifier > Utilities > Load Saved Training Area Issues...** -- useful after restarting QuPath or opening a different project that shares the same classifier.
+You can also reopen saved sessions from outside the training workflow via **Extensions > DL Pixel Classifier > Utilities > Load Saved Training Area Issues...**, useful after restarting QuPath or opening a different project that shares the same classifier.
 
 ### What to look for
 
@@ -416,7 +416,7 @@ You can also reopen saved sessions from outside the training workflow via **Exte
 | Very high loss on a few tiles | Annotation error (wrong class) | Fix the annotation and retrain |
 | High loss cluster in one region | Inconsistent annotation criteria | Re-annotate the region consistently |
 | High loss on val but not train | Model memorizing, not generalizing | Add more diverse annotations |
-| High disagreement on boundaries | Normal -- boundaries are hardest | Consider annotating boundaries more carefully |
+| High disagreement on boundaries | Normal, boundaries are hardest | Consider annotating boundaries more carefully |
 | Entire class has high loss | Class may be poorly defined | Check if the class has consistent visual features |
 
 See [BEST_PRACTICES.md](BEST_PRACTICES.md#interpreting-tile-evaluation-results) for detailed guidance on interpreting results and improving annotations.
@@ -443,13 +443,13 @@ Before training a MuViT-based classifier, you can optionally pretrain the encode
 
 ### How to pretrain
 
-1. **Prepare image tiles**: Export unlabeled tiles (PNG, TIFF, JPEG, or BMP) from your images into a directory. These do not need annotations -- any representative image patches will work.
+1. **Prepare image tiles**: Export unlabeled tiles (PNG, TIFF, JPEG, or BMP) from your images into a directory. These do not need annotations, any representative image patches will work.
 2. Go to **Extensions > DL Pixel Classifier > Utilities > MAE Pretrain Encoder...**
 3. Configure the pretraining parameters:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| **Model Configuration** | muvit-small | Model size (small/base/large) -- should match what you plan to use for training |
+| **Model Configuration** | muvit-small | Model size (small/base/large), should match what you plan to use for training |
 | **Patch Size** | 16 | Vision transformer patch size (8 or 16) |
 | **Level Scales** | 1,4 | Multi-resolution scale factors |
 | **Epochs** | 100 | Pretraining epochs (auto-suggested based on dataset size) |
@@ -460,7 +460,7 @@ Before training a MuViT-based classifier, you can optionally pretrain the encode
 
 4. Select the directory containing your image tiles (the dialog scans and reports the count)
 5. Choose an output directory (defaults to `{project}/mae_pretrained/`)
-6. Click **Start Pretraining** -- a progress monitor shows reconstruction loss over epochs
+6. Click **Start Pretraining**, a progress monitor shows reconstruction loss over epochs
 
 ### Using the pretrained encoder
 
@@ -498,7 +498,7 @@ The dialog auto-suggests epoch counts based on your dataset:
 
 | Dataset size | Suggested epochs | Notes |
 |-------------|-----------------|-------|
-| < 50 tiles | 500 | Very small -- consider gathering more data |
+| < 50 tiles | 500 | Very small, consider gathering more data |
 | 50-200 tiles | 300 | Small dataset, needs many passes |
 | 200-1000 tiles | 100 | Good balance |
 | > 1000 tiles | 50 | Large dataset, fewer passes needed |

@@ -8,10 +8,10 @@ Guidance for project organization, backbone selection, annotation strategy, hype
 
 ### Why separate projects?
 
-A training project is a curated dataset -- your annotations are the ground truth that the model learns from. When you run inference in the same project (especially with OBJECTS output), the classifier generates thousands of detection or annotation objects on top of your hand-drawn training annotations. This creates several problems:
+A training project is a curated dataset: your annotations are the ground truth that the model learns from. When you run inference in the same project (especially with OBJECTS output), the classifier generates thousands of detection or annotation objects on top of your hand-drawn training annotations. This creates several problems:
 
 - **Data corruption risk**: Generated objects mix with your training annotations, making it hard to distinguish human labels from model predictions. If you retrain from this project, the model may inadvertently learn from its own (potentially incorrect) outputs.
-- **Difficult iteration**: When you want to refine annotations and retrain, you must first clean out all the generated objects -- a tedious and error-prone process, especially across many images.
+- **Difficult iteration**: When you want to refine annotations and retrain, you must first clean out all the generated objects, a tedious and error-prone process, especially across many images.
 - **No clean baseline**: You lose the ability to compare different classifiers on the same images, since each run's objects accumulate.
 
 ### The recommended workflow
@@ -31,7 +31,7 @@ TRAINING PROJECT                         PRODUCTION PROJECT
 
 **Step by step:**
 
-1. **Training project**: Create a QuPath project with representative images. Draw annotations, train classifiers, and iterate. Use the **overlay** and **Review Training Areas** to evaluate quality -- these do not create persistent objects.
+1. **Training project**: Create a QuPath project with representative images. Draw annotations, train classifiers, and iterate. Use the **overlay** and **Review Training Areas** to evaluate quality. These do not create persistent objects.
 2. **Export the model**: When satisfied, locate the classifier directory at `{project}/classifiers/dl/{model_name}/`. You need `model.pt` and `metadata.json`. (Checkpoint files like `best_in_progress_*.pt` are not needed for inference.)
 3. **Production project**: Create a separate QuPath project containing the images you want to analyze. Create a `classifiers/dl/{model_name}/` directory and copy `model.pt` and `metadata.json` into it. The model now appears in the inference dialog.
 4. **Apply the classifier**: Use **Apply Classifier** or the [Scripting API](SCRIPTING.md) to run the model across all images. Generate OBJECTS, MEASUREMENTS, or RENDERED_OVERLAY as needed for your analysis.
@@ -43,7 +43,7 @@ TRAINING PROJECT                         PRODUCTION PROJECT
 |--------|-------|-----|
 | **Toggle Prediction Overlay** | Yes | Renders on-the-fly, creates no persistent objects |
 | **Review Training Areas** | Yes | Read-only evaluation of training tiles |
-| **Apply Classifier (MEASUREMENTS)** | Use caution | Adds measurement columns to existing annotations -- won't create new objects, but modifies your training annotations' measurement tables |
+| **Apply Classifier (MEASUREMENTS)** | Use caution | Adds measurement columns to existing annotations, won't create new objects, but modifies your training annotations' measurement tables |
 | **Apply Classifier (OBJECTS)** | No | Creates detection/annotation objects that mix with training annotations |
 | **Apply Classifier (RENDERED_OVERLAY)** | Yes | Creates a static image overlay, no objects |
 
@@ -55,7 +55,7 @@ The fastest way to set up a production project:
 2. Add your images to the project
 3. In a file browser, navigate to `{training_project}/classifiers/dl/`
 4. Copy the entire model folder(s) into `{production_project}/classifiers/dl/`
-5. Open the production project in QuPath -- the classifiers appear in the Apply Classifier dialog
+5. Open the production project in QuPath: the classifiers appear in the Apply Classifier dialog
 
 For scripted batch processing across an entire production project, see [Scripting: Batch process a project](SCRIPTING.md#batch-process-a-project).
 
@@ -65,7 +65,7 @@ For scripted batch processing across an entire production project, see [Scriptin
 
 | Image type | Best backbone | Why |
 |-----------|--------------|-----|
-| H&E brightfield (20x) | Histology backbone | Pretrained on millions of H&E patches at 20x -- features transfer directly |
+| H&E brightfield (20x) | Histology backbone | Pretrained on millions of H&E patches at 20x, features transfer directly |
 | H&E brightfield (other mag) | Histology backbone or resnet34 | Histology backbones still help but were trained at 20x; ImageNet is a safe fallback |
 | Fluorescence (1-3 channels) | resnet34 (ImageNet) | ImageNet edge/texture features transfer well; histology H&E colors do not match IF |
 | Multiplex IF (4+ channels) | resnet34 or resnet50 (ImageNet) | The first conv layer is automatically adapted to N input channels; ImageNet is the best starting point |
@@ -83,8 +83,8 @@ The histology-pretrained encoders were all trained on **3-channel H&E-stained br
 | ResNet-50 TCGA-BRCA | TCGA breast cancer H&E | ~20x | 3 (RGB) | SimCLR self-supervised |
 
 **When histology backbones help most:**
-- H&E brightfield at 20x -- this is exactly the domain they were trained on
-- H&E at other magnifications -- features still partially transfer, especially tissue texture patterns
+- H&E brightfield at 20x: this is exactly the domain they were trained on
+- H&E at other magnifications, features still partially transfer, especially tissue texture patterns
 - Any 3-channel brightfield stain with eosin-like color distributions
 
 **When to use ImageNet backbones instead:**
@@ -164,7 +164,7 @@ When working with multiplex IF or multi-channel images:
 1. **Annotate boundaries carefully**: The model learns most from class transition zones
 2. **Cover variability**: Include examples from different staining intensities, tissue regions, and preparation qualities
 3. **Be consistent**: Apply the same classification criteria throughout
-4. **Include "hard" cases**: Annotate areas where classification is ambiguous -- these are most informative
+4. **Include "hard" cases**: Annotate areas where classification is ambiguous: these are most informative
 5. **Use multiple images**: Multi-image training produces more robust classifiers
 
 ### Minimum annotation requirements
@@ -178,7 +178,7 @@ When working with multiplex IF or multi-channel images:
 ### Common mistakes
 
 - **Only annotating "easy" regions**: The model needs hard examples to learn boundaries
-- **Unbalanced annotations**: One class has 10x more area than another -- use weight multipliers to compensate
+- **Unbalanced annotations**: One class has 10x more area than another, use weight multipliers to compensate
 - **Inconsistent labeling**: Different annotators applying different criteria to the same tissue
 - **Annotating only one image**: Single-image classifiers often fail on new images
 
@@ -202,7 +202,7 @@ Gradient Accumulation: 1  (increase to 2-4 if VRAM is limited)
 Progressive Resizing: Off  (try enabling for large tile sizes)
 ```
 
-> **Note:** The optimizer is AdamW with fast.ai-tuned defaults (weight_decay=0.01). Discriminative learning rates are automatically applied when using pretrained weights -- the encoder trains at 1/10th the base LR.
+> **Note:** The optimizer is AdamW with fast.ai-tuned defaults (weight_decay=0.01). Discriminative learning rates are automatically applied when using pretrained weights, the encoder trains at 1/10th the base LR.
 
 ### If results are poor
 
@@ -227,7 +227,7 @@ Progressive Resizing: Off  (try enabling for large tile sizes)
 
 - Reduce learning rate (try 1e-4 or 1e-5)
 - Switch to One Cycle scheduler (the auto LR finder helps find the right max LR)
-- Try "Reduce on Plateau" scheduler -- it automatically lowers the LR when progress stalls
+- Try "Reduce on Plateau" scheduler, it automatically lowers the LR when progress stalls
 - Reduce batch size, or use gradient accumulation (set accumulation=2-4 with a smaller batch)
 - Check for annotation errors (mislabeled regions)
 
@@ -250,7 +250,7 @@ When most of the image is easy but a small region is hard (e.g., vein classifica
 | 0 | Standard CE (no focusing) |
 | 1 | Mild focusing |
 | 2 | Standard focal (recommended starting point) |
-| 3-5 | Aggressive -- use when the hard region is very small |
+| 3-5 | Aggressive, use when the hard region is very small |
 
 **When to use focal loss:**
 - One class or region consistently underperforms despite good annotations
@@ -298,11 +298,11 @@ When most of the image is easy but a small region is hard (e.g., vein classifica
 
 Early stopping handles this automatically, but you can also cancel manually. When you click **Cancel**, a dialog offers three options:
 
-- **Best Epoch** -- save the model from the epoch with the highest mean IoU
-- **Last Epoch** -- save the model from the most recently completed epoch
-- **Do Not Save** -- discard all progress
+- **Best Epoch**: save the model from the epoch with the highest mean IoU
+- **Last Epoch**: save the model from the most recently completed epoch
+- **Do Not Save**: discard all progress
 
-After choosing, the dialog becomes closeable immediately -- you do not need to wait for the background cleanup to finish. The saved model is fully usable for inference.
+After choosing, the dialog becomes closeable immediately. You do not need to wait for the background cleanup to finish. The saved model is fully usable for inference.
 
 ## Normalization Strategy
 
@@ -317,9 +317,9 @@ The extension supports four normalization strategies. The choice affects how pix
 
 **Image-level normalization** (enabled by default) computes statistics once across the entire image, then applies them consistently to every tile. This eliminates input-level tile boundary artifacts. Newly trained models also save training dataset statistics in their metadata for even better consistency across different images.
 
-**BatchRenorm** -- All newly trained models use BatchRenorm instead of standard BatchNorm for the network's internal normalization layers. This eliminates a second source of tiling artifacts: standard BatchNorm accumulates running statistics during training that can diverge from actual tile statistics at inference time, causing inconsistent predictions at tile boundaries. BatchRenorm uses consistent global statistics in both training and inference, producing seamless tiled predictions. See [Buglakova et al., ICCV 2025](https://arxiv.org/abs/2503.19545).
+**BatchRenorm**: all newly trained models use BatchRenorm instead of standard BatchNorm for the network's internal normalization layers. This eliminates a second source of tiling artifacts: standard BatchNorm accumulates running statistics during training that can diverge from actual tile statistics at inference time, causing inconsistent predictions at tile boundaries. BatchRenorm uses consistent global statistics in both training and inference, producing seamless tiled predictions. See [Buglakova et al., ICCV 2025](https://arxiv.org/abs/2503.19545).
 
-**Context padding** -- Training tiles are automatically extracted with a border of real surrounding image data. During inference, QuPath's `inputPadding` provides real context around each tile. Context padding ensures training geometry matches inference geometry: the model always sees real data at tile edges, never artificial reflection-padded data. The padding amount (`max(64, min(max(overlap, tileSize/4), tileSize * 3/8))` pixels per side) is computed automatically. The mask border is filled with 255 (ignore_index) so the loss function ignores the padding region. This is disabled for whole-image mode where no surrounding data is available.
+**Context padding**: training tiles are automatically extracted with a border of real surrounding image data. During inference, QuPath's `inputPadding` provides real context around each tile. Context padding ensures training geometry matches inference geometry: the model always sees real data at tile edges, never artificial reflection-padded data. The padding amount (`max(64, min(max(overlap, tileSize/4), tileSize * 3/8))` pixels per side) is computed automatically. The mask border is filled with 255 (ignore_index) so the loss function ignores the padding region. This is disabled for whole-image mode where no surrounding data is available.
 
 ## Improving Results
 
@@ -331,7 +331,7 @@ The extension supports four normalization strategies. The choice affects how pix
 4. **Use a histology backbone** for H&E images
 5. **Increase epochs** with early stopping (it is safe to overshoot)
 6. **Retrain from a previous model** using "Continue training from saved model" in the Weight Initialization section to iterate quickly with the same hyperparameters
-7. **Re-train models** to save normalization statistics -- new models automatically store training dataset stats for improved inference consistency
+7. **Re-train models** to save normalization statistics, new models automatically store training dataset stats for improved inference consistency
 
 ### Medium effort
 
@@ -360,7 +360,7 @@ Masked Autoencoder (MAE) pretraining teaches a MuViT encoder to understand tissu
 ### When MAE pretraining helps
 
 - **Domain-specific tissue**: Your images contain tissue types or staining patterns not well-represented by generic pretrained weights
-- **Large unlabeled datasets**: You have many images but limited annotations -- MAE leverages the unlabeled data
+- **Large unlabeled datasets**: You have many images but limited annotations, MAE leverages the unlabeled data
 - **Small labeled datasets**: A pretrained encoder needs fewer labeled examples to fine-tune effectively
 
 ### When to skip MAE pretraining
@@ -417,7 +417,7 @@ SSL (Self-Supervised Learning) pretraining teaches a CNN encoder backbone (ResNe
 
 ### Domain-adaptive pretraining
 
-The most powerful use of SSL pretraining is **domain adaptation** -- taking an encoder that already works well on one set of images and adapting it to a different set:
+The main use of SSL pretraining is **domain adaptation**: taking an encoder that already works well on one set of images and adapting it to a different set:
 
 1. Train a supervised classifier on your original images (the "source domain")
 2. Collect unlabeled images from the new domain (different microscope, different staining, etc.)
@@ -425,7 +425,7 @@ The most powerful use of SSL pretraining is **domain adaptation** -- taking an e
 4. The encoder preserves its learned features while adapting to the new image characteristics
 5. Fine-tune with a few annotations from the new domain
 
-This approach requires far fewer annotations than training from scratch because the encoder already knows what biological structures look like -- it just needs to learn how they appear in the new imaging conditions.
+This approach requires far fewer annotations than training from scratch because the encoder already knows what biological structures look like; it just needs to learn how they appear in the new imaging conditions.
 
 ### Tips
 
@@ -450,8 +450,8 @@ The tile list also includes a **Worst Confusion** column showing the most freque
 
 ### Prioritizing which tiles to review
 
-1. **Start with the highest-loss tiles** -- these are the most likely annotation errors
-2. **Focus on training split first** -- high loss on training tiles almost always indicates an annotation problem, since the model had the chance to learn from these tiles
+1. **Start with the highest-loss tiles**: these are the most likely annotation errors
+2. **Focus on training split first**: high loss on training tiles almost always indicates an annotation problem, since the model had the chance to learn from these tiles
 3. **High-loss validation tiles** may indicate areas where the model hasn't generalized, which is expected for unusual tissue patterns
 4. **Tiles with very high disagreement (>50%)** are likely mislabeled or contain mixed classes
 

@@ -58,9 +58,9 @@ Use **Copy to Clipboard** to share the full output when reporting bugs.
 
 If the setup wizard reports CPU-only but you have an NVIDIA GPU:
 
-1. **Check the Python Console** -- look for "CUDA available: False"
-2. **Verify NVIDIA drivers are installed** -- open a terminal and run `nvidia-smi`. If this fails, install drivers first.
-3. **Drivers must be installed before environment setup** -- the Appose environment installs PyTorch with CUDA support, but it needs to detect your GPU drivers during setup
+1. **Check the Python Console**: look for "CUDA available: False"
+2. **Verify NVIDIA drivers are installed**: open a terminal and run `nvidia-smi`. If this fails, install drivers first.
+3. **Drivers must be installed before environment setup**: the Appose environment installs PyTorch with CUDA support, but it needs to detect your GPU drivers during setup
 4. **If drivers were installed after setup**: Go to **Utilities > Rebuild DL Environment...** to delete and re-create the environment with GPU support
 5. **Windows-specific**: Install "Game Ready" or "Studio" drivers from [nvidia.com/drivers](https://www.nvidia.com/drivers)
 
@@ -77,7 +77,7 @@ If the setup wizard reports CPU-only but you have an NVIDIA GPU:
 If you see an error dialog saying the Python package version does not match the extension version:
 
 1. This means the Java JAR is a different version than the installed Python environment
-2. Training and inference are blocked until the versions match -- this prevents silent incompatibilities
+2. Training and inference are blocked until the versions match, this prevents silent incompatibilities
 3. **Fix:** Go to **Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment...** to delete and reinstall with the correct Python package version
 4. This typically happens when you update the extension JAR without rebuilding the Python environment
 
@@ -100,7 +100,7 @@ If the environment does not update (e.g., still using an old Python version):
 
 Then reopen QuPath and run **Setup DL Environment...** again.
 
-> **Why this happens:** The extension manages its own embedded Python environment via pixi. When the bundled `pixi.toml` changes (e.g., Python version bumped from 3.10 to 3.11, new packages added), the extension detects the change and deletes `pixi.lock` and `.pixi/` to force pixi to re-resolve everything. On Windows, if the old Python process is still running, file locks can prevent deletion -- the extension attempts a rename-fallback, but a full QuPath restart is sometimes needed.
+> **Why this happens:** The extension manages its own embedded Python environment via pixi. When the bundled `pixi.toml` changes (e.g., Python version bumped from 3.10 to 3.11, new packages added), the extension detects the change and deletes `pixi.lock` and `.pixi/` to force pixi to re-resolve everything. On Windows, if the old Python process is still running, file locks can prevent deletion, the extension attempts a rename-fallback, but a full QuPath restart is sometimes needed.
 
 ### Environment seems corrupted
 
@@ -181,16 +181,16 @@ The extension exports training patches from the **saved** project file on disk, 
 
 If training starts but stops making progress (no new epoch updates):
 
-1. **Check the Python Console** for errors -- a GPU out-of-memory error may have occurred silently
-2. **Check GPU utilization** -- run `nvidia-smi` in a terminal to see if GPU memory is fully consumed
+1. **Check the Python Console** for errors, a GPU out-of-memory error may have occurred silently
+2. **Check GPU utilization**: run `nvidia-smi` in a terminal to see if GPU memory is fully consumed
 3. **Kill QuPath and restart** if the process is deadlocked
 4. Try reducing batch size or tile size to lower GPU memory usage
 
-> **Note:** In versions before 0.3.5, a transient "thread death" error could cause the extension to retry training, creating two concurrent training processes on the same GPU that deadlock. This has been fixed -- training no longer retries on thread death errors.
+> **Note:** In versions before 0.3.5, a transient "thread death" error could cause the extension to retry training, creating two concurrent training processes on the same GPU that deadlock. This has been fixed, training no longer retries on thread death errors.
 
 ### What can I do if training is interrupted?
 
-If training is interrupted -- whether by a crash, power outage, or accidental QuPath close -- your progress is automatically saved. The extension writes a full checkpoint to disk every time a new best epoch is found during training.
+If training is interrupted, whether by a crash, power outage, or accidental QuPath close. Your progress is automatically saved. The extension writes a full checkpoint to disk every time a new best epoch is found during training.
 
 #### Automatic crash-recovery checkpoint
 
@@ -222,7 +222,7 @@ If the model had already converged before the interruption, you can finalize it 
 
 The finalize script loads the checkpoint, extracts the best model weights, and saves a complete classifier (model.pt + metadata.json + ONNX export) that you can use for inference.
 
-> **Tip:** Check the QuPath log from your interrupted session -- it logs the checkpoint path each time a new best is saved:
+> **Tip:** Check the QuPath log from your interrupted session, it logs the checkpoint path each time a new best is saved:
 > `Best checkpoint saved to disk (epoch 42): C:\Users\you\.dlclassifier\checkpoints\best_in_progress_unet.pt`
 
 #### Option 2: Resume training from the checkpoint
@@ -251,12 +251,12 @@ The pause checkpoint is stored both in memory (for immediate resume within the s
 
 ### What carries over when I pause and resume training?
 
-The Resume Training dialog asks only for the number of **Additional Epochs** -- learning rate and batch size stay at their original values. The rest of your training configuration is stored alongside the checkpoint and reused as-is on resume, so the resumed run behaves as if training had never been paused.
+The Resume Training dialog asks only for the number of **Additional Epochs**, learning rate and batch size stay at their original values. The rest of your training configuration is stored alongside the checkpoint and reused as-is on resume, so the resumed run behaves as if training had never been paused.
 
 **Preserved across pause/resume:**
 
 - Learning rate and batch size (from the original run)
-- OHEM hard-pixel ratio, adaptive per-class floor, and anneal schedule (including anneal start/end values -- the anneal picks up at the correct point for the current epoch rather than restarting at the start value)
+- OHEM hard-pixel ratio, adaptive per-class floor, and anneal schedule (including anneal start/end values, the anneal picks up at the correct point for the current epoch rather than restarting at the start value)
 - Augmentation configuration (flip/rotate probabilities, elastic deformation, intensity mode, noise, etc.)
 - Early stopping metric, patience counter, and best score
 - Frozen layer configuration and transfer-learning settings
@@ -270,11 +270,11 @@ The Resume Training dialog asks only for the number of **Additional Epochs** -- 
 
 **Behavior to be aware of when extending a run:**
 
-- **LR schedulers that span the full run** (cosine, one-cycle) are re-parameterized over the new total epoch count starting from the current epoch -- they do not keep the original curve and tack extra epochs onto the end. If you were relying on a specific final-epoch LR, extending the run will change the LR trajectory.
+- **LR schedulers that span the full run** (cosine, one-cycle) are re-parameterized over the new total epoch count starting from the current epoch. They do not keep the original curve and tack extra epochs onto the end. If you were relying on a specific final-epoch LR, extending the run will change the LR trajectory.
 - **Epoch-indexed schedules** (OHEM anneal) compute their value as a function of the current epoch over the anneal window, so extending the run past the original anneal end leaves the hard-pixel ratio at its final value for the extra epochs (the anneal does not re-run).
 - **Training resumes from the last best epoch**, not the epoch where Pause was clicked. If the best was at epoch 30 and you paused at epoch 45, the resumed run starts at epoch 30.
 
-If you need to change learning rate or batch size (e.g. you hit VRAM issues or want to switch to a fine-tuning LR), cancel the paused run and start a new training using **Continue from checkpoint** instead -- that workflow gives you the full training dialog with all hyperparameters editable.
+If you need to change learning rate or batch size (e.g. you hit VRAM issues or want to switch to a fine-tuning LR), cancel the paused run and start a new training using **Continue from checkpoint** instead, that workflow gives you the full training dialog with all hyperparameters editable.
 
 #### What is NOT recoverable
 
@@ -338,14 +338,14 @@ This is especially common with:
 
 ![Training Progress loss chart: train and validation loss track together for the first ~45 epochs, then after a pause/resume the training-loss curve rises steadily while the validation-loss curve drops below it and stays low, with occasional validation spikes](images/training-loss-ohem-crossover.png)
 
-This looks backwards -- validation is supposed to be the harder number -- but in this extension it is usually **expected and benign**. Judge the model by mIoU and per-class IoU, not by the train/val loss gap.
+This looks backwards, validation is supposed to be the harder number, but in this extension it is usually **expected and benign**. Judge the model by mIoU and per-class IoU, not by the train/val loss gap.
 
 **Primary cause: OHEM (hard-pixel mining).** When the loss includes OHEM (shown in the config summary as `Loss: ... + OHEM (anneal 100% -> 10%, ...)`), the two losses are computed over **different pixels**:
 
 - **Training loss** is averaged over only the hardest top-K pixels each batch (K = the OHEM hard-pixel ratio). Averaging over just the hardest pixels gives a deliberately high number.
 - **Validation loss** is averaged over **all** labeled pixels, using the pre-OHEM criterion. Including all the easy, confidently-correct pixels pulls the average down.
 
-So training loss is measured on a smaller, harder subset than validation loss, and `val_loss < train_loss` falls out by design. When the OHEM ratio **anneals** (the default schedule tightens from 100% down to 10% over the first 75% of epochs), the crossover appears partway through training as the hard-pixel selection kicks in -- which is exactly what the chart above shows after the resume near epoch 45. A rising training-loss curve here does **not** mean the model is getting worse; it means the loss is being measured on progressively harder pixels while learning rate has also dropped.
+So training loss is measured on a smaller, harder subset than validation loss, and `val_loss < train_loss` falls out by design. When the OHEM ratio **anneals** (the default schedule tightens from 100% down to 10% over the first 75% of epochs), the crossover appears partway through training as the hard-pixel selection kicks in, which is exactly what the chart above shows after the resume near epoch 45. A rising training-loss curve here does **not** mean the model is getting worse; it means the loss is being measured on progressively harder pixels while learning rate has also dropped.
 
 **Secondary causes (present with or without OHEM):**
 
@@ -355,7 +355,7 @@ So training loss is measured on a smaller, harder subset than validation loss, a
 
 **When it IS worth a second look:** if OHEM is **disabled** and validation loss is still much lower than training loss (roughly less than half), that can point to a validation split that is too easy or not representative, or data leakage between the train and validation splits (e.g. tiles from the same annotation on both sides). See [One class has wildly inconsistent IoU or loss across epochs](#one-class-has-wildly-inconsistent-iou-or-loss-across-epochs) for the related split-leakage pattern.
 
-> **Automated report:** The training diagnostics detect this pattern and, at pause and at completion, log a `TRAINING DIAGNOSTIC:` line explaining it -- reassuring when OHEM is active, or flagging a possible easy-split/leakage issue when it is not. See [Saved log files](#saved-log-files).
+> **Automated report:** The training diagnostics detect this pattern and, at pause and at completion, log a `TRAINING DIAGNOSTIC:` line explaining it, reassuring when OHEM is active, or flagging a possible easy-split/leakage issue when it is not. See [Saved log files](#saved-log-files).
 
 ### Continue-training produces worse results than original
 
@@ -364,7 +364,7 @@ So training loss is measured on a smaller, harder subset than validation loss, a
 **Common causes:**
 
 - **Learning rate too high for continue-training.** Use `0.0001`, not `0.001`. The model is already near a minimum, so a large learning rate pushes it out of the basin.
-- **`loadSettingsFromModel` may restore the OLD learning rate from the saved model.** Always verify that the LR spinner shows `0.00010` before clicking Train. If the spinner shows `0.00100`, the old model's LR was loaded -- change it manually.
+- **`loadSettingsFromModel` may restore the OLD learning rate from the saved model.** Always verify that the LR spinner shows `0.00010` before clicking Train. If the spinner shows `0.00100`, the old model's LR was loaded, change it manually.
 - **Frozen layers, discriminative LRs, and scheduler settings are preserved** when loading a model in current releases.
 - **Version mismatch between the pip package and the JAR.** Check for the version mismatch notification dialog on startup. If the Python environment is out of date, use **Utilities > Rebuild DL Environment...** to update it.
 
@@ -380,12 +380,12 @@ So training loss is measured on a smaller, harder subset than validation loss, a
 - **Single image:** Go to **Image > Set image properties** and enter the pixel width/height in microns
 - **Entire project:** Run a script in the Script Editor to set pixel size across all project images
 
-This was fixed in v0.5.1+ -- uncalibrated images now default to 1.0 um/px for contour post-processing, so the shapes will be correct even without calibration (though micron-based thresholds like min object size and hole filling will be approximate).
+This was fixed in v0.5.1+, uncalibrated images now default to 1.0 um/px for contour post-processing, so the shapes will be correct even without calibration (though micron-based thresholds like min object size and hole filling will be approximate).
 
 ### Inference produces blank/uniform results
 
-- The classifier may not have trained well -- check training loss curves
-- Channel configuration may not match training -- verify channel order and count
+- The classifier may not have trained well, check training loss curves
+- Channel configuration may not match training, verify channel order and count
 - Resolution (downsample) may differ from training
 
 ### Tile seams visible in output
@@ -394,9 +394,9 @@ Both the overlay and Apply Classifier (OBJECTS) use the same unified inference p
 
 If seams are still visible:
 
-- **Re-train the model** -- new models use BatchRenorm and save dataset normalization statistics, giving the best cross-tile consistency. Older models trained with standard BatchNorm are more susceptible to tiling artifacts.
-- Increase the **Overlay Prediction Smoothing** sigma in Edit > Preferences > DL Pixel Classifier -- higher values smooth noisy per-pixel predictions
-- The tile overlap is enforced automatically (minimum 25% per side) -- manually increasing it beyond the default has diminishing returns
+- **Re-train the model**: new models use BatchRenorm and save dataset normalization statistics, giving the best cross-tile consistency. Older models trained with standard BatchNorm are more susceptible to tiling artifacts.
+- Increase the **Overlay Prediction Smoothing** sigma in Edit > Preferences > DL Pixel Classifier, higher values smooth noisy per-pixel predictions
+- The tile overlap is enforced automatically (minimum 25% per side), manually increasing it beyond the default has diminishing returns
 
 ### Objects don't match the overlay
 
@@ -454,26 +454,26 @@ If you need to re-evaluate without retraining, **Save Session...** from the Trai
 
 The Training Area Issues dialog shows a yellow warning banner at the top when either of these conditions would hide the overlay:
 
-- **Overlay opacity is below 10%** -- raise **View > Overlay opacity** slider in QuPath
-- **Pixel classification display is off** -- toggle **View > Show pixel classification** in QuPath
+- **Overlay opacity is below 10%**: raise **View > Overlay opacity** slider in QuPath
+- **Pixel classification display is off**: toggle **View > Show pixel classification** in QuPath
 
 If the warning banner is not shown but the overlay still isn't visible, also check:
 
 - The QuPath viewer is centered on the selected tile (it should be, automatically)
-- The tile's PNG file exists -- look for `<model_dir>/disagreement/train/<stem>_loss.png` or `.../val/<stem>_loss.png`; if it is missing, the Python log may show a `save_loss_heatmap failed` warning for that tile/split
-- The production DL prediction overlay is not silently holding the slot -- the Training Area Issues dialog normally removes it on entry and restores it on close
+- The tile's PNG file exists, look for `<model_dir>/disagreement/train/<stem>_loss.png` or `.../val/<stem>_loss.png`; if it is missing, the Python log may show a `save_loss_heatmap failed` warning for that tile/split
+- The production DL prediction overlay is not silently holding the slot, the Training Area Issues dialog normally removes it on entry and restores it on close
 
 ### No saved sessions listed for a classifier
 
 **Extensions > ... > Load Saved Training Area Issues...** only lists sessions that exist on disk at `<classifier_dir>/training_issues_sessions/`. If none appear:
 
 - Confirm a session was actually saved (the Save button shows a notification on success)
-- Confirm the classifier picker selected the right classifier -- sessions live under a specific model directory and do not transfer to other classifiers, even if renamed to match
-- If you moved the model, the sessions should have moved with it -- check that the `training_issues_sessions/` folder is still next to `model.pt`
+- Confirm the classifier picker selected the right classifier, sessions live under a specific model directory and do not transfer to other classifiers, even if renamed to match
+- If you moved the model, the sessions should have moved with it, check that the `training_issues_sessions/` folder is still next to `model.pt`
 
 ### "This session was saved against a different build" warning
 
-Retraining a model in place does not change its `ClassifierMetadata.id`, so a saved session still nominally matches the classifier. The dialog detects that the model file's size or modification time has changed since the session was saved and flags the session as stale. You can still open the session -- the PNGs were rendered against the earlier model -- but the visuals no longer reflect current model behavior. Re-run **Review Training Areas** to get a current session.
+Retraining a model in place does not change its `ClassifierMetadata.id`, so a saved session still nominally matches the classifier. The dialog detects that the model file's size or modification time has changed since the session was saved and flags the session as stale. You can still open the session. The PNGs were rendered against the earlier model, but the visuals no longer reflect current model behavior. Re-run **Review Training Areas** to get a current session.
 
 ### Validation-split tiles show metrics but no overlay images
 
@@ -482,7 +482,7 @@ This was a bug prior to 2026-04-17 caused by train/val tile stems colliding in a
 ### High loss on most tiles
 
 If nearly all tiles show high loss, the model likely did not train well:
-- Check training loss curves -- did the model converge?
+- Check training loss curves, did the model converge?
 - Verify annotations are correct and consistent
 - See [BEST_PRACTICES.md](BEST_PRACTICES.md#interpreting-tile-evaluation-results) for improvement strategies
 
@@ -517,8 +517,8 @@ The Python environment is a self-contained installation managed by [pixi](https:
 | Item | Location |
 |------|----------|
 | Environment root | `~/.local/share/appose/dl-pixel-classifier/` (see OS-specific paths above) |
-| pixi.toml | `<env root>/pixi.toml` -- defines all Python dependencies |
-| pixi.lock | `<env root>/pixi.lock` -- resolved dependency versions |
+| pixi.toml | `<env root>/pixi.toml`, defines all Python dependencies |
+| pixi.lock | `<env root>/pixi.lock`, resolved dependency versions |
 | Python installation | `<env root>/.pixi/envs/default/` |
 
 **When to rebuild vs fresh install:**
@@ -535,11 +535,11 @@ The Python environment is a self-contained installation managed by [pixi](https:
 
 When filing a bug report, please include:
 
-1. **System Info output** -- Utilities > System Info > Copy to Clipboard
-2. **Python Console log** -- Utilities > Python Console > Copy to Clipboard
-3. **QuPath log** -- View > Show log (copy relevant error messages)
-4. **Steps to reproduce** -- what you did, what you expected, what happened
-5. **Image details** -- image type (brightfield/fluorescence), channel count, bit depth
+1. **System Info output**: Utilities > System Info > Copy to Clipboard
+2. **Python Console log**: Utilities > Python Console > Copy to Clipboard
+3. **QuPath log**: View > Show log (copy relevant error messages)
+4. **Steps to reproduce**: what you did, what you expected, what happened
+5. **Image details**: image type (brightfield/fluorescence), channel count, bit depth
 
 File issues at the [GitHub repository](https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/issues).
 
