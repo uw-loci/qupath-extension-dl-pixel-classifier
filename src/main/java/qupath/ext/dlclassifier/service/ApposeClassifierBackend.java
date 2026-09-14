@@ -1750,7 +1750,6 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     dtype,
                     channelConfig,
                     inferenceConfig,
-                    outputDir,
                     reflectionPadding);
         }
 
@@ -1777,7 +1776,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
     /**
      * Single-tile pixel inference with full shared-memory round-trip.
-     * No file I/O -- probability map returned directly via shared memory.
+     * No file I/O: the probability map comes back through shared memory and
+     * is handed to the caller as an in-memory
+     * {@link ClassifierClient.TileOutput}.
      * <p>
      * Wrapped with {@link ApposeService#withExtensionClassLoader} because
      * NDArray allocation triggers ServiceLoader discovery of ShmFactory,
@@ -1801,7 +1802,6 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             String dtype,
             ChannelConfiguration channelConfig,
             InferenceConfig inferenceConfig,
-            Path outputDir,
             int reflectionPadding)
             throws IOException {
 
@@ -1873,21 +1873,22 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         NDArray resultNd = (NDArray) task.outputs.get("probabilities");
 
                         try {
-                            // Read result from shared memory and save as .bin file
-                            // (matching the existing file-based contract for
-                            // DLPixelClassifier). Phase 3c: content is either
-                            // (C,H,W) float32 probabilities or (H,W) uint8
-                            // argmax -- Java knows which via inferenceConfig.
-                            Files.createDirectories(outputDir);
-                            Path outputPath = outputDir.resolve(tileId + ".bin");
-
+                            // Copy the result out of shared memory and hand it
+                            // straight to the caller. The copy is required
+                            // because resultNd is closed in the finally block
+                            // below, but it must NOT go via a file: this runs on
+                            // every tile of an interactive overlay, and writing
+                            // the probability map out only to read it back was
+                            // the single largest per-tile cost. Phase 3c: content
+                            // is either (C,H,W) float32 probabilities or (H,W)
+                            // uint8 argmax -- Java knows which via inferenceConfig.
                             ByteBuffer resultBuf = resultNd.buffer().order(ByteOrder.nativeOrder());
                             byte[] resultBytes = new byte[resultBuf.remaining()];
                             resultBuf.get(resultBytes);
-                            Files.write(outputPath, resultBytes);
 
-                            Map<String, String> outputPaths = Map.of(tileId, outputPath.toString());
-                            return new ClassifierClient.PixelInferenceResult(outputPaths, numClasses);
+                            Map<String, ClassifierClient.TileOutput> outputs =
+                                    Map.of(tileId, ClassifierClient.TileOutput.ofBytes(tileId, resultBytes));
+                            return new ClassifierClient.PixelInferenceResult(outputs, numClasses);
                         } finally {
                             resultNd.close();
                         }
@@ -2003,7 +2004,10 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     int numClasses = ((Number) task.outputs.get("num_classes")).intValue();
                     @SuppressWarnings("unchecked")
                     Map<String, String> outputPaths = (Map<String, String>) task.outputs.get("output_paths");
-                    return new ClassifierClient.PixelInferenceResult(new HashMap<>(outputPaths), numClasses);
+                    Map<String, ClassifierClient.TileOutput> outputs = new HashMap<>();
+                    outputPaths.forEach(
+                            (id, path) -> outputs.put(id, ClassifierClient.TileOutput.ofPath(id, Path.of(path))));
+                    return new ClassifierClient.PixelInferenceResult(outputs, numClasses);
                 } finally {
                     inputNd.close();
                 }

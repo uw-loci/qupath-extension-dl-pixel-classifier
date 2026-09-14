@@ -527,15 +527,13 @@ public class DLPixelClassifier implements PixelClassifier {
                         modelDirPath, tiles, channelCfg, inferenceConfig, sharedTempDir, reflectionPadding);
             }
 
-            if (result == null
-                    || result.outputPaths() == null
-                    || result.outputPaths().isEmpty()) {
+            if (result == null || result.outputs() == null || result.outputs().isEmpty()) {
                 throw new IOException("No inference result returned for tile");
             }
 
-            String outputPath = result.outputPaths().get(tileId);
-            if (outputPath == null) {
-                throw new IOException("No output path for tile " + tileId);
+            ClassifierClient.TileOutput tileOutput = result.outputs().get(tileId);
+            if (tileOutput == null) {
+                throw new IOException("No inference output for tile " + tileId);
             }
 
             int tileWidth = tileImage.getWidth();
@@ -545,12 +543,8 @@ public class DLPixelClassifier implements PixelClassifier {
             // class indices; render directly without smoothing, multi-pass,
             // or tile blending (all of which require floats).
             if (useArgmax) {
-                byte[][] argmaxMap = ClassifierClient.readArgmaxMap(Path.of(outputPath), tileHeight, tileWidth);
-                try {
-                    Files.deleteIfExists(Path.of(outputPath));
-                } catch (IOException e) {
-                    logger.debug("Failed to delete tile output: {}", outputPath);
-                }
+                byte[][] argmaxMap = ClassifierClient.readArgmaxMap(tileOutput, tileHeight, tileWidth);
+                tileOutput.discard();
                 byte[][] strideArgmax = cropArgmaxToStride(argmaxMap, request);
                 int strideW = strideArgmax[0].length;
                 int strideH = strideArgmax.length;
@@ -569,15 +563,12 @@ public class DLPixelClassifier implements PixelClassifier {
             }
 
             // Read probability map
-            float[][][] probMap = ClassifierClient.readProbabilityMap(
-                    Path.of(outputPath), result.numClasses(), tileHeight, tileWidth);
+            float[][][] probMap =
+                    ClassifierClient.readProbabilityMap(tileOutput, result.numClasses(), tileHeight, tileWidth);
 
-            // Clean up this tile's prob map file (shared dir persists)
-            try {
-                Files.deleteIfExists(Path.of(outputPath));
-            } catch (IOException e) {
-                logger.debug("Failed to delete tile output: {}", outputPath);
-            }
+            // Release the payload. No-op in the single-tile overlay path,
+            // where it never touched the disk; deletes the file otherwise.
+            tileOutput.discard();
 
             // ProbMap matches expanded image dimensions (Python crops any
             // reflection padding back to the expanded size). Crop to the
@@ -1116,17 +1107,14 @@ public class DLPixelClassifier implements PixelClassifier {
                 inferenceConfig,
                 sharedTempDir,
                 reflectionPadding);
-        if (result == null || result.outputPaths() == null) return null;
+        if (result == null || result.outputs() == null) return null;
 
-        String outputPath = result.outputPaths().get(tileId);
-        if (outputPath == null) return null;
+        ClassifierClient.TileOutput tileOutput = result.outputs().get(tileId);
+        if (tileOutput == null) return null;
 
         float[][][] probMap = ClassifierClient.readProbabilityMap(
-                Path.of(outputPath), result.numClasses(), tileImage.getHeight(), tileImage.getWidth());
-        try {
-            Files.deleteIfExists(Path.of(outputPath));
-        } catch (IOException ignored) {
-        }
+                tileOutput, result.numClasses(), tileImage.getHeight(), tileImage.getWidth());
+        tileOutput.discard();
 
         // The shifted inference covers a different region than the original.
         // Extract the pixels that correspond to the original request's stride area.

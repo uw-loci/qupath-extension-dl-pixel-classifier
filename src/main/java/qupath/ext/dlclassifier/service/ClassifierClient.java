@@ -1,6 +1,7 @@
 package qupath.ext.dlclassifier.service;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
@@ -27,25 +28,25 @@ public class ClassifierClient {
     }
 
     /**
-     * Reads a probability map from a raw binary float32 file.
+     * Reads a probability map from raw binary float32 data.
      *
-     * @param filePath   path to the binary file
+     * @param output     inference output for one tile, in memory or on disk
      * @param numClasses number of classes (C dimension)
      * @param height     tile height (H dimension)
      * @param width      tile width (W dimension)
      * @return probability map with shape [height][width][numClasses] (HWC order for TileProcessor)
      * @throws IOException if reading fails
      */
-    public static float[][][] readProbabilityMap(Path filePath, int numClasses, int height, int width)
+    public static float[][][] readProbabilityMap(TileOutput output, int numClasses, int height, int width)
             throws IOException {
-        byte[] bytes = java.nio.file.Files.readAllBytes(filePath);
+        byte[] bytes = output.bytes();
 
-        // Validate file size matches expected dimensions
+        // Validate payload size matches expected dimensions
         long expectedSize = (long) numClasses * height * width * Float.BYTES;
         if (bytes.length != expectedSize) {
             throw new IOException(String.format(
                     "Probability map size mismatch for %s: expected %d bytes (C=%d, H=%d, W=%d) but got %d bytes",
-                    filePath.getFileName(), expectedSize, numClasses, height, width, bytes.length));
+                    output.tileId(), expectedSize, numClasses, height, width, bytes.length));
         }
 
         java.nio.FloatBuffer buffer = java.nio.ByteBuffer.wrap(bytes)
@@ -76,7 +77,7 @@ public class ClassifierClient {
         if (logger.isDebugEnabled()) {
             int totalPixels = height * width;
             StringBuilder sb = new StringBuilder("Probability map stats for ");
-            sb.append(filePath.getFileName()).append(": ");
+            sb.append(output.tileId()).append(": ");
             for (int c = 0; c < numClasses; c++) {
                 double mean = classSum[c] / totalPixels;
                 sb.append(String.format("C%d[min=%.3f, max=%.3f, mean=%.3f] ", c, classMin[c], classMax[c], mean));
@@ -94,19 +95,19 @@ public class ClassifierClient {
      * instead of float32 probability maps. Used only when
      * {@code InferenceConfig.isUseCompactArgmaxOutput()} is true.
      *
-     * @param filePath path to the binary file (H*W bytes, uint8)
-     * @param height   tile height
-     * @param width    tile width
+     * @param output inference output for one tile (H*W bytes, uint8)
+     * @param height tile height
+     * @param width  tile width
      * @return class-index map with shape [height][width]
      * @throws IOException if reading fails or size mismatches
      */
-    public static byte[][] readArgmaxMap(Path filePath, int height, int width) throws IOException {
-        byte[] bytes = java.nio.file.Files.readAllBytes(filePath);
+    public static byte[][] readArgmaxMap(TileOutput output, int height, int width) throws IOException {
+        byte[] bytes = output.bytes();
         long expectedSize = (long) height * width;
         if (bytes.length != expectedSize) {
             throw new IOException(String.format(
                     "Argmax map size mismatch for %s: expected %d bytes (H=%d, W=%d) but got %d bytes",
-                    filePath.getFileName(), expectedSize, height, width, bytes.length));
+                    output.tileId(), expectedSize, height, width, bytes.length));
         }
         byte[][] result = new byte[height][width];
         for (int y = 0; y < height; y++) {
@@ -307,7 +308,71 @@ public class ClassifierClient {
     /**
      * Pixel-level inference result with file paths to probability maps.
      */
-    public record PixelInferenceResult(Map<String, String> outputPaths, int numClasses) {}
+    public record PixelInferenceResult(Map<String, TileOutput> outputs, int numClasses) {}
+
+    /**
+     * Raw inference output for a single tile.
+     *
+     * <p>Exactly one of {@code data} and {@code path} is non-null. The
+     * single-tile overlay path copies the result straight out of Appose
+     * shared memory and keeps it in {@code data}; the multi-tile batch path
+     * has Python write one file per tile and reports {@code path}. Callers
+     * read either through {@link #bytes()} and release either through
+     * {@link #discard()}, so neither has to know which kind it holds.
+     *
+     * <p>Keeping the overlay payload in memory is deliberate. Writing it to
+     * disk only to read it back on the next line cost a full write plus read
+     * of the probability map on every tile of an interactive overlay, which
+     * is the dominant per-tile cost once the model is small.
+     *
+     * @param tileId tile identifier, used in size-mismatch messages
+     * @param path   file holding the payload, or null when it is in memory
+     * @param data   payload bytes, or null when the payload is on disk
+     */
+    public record TileOutput(String tileId, Path path, byte[] data) {
+
+        public TileOutput {
+            if ((path == null) == (data == null)) {
+                throw new IllegalArgumentException(
+                        "TileOutput requires exactly one of path or data (tileId=" + tileId + ")");
+            }
+        }
+
+        /** Output already held in memory, with no file backing it. */
+        public static TileOutput ofBytes(String tileId, byte[] data) {
+            return new TileOutput(tileId, null, data);
+        }
+
+        /** Output written to a file by the Python side. */
+        public static TileOutput ofPath(String tileId, Path path) {
+            return new TileOutput(tileId, path, null);
+        }
+
+        /**
+         * Returns the payload, reading the backing file when there is one.
+         *
+         * @return the raw bytes
+         * @throws IOException if the backing file cannot be read
+         */
+        public byte[] bytes() throws IOException {
+            return data != null ? data : Files.readAllBytes(path);
+        }
+
+        /**
+         * Releases the output. Deletes the backing file when there is one;
+         * does nothing for an in-memory payload. Safe to call more than once.
+         */
+        public void discard() {
+            if (path == null) {
+                return;
+            }
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException e) {
+                logger.debug("Failed to delete tile output {}: {}", path, e.getMessage());
+            }
+        }
+    }
 
     /**
      * Model information.

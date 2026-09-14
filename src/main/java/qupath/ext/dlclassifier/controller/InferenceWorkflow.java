@@ -993,12 +993,13 @@ public class InferenceWorkflow {
                                 modelDirPath, currentBatch.tileDataList(), channelConfig, inferenceConfig, tempDir, 0);
                     }
 
-                    if (pixelResult != null && pixelResult.outputPaths() != null) {
+                    if (pixelResult != null && pixelResult.outputs() != null) {
                         for (ClassifierClient.TileData tile : currentBatch.tileDataList()) {
-                            String outputPath = pixelResult.outputPaths().get(tile.id());
-                            if (outputPath != null) {
+                            ClassifierClient.TileOutput tileOutput =
+                                    pixelResult.outputs().get(tile.id());
+                            if (tileOutput != null) {
                                 float[][][] probMap = ClassifierClient.readProbabilityMap(
-                                        Path.of(outputPath), pixelResult.numClasses(), tileSize, tileSize);
+                                        tileOutput, pixelResult.numClasses(), tileSize, tileSize);
                                 allResults.add(probMap);
                             }
                         }
@@ -1209,12 +1210,13 @@ public class InferenceWorkflow {
                             modelDirPath, currentBatch.tileDataList(), channelConfig, inferenceConfig, tempDir, 0);
                 }
 
-                if (pixelResult != null && pixelResult.outputPaths() != null) {
+                if (pixelResult != null && pixelResult.outputs() != null) {
                     for (ClassifierClient.TileData tile : currentBatch.tileDataList()) {
-                        String outputPath = pixelResult.outputPaths().get(tile.id());
-                        if (outputPath != null) {
+                        ClassifierClient.TileOutput tileOutput =
+                                pixelResult.outputs().get(tile.id());
+                        if (tileOutput != null) {
                             float[][][] probMap = ClassifierClient.readProbabilityMap(
-                                    Path.of(outputPath), pixelResult.numClasses(), tileSize, tileSize);
+                                    tileOutput, pixelResult.numClasses(), tileSize, tileSize);
                             allResults.add(probMap);
                         }
                     }
