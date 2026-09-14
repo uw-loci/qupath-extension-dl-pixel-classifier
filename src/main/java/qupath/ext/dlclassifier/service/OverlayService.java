@@ -59,6 +59,9 @@ public class OverlayService {
     /** True while training is in progress -- overlay creation is blocked. */
     private final BooleanProperty trainingActive = new SimpleBooleanProperty(false);
 
+    /** Training/pretraining jobs currently holding the overlay suspended. FX thread only. */
+    private int suspendCount = 0;
+
     private OverlayService() {}
 
     /**
@@ -423,15 +426,16 @@ public class OverlayService {
      * Suspends overlay for training.
      * <p>
      * Removes any active overlay and sets the training-active flag, which
-     * prevents overlay re-creation until {@link #resumeAfterTraining()} is called.
+     * prevents overlay re-creation until every suspending job has called
+     * {@link #resumeAfterTraining()}. Calls are counted: training and pretraining
+     * can overlap, and the first to finish must not re-enable the overlay.
      * This avoids concurrent inference tile requests interfering with training
      * (Appose "thread death" race) and frees GPU memory for the training job.
      */
     public void suspendForTraining() {
         if (Platform.isFxApplicationThread()) {
             removeOverlay();
-            trainingActive.set(true);
-            logger.info("Overlay suspended for training");
+            markSuspended();
         } else {
             // Must run on FX thread (removeOverlay manipulates scene graph).
             // Block the calling thread until the FX thread completes so that
@@ -440,8 +444,7 @@ public class OverlayService {
             Platform.runLater(() -> {
                 try {
                     removeOverlay();
-                    trainingActive.set(true);
-                    logger.info("Overlay suspended for training");
+                    markSuspended();
                 } finally {
                     latch.countDown();
                 }
@@ -458,13 +461,32 @@ public class OverlayService {
     }
 
     /**
-     * Resumes overlay availability after training completes.
+     * Releases one job's suspension; the overlay becomes available again when none remain.
      */
     public void resumeAfterTraining() {
-        Platform.runLater(() -> {
+        Platform.runLater(this::markResumed);
+    }
+
+    /** Records one more suspending job. Call on the FX thread. */
+    void markSuspended() {
+        suspendCount++;
+        trainingActive.set(true);
+        logger.info("Overlay suspended for training ({} job(s) running)", suspendCount);
+    }
+
+    /** Releases one suspending job; unmatched calls are ignored. Call on the FX thread. */
+    void markResumed() {
+        if (suspendCount == 0) {
+            logger.debug("Overlay resume with no matching suspend -- ignoring");
+            return;
+        }
+        suspendCount--;
+        if (suspendCount == 0) {
             trainingActive.set(false);
             logger.info("Overlay resumed after training");
-        });
+        } else {
+            logger.info("Overlay stays suspended -- {} job(s) still running", suspendCount);
+        }
     }
 
     /**

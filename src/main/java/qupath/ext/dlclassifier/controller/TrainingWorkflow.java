@@ -1979,6 +1979,8 @@ public class TrainingWorkflow {
             Set<String> trainOnlyImages,
             Set<String> valOnlyImages) {
         Path tempDir = null;
+        // Early returns and failures below skip the suspend; resume only what was suspended.
+        boolean overlaySuspended = false;
         try {
             // 1. Check for unsaved changes (on FX thread)
             CompletableFuture<Boolean> unsavedCheck = new CompletableFuture<>();
@@ -2139,6 +2141,7 @@ public class TrainingWorkflow {
 
             // 5. Suspend overlay during resumed training to free GPU memory
             OverlayService.getInstance().suspendForTraining();
+            overlaySuspended = true;
 
             // Resume training via backend
             ClassifierBackend backend = BackendFactory.getBackend();
@@ -2401,7 +2404,9 @@ public class TrainingWorkflow {
             progress.log("ERROR: Resume failed: " + e.getMessage());
             progress.complete(false, "Resume failed: " + e.getMessage());
         } finally {
-            OverlayService.getInstance().resumeAfterTraining();
+            if (overlaySuspended) {
+                OverlayService.getInstance().resumeAfterTraining();
+            }
             releaseTrainingLock();
             // Only clean up if the outer holder isn't managing this temp dir.
             // When the holder IS set, the dialog close handler cleans up

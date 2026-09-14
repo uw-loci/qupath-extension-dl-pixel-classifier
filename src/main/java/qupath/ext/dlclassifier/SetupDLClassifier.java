@@ -1829,6 +1829,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         Thread pretrainThread = new Thread(
                 () -> {
                     try {
+                        // Same reasons as TrainingWorkflow: overlay tile requests race the
+                        // run on the shared worker and compete with it for GPU memory.
+                        OverlayService.getInstance().suspendForTraining();
                         Path effectiveDataPath = config.dataPath();
                         if (config.sourceMode() == MAEPretrainingDialog.SourceMode.PROJECT_IMAGES) {
                             progress.log("Extracting MAE tiles from "
@@ -1907,6 +1910,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                     EXTENSION_NAME, "MAE pretraining failed: " + e.getMessage()));
                         }
                     } finally {
+                        OverlayService.getInstance().resumeAfterTraining();
                         if (!cleanupDeferred[0]) {
                             maeCleanup.run();
                         }
@@ -2131,6 +2135,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         Thread pretrainThread = new Thread(
                 () -> {
                     try {
+                        // Same reasons as TrainingWorkflow: overlay tile requests race the
+                        // run on the shared worker and compete with it for GPU memory.
+                        OverlayService.getInstance().suspendForTraining();
                         Path effectiveDataPath = config.dataPath();
                         if (config.sourceMode() == SSLPretrainingDialog.SourceMode.PROJECT_IMAGES) {
                             int nImages = config.projectImages().size();
@@ -2242,6 +2249,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                     EXTENSION_NAME, "SSL pretraining failed: " + e.getMessage()));
                         }
                     } finally {
+                        OverlayService.getInstance().resumeAfterTraining();
                         if (!cleanupDeferred[0]) {
                             sslCleanup.run();
                         }
@@ -2842,6 +2850,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 Thread resumeThread = new Thread(
                         () -> {
                             try {
+                                OverlayService.getInstance().suspendForTraining();
                                 progress.showResumedState();
                                 Consumer<ClassifierClient.TrainingProgress> cb = "pretrain_ssl".equals(taskName)
                                         ? buildSSLPretrainProgressCallback(progress, runName, total, new int[] {-1})
@@ -2868,6 +2877,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                 progress.log("ERROR: resume failed: " + ex.getMessage());
                                 progress.complete(false, label + " resume failed: " + ex.getMessage());
                                 cleanup.run();
+                            } finally {
+                                OverlayService.getInstance().resumeAfterTraining();
                             }
                         },
                         "DLClassifier-" + label + "Resume");
