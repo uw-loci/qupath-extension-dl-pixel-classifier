@@ -1,5 +1,6 @@
 package qupath.ext.dlclassifier.ui;
 
+import java.io.File;
 import java.util.ResourceBundle;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -17,6 +18,7 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
@@ -24,6 +26,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ComputeVariant;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
+import qupath.ext.dlclassifier.service.ApposeEnvLocation;
 import qupath.ext.dlclassifier.service.ApposeService;
 import qupath.ext.dlclassifier.service.GpuProbe;
 import qupath.ext.dlclassifier.service.ServerPackageInstallException;
@@ -54,8 +57,8 @@ public class SetupEnvironmentDialog {
 
     /**
      * Invoked when the user asks to rebuild under a different compute variant.
-     * The variant preference is already written when this runs; the callback
-     * owns tearing down the old environment and reinstalling. Null disables
+     * The callback owns stopping the Python service and reinstalling. It keeps
+     * the old environment: the variants install side by side. Null disables
      * the switch buttons.
      */
     private final java.util.function.Consumer<ComputeVariant> onSwitchVariant;
@@ -71,6 +74,9 @@ public class SetupEnvironmentDialog {
     private Label detectedLabel;
 
     private Label adviceLabel;
+
+    /** Resolved build path; follows the location buttons AND the variant radios. */
+    private Label envPathLabel;
 
     /** Cleared once the user picks a variant, so a late probe cannot override them. */
     private boolean variantChosenByUser;
@@ -171,9 +177,47 @@ public class SetupEnvironmentDialog {
         Label envLocLabel = new Label(res.getString("setup.envLocation"));
         envLocLabel.setFont(Font.font(null, FontWeight.BOLD, 12));
 
-        Label envPathLabel = new Label(ApposeService.getEnvironmentPath().toString());
+        // Offered HERE, before anything is downloaded, as QP-CAT does: the
+        // location is far cheaper to choose now than to change later, which
+        // builds a second environment. The preference changes it afterwards.
+        envPathLabel = new Label();
+        envPathLabel.setWrapText(true);
         envPathLabel.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
         envPathLabel.setPadding(new Insets(0, 0, 0, 8));
+
+        Button changeLocationButton = new Button(res.getString("setup.changeLocation"));
+        TooltipHelper.install(
+                changeLocationButton,
+                "Choose where the environment is built.\n\n"
+                        + "The default, inside your home directory, is right on\n"
+                        + "most machines. On HPC systems and managed desktops the\n"
+                        + "home directory is often quota-limited, and an\n"
+                        + "environment this size fails there with 'Quota exceeded'.\n"
+                        + "Point it at scratch or project storage instead.");
+        changeLocationButton.setOnAction(e -> {
+            DirectoryChooser chooser = new DirectoryChooser();
+            chooser.setTitle(res.getString("setup.chooseLocationTitle"));
+            String current = DLClassifierPreferences.getEnvBaseDir();
+            File start = current != null && !current.isBlank() ? new File(current.strip()) : null;
+            if (start != null && start.isDirectory()) {
+                chooser.setInitialDirectory(start);
+            }
+            File chosen = chooser.showDialog(stage);
+            if (chosen != null) {
+                DLClassifierPreferences.setEnvBaseDirFromSetupWizard(chosen.getAbsolutePath());
+                refreshLocationLabel();
+            }
+        });
+
+        Button defaultLocationButton = new Button(res.getString("setup.defaultLocation"));
+        TooltipHelper.install(defaultLocationButton, "Build under the standard location\nin your home directory.");
+        defaultLocationButton.setOnAction(e -> {
+            DLClassifierPreferences.setEnvBaseDirFromSetupWizard("");
+            refreshLocationLabel();
+        });
+
+        HBox locationButtons = new HBox(8, changeLocationButton, defaultLocationButton);
+        locationButtons.setPadding(new Insets(0, 0, 0, 8));
 
         // Compute variant. This is the one choice that cannot be undone cheaply
         // later (a rebuild is another 2-4 GB download), and the one users are
@@ -195,8 +239,10 @@ public class SetupEnvironmentDialog {
             if (chosen != null) {
                 selectedVariant = (ComputeVariant) chosen.getUserData();
                 variantChosenByUser = true;
+                refreshLocationLabel(); // the variant names the environment, so the path changes
             }
         });
+        refreshLocationLabel();
 
         detectedLabel = new Label();
         detectedLabel.setWrapText(true);
@@ -252,7 +298,21 @@ public class SetupEnvironmentDialog {
                         variantBox,
                         envLocLabel,
                         envPathLabel,
+                        locationButtons,
                         buttonBox);
+    }
+
+    /**
+     * Shows the path the environment will actually be built at, resolved from
+     * the location preference and the variant selected in THIS dialog. It must
+     * follow the radio buttons, not the variant preference: reading the
+     * preference showed the CPU path while a preselected GPU install built
+     * somewhere else, since the preference is only written when setup starts.
+     */
+    private void refreshLocationLabel() {
+        var dir = ApposeEnvLocation.resolve(DLClassifierPreferences.getEnvBaseDir(), selectedVariant.envName());
+        boolean built = ApposeEnvLocation.isBuilt(dir);
+        envPathLabel.setText(dir + (built ? "   " + res.getString("setup.alreadyBuilt") : ""));
     }
 
     private void showInProgressView() {
@@ -387,7 +447,7 @@ public class SetupEnvironmentDialog {
         return label;
     }
 
-    /** Hands the rebuild to the owner, which owns environment teardown. */
+    /** Hands the switch to the owner, which stops the service and reinstalls. */
     private void requestSwitch(ComputeVariant target) {
         stage.close();
         onSwitchVariant.accept(target);

@@ -128,7 +128,7 @@ public final class DLClassifierChecks {
             Platform.runLater(() -> Dialogs.showErrorNotification(
                     "DL Pixel Classifier - Update Required",
                     "Python environment is out of date.\n"
-                            + "Go to DL Pixel Classifier > Rebuild Python Environment to update.\n"
+                            + "Go to DL Pixel Classifier > Utilities > Rebuild DL Environment to update.\n"
                             + "Training and inference are disabled until the environment is rebuilt."));
         }
     }

@@ -100,7 +100,7 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and G
 
    If the GPU environment cannot be installed (no NVIDIA GPU, or a driver too old for CUDA 12), setup **falls back to CPU automatically** rather than leaving you with nothing, and tells you it did. See [GPU Support](#gpu-support).
 
-2. **Changing CPU/GPU later** -- **Extensions > DL Pixel Classifier > Utilities > Compute Environment (CPU / GPU)...** switches variants and rebuilds. The setup wizard also offers a one-click switch on its completion screen whenever you end up on CPU. Switching re-downloads the environment (~2-4 GB); trained classifiers and settings are unaffected.
+2. **Changing CPU/GPU later** -- **Extensions > DL Pixel Classifier > Utilities > Compute Environment (CPU / GPU)...** switches variants. The setup wizard also offers a one-click switch on its completion screen whenever you end up on CPU. The two variants install side by side, so the one you switch away from is kept: the first switch to a variant downloads it (~2-4 GB), and switching back to one you already have does not. Once the new environment works, you are asked whether to remove the old one. Trained classifiers and settings are unaffected.
 
    > **After updating the extension:** If you install a new version of this extension, you **must** rebuild the Python environment to match. The extension enforces version matching and will block training/inference if the environment is out of date. An error notification will appear with instructions. Go to **Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment...** to update.
 
@@ -196,7 +196,7 @@ The extension has **two separate Python environments**. The setup wizard asks wh
 - **CPU**: works on any machine, with no GPU acceleration. Training is much slower but functional. Choose it if you have no NVIDIA GPU or want the widest compatibility; it is also the automatic fallback when the GPU environment cannot be installed.
 - **GPU (CUDA)**: uses an NVIDIA GPU for training and inference. **Requires an NVIDIA GPU AND CUDA-compatible drivers. The environment cannot install without one.** See [CUDA / GPU Driver Requirements](#cuda--gpu-driver-requirements) below.
 
-Each variant installs as a separate environment (~2-4 GB), so switching between them requires downloading a new set of packages. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for GPU detection issues or if your GPU is not being used.
+Each variant installs as a separate environment (~2-4 GB) under its own name, so both can be installed at once. The first switch to a variant downloads it; switching back to one you already have does not. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for GPU detection issues or if your GPU is not being used.
 
 ## Supported Image Types
 

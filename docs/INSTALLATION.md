@@ -85,13 +85,17 @@ The setup wizard uses [pixi](https://pixi.sh/) (via Appose) to create an isolate
 
 ### Environment location
 
-The environment is stored at:
+The setup wizard shows the full path it will build to before anything is downloaded, and marks it **[already built]** when an environment is already there. **Change...** picks a different folder and **Use default** puts it back. Choose another location when your home directory is quota-limited, as it often is on HPC systems and managed desktops, where an environment this size fails with "Quota exceeded". To change it later, use the **Python environment location** preference.
+
+By default the environment is stored at:
 
 | OS | Path |
 |----|------|
 | Windows | `C:\Users\<you>\.local\share\appose\dl-pixel-classifier\` |
 | macOS | `~/.local/share/appose/dl-pixel-classifier/` |
 | Linux | `~/.local/share/appose/dl-pixel-classifier/` |
+
+The GPU environment is named `dl-pixel-classifier-gpu` instead, so the CPU and GPU environments can be installed side by side.
 
 ### Rebuilding the environment
 

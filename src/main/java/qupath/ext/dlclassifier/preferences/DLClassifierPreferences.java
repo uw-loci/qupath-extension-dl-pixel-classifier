@@ -417,6 +417,9 @@ public final class DLClassifierPreferences {
         // nothing, and does not even change the path shown by "Where Are My
         // Files?" until a rebuild. Silence here reads as a broken setting.
         envBaseDir.addListener((obs, oldV, newV) -> {
+            if (envBaseDirSetBySetupWizard) {
+                return;
+            }
             String target = newV == null || newV.isBlank() ? "the default location" : newV.strip();
             boolean everBuilt = !getEnvLastBuiltDir().isBlank();
             String message = everBuilt
@@ -780,6 +783,30 @@ public final class DLClassifierPreferences {
     /** Base dir for the Appose env, or "" for the Appose default. */
     public static String getEnvBaseDir() {
         return envBaseDir.get();
+    }
+
+    /**
+     * True only while the setup wizard is writing the location. The wizard
+     * shows the resolved path itself, and the listener's advice ("nothing has
+     * moved yet -- use Rebuild") is wrong inside the dialog that is about to do
+     * the building. Set and cleared on the FX thread around a synchronous
+     * property write, so no other writer can observe it.
+     */
+    private static boolean envBaseDirSetBySetupWizard;
+
+    /**
+     * Sets the environment location from the setup wizard, without the
+     * "takes effect on the next build" notification.
+     *
+     * @param v the base directory, or blank for the default
+     */
+    public static void setEnvBaseDirFromSetupWizard(String v) {
+        envBaseDirSetBySetupWizard = true;
+        try {
+            setEnvBaseDir(v);
+        } finally {
+            envBaseDirSetBySetupWizard = false;
+        }
     }
 
     public static void setEnvBaseDir(String v) {

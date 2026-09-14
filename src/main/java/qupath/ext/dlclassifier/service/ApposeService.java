@@ -826,6 +826,22 @@ public class ApposeService {
     }
 
     /**
+     * Shuts the service down AND forgets which environment it was using, so
+     * the next {@link #initialize} resolves the location and variant afresh
+     * from the preferences.
+     * <p>
+     * {@link #shutdown()} alone is not enough when the target environment is
+     * about to change: {@link #getEnvironmentPath()} and
+     * {@link #isEnvironmentBuilt()} prefer the live environment's own path, so
+     * after a plain shutdown they keep reporting the OLD environment. Unlike
+     * {@link #deleteEnvironment()}, nothing is removed from disk.
+     */
+    public synchronized void detachEnvironment() {
+        shutdown();
+        environment = null;
+    }
+
+    /**
      * Deletes the Appose pixi environment from disk.
      * The service must be shut down first via {@link #shutdown()}.
      * Uses the Appose Environment API if available, otherwise falls
@@ -1438,7 +1454,7 @@ public class ApposeService {
                         logger.warn(
                                 "Could not delete or rename .pixi/ -- "
                                         + "environment may not rebuild automatically. "
-                                        + "Use DL Classifier > Setup Environment to force rebuild. "
+                                        + "Use Utilities > Rebuild DL Environment to force a rebuild. "
                                         + "Error: {}",
                                 e2.getMessage());
                     }

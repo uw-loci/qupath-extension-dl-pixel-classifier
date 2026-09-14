@@ -33,6 +33,7 @@ import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.ComputeVariant;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.service.ApposeClassifierBackend;
+import qupath.ext.dlclassifier.service.ApposeEnvLocation;
 import qupath.ext.dlclassifier.service.ApposeService;
 import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
@@ -1584,12 +1585,21 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
     }
 
     /**
-     * Switches the compute environment between CPU and GPU, rebuilding it.
+     * Switches the compute environment between CPU and GPU.
      * <p>
-     * Order matters: the old environment is deleted <em>before</em> the
-     * preference moves, because {@code deleteEnvironment()} resolves the path
-     * from the current variant. Switching first would orphan several gigabytes
-     * under the old environment name and delete nothing.
+     * The two variants install under different names, so they sit side by
+     * side: the current environment is KEPT, and switching back later reuses it
+     * instead of downloading it again. This follows QP-CAT, whose setup flow is
+     * the tested one. This method used to delete the current environment first,
+     * which removed the only working environment before the new one was proven;
+     * when a GPU install then failed, the CPU fallback had to download
+     * everything again.
+     * <p>
+     * The old environment is not orphaned: once the new one is built and
+     * verified, ApposeService offers to remove the one it replaced, defaulting
+     * to Keep. The service is detached rather than merely shut down, so the
+     * environment path re-resolves from the new variant instead of continuing
+     * to report the old environment.
      *
      * @param qupath the GUI instance
      * @param target the variant to install
@@ -1602,6 +1612,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             return;
         }
 
+        boolean targetBuilt = ApposeEnvLocation.isBuilt(
+                ApposeEnvLocation.resolve(DLClassifierPreferences.getEnvBaseDir(), target.envName()));
+
         StringBuilder message = new StringBuilder()
                 .append("Current: ")
                 .append(current.displayLabel())
@@ -1609,8 +1622,15 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 .append(gpuSummaryIfKnown())
                 .append("\n\nSwitch the Python environment to:\n  ")
                 .append(target.displayLabel())
-                .append("\n\nThis deletes the current environment and re-downloads ")
-                .append("all dependencies (~2-4 GB).\n");
+                .append("\n\n")
+                .append(
+                        targetBuilt
+                                ? "That environment is already installed, so this is quick.\n"
+                                : "That environment is downloaded now (~2-4 GB).\n")
+                .append("The ")
+                .append(current.name())
+                .append(" environment is kept, so switching back\n")
+                .append("does not download it again.\n");
         GpuProbe.Result probe = GpuProbe.cachedResult();
         if (target == ComputeVariant.GPU && probe != null && !probe.nvidiaPresent()) {
             // Do not silently let someone spend a 2-4 GB download on an
@@ -1625,19 +1645,17 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             return;
         }
 
-        try {
-            ApposeService.getInstance().shutdown();
-            ApposeService.getInstance().deleteEnvironment();
-        } catch (Exception e) {
-            logger.error("Failed to delete environment before variant switch", e);
-            Dialogs.showErrorNotification(EXTENSION_NAME, "Failed to delete environment: " + e.getMessage());
-            return;
-        }
+        ApposeService.getInstance().detachEnvironment();
 
         DLClassifierPreferences.setEnvVariant(target.name());
         environmentReady.set(false);
         serverAvailable = false;
-        logger.info("Compute variant switched to {}; reinstalling", target.name());
+        logger.info(
+                "Compute variant switched from {} to {} ({}); the {} environment is kept",
+                current.name(),
+                target.name(),
+                targetBuilt ? "already built, reusing it" : "to be downloaded",
+                current.name());
         showSetupDialog(qupath, target);
     }
 
@@ -1713,7 +1731,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                     Dialogs.showErrorNotification(
                                             EXTENSION_NAME,
                                             "Python environment is out of date.\n"
-                                                    + "Go to Rebuild Python Environment to update.");
+                                                    + "Go to Utilities > Rebuild DL Environment to update.");
                                 } else {
                                     Dialogs.showErrorNotification(
                                             EXTENSION_NAME,
@@ -2026,7 +2044,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                     Dialogs.showErrorNotification(
                                             EXTENSION_NAME,
                                             "Python environment is out of date.\n"
-                                                    + "Go to Rebuild Python Environment to update.");
+                                                    + "Go to Utilities > Rebuild DL Environment to update.");
                                 } else {
                                     Dialogs.showErrorNotification(
                                             EXTENSION_NAME,

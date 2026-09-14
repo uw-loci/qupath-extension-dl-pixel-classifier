@@ -528,7 +528,7 @@ public class TrainingWorkflow {
                                     showError(
                                             "Python Environment Update Required",
                                             "The Python environment is out of date and must be rebuilt.\n\n"
-                                                    + "Go to Extensions > DL Pixel Classifier > Rebuild Python Environment\n"
+                                                    + "Go to Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment\n"
                                                     + "to update. Training is disabled until the environment matches\n"
                                                     + "the installed extension version.");
                                 } else {
