@@ -25,6 +25,48 @@ logging.basicConfig(
 
 logger = logging.getLogger("dlclassifier.appose")
 
+# --- Appose protocol / stdio separation (apposed/appose#31) ---------------
+# Active only when Java prepends `_DLC_PROTOCOL_FD_SEPARATION = True`, which
+# it does when the DataLoader-workers preference is > 0. With workers at 0
+# (the default) nothing here runs and the streams are untouched.
+#
+# PyTorch DataLoader worker processes inherit this process's fd 0 / fd 1,
+# which are Appose's JSON protocol pipes, and deadlock during their own stdio
+# setup before the first batch is ever delivered: on Linux the forked child
+# hangs closing the inherited pipe in multiprocessing.util._close_stdin(); on
+# Windows the spawned child hangs inside interpreter startup flushing the
+# inherited handle. Upstream issue apposed/appose#31 is open and unmerged, so
+# we apply the same fd-level separation from here instead.
+#
+# Keep private duplicates of fd 0 / fd 1 for the protocol, then point the real
+# fd 0 / fd 1 at os.devnull so children inherit harmless empty streams. This
+# runs in the init script, which the worker executes BEFORE starting its I/O
+# loop, so no reader is mid-read when the swap happens.
+#
+# Do NOT "harden" this by giving sys.stdin a wrapper whose fileno() returns a
+# real descriptor: that variant was measured and reintroduced the hang.
+if globals().get("_DLC_PROTOCOL_FD_SEPARATION", False):
+    import io as _io
+
+    _protocol_in = _io.TextIOWrapper(_io.FileIO(os.dup(0), "r"), encoding="utf-8")
+    _protocol_out = _io.TextIOWrapper(
+        _io.FileIO(os.dup(1), "w"), encoding="utf-8", line_buffering=True
+    )
+    _devnull_fd = os.open(os.devnull, os.O_RDWR)
+    os.dup2(_devnull_fd, 0)
+    os.dup2(_devnull_fd, 1)
+    os.close(_devnull_fd)
+    # The worker reads protocol requests with input(), i.e. from sys.stdin, so
+    # the protocol MUST stay on sys.stdin -- unlike the upstream patch, which
+    # points sys.stdin at devnull because it reads its own private handle.
+    # sys.stdin / sys.stdout are what keep these objects alive.
+    sys.stdin = _protocol_in
+    sys.stdout = _protocol_out
+    logger.info(
+        "Appose protocol separated from fd 0/1 for DataLoader workers "
+        "(apposed/appose#31)"
+    )
+
 # The dlclassifier_server package is installed in the pixi environment
 # via the git URL in pixi.toml. No sys.path manipulation needed.
 

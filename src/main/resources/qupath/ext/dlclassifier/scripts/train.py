@@ -596,6 +596,10 @@ if _dl_workers_pref > 0:
                 # persistent_workers reduces per-epoch worker startup cost
                 # for small datasets; only meaningful when num_workers > 0.
                 kwargs.setdefault("persistent_workers", True)
+                # Page-locked staging buffers let the H2D copy overlap compute.
+                # Only meaningful alongside worker processes, which is why it
+                # sits inside the num_workers upgrade.
+                kwargs.setdefault("pin_memory", True)
             return _orig_dl_init(self, *args, **kwargs)
 
         _DataLoader.__init__ = _patched_dl_init

@@ -5226,6 +5226,10 @@ public class TrainingDialog {
                             + "1-2: helpful when disk I/O dominates and the in-memory\n"
                             + "     cache is off or bounded below the dataset size.\n"
                             + "4-8: only useful on workstations with fast NVMe + many cores.\n\n"
+                            + "Above 0 the Python worker restarts once, to move Appose's\n"
+                            + "protocol off the streams those workers would inherit.\n"
+                            + "Without that, training hangs before the first batch\n"
+                            + "(appose#31). If it does hang, set this back to 0.\n\n"
                             + "Note: on Windows each worker re-imports the Python module\n"
                             + "and can leak ~200 MB; start small and only raise if disk\n"
                             + "throughput is clearly the bottleneck in training logs.",

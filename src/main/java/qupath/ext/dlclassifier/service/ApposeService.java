@@ -81,6 +81,13 @@ public class ApposeService {
 
     private static ApposeService instance;
 
+    /**
+     * Whether the worker's init script should move Appose's JSON protocol off
+     * fd 0 / fd 1. Set by {@link #ensureProtocolSeparation(boolean)} the first
+     * time a run asks for DataLoader workers, and sticky thereafter.
+     */
+    private volatile boolean protocolSeparationRequested;
+
     private Environment environment;
     private Service pythonService;
     private boolean initialized;
@@ -203,7 +210,7 @@ public class ApposeService {
 
         // Run init script -- prepend numpy import to prevent Windows deadlock
         // (see Appose #23 / numpy #24290)
-        String initScript = "import numpy\n" + loadScript("init_services.py");
+        String initScript = buildInitScript();
         pythonService.init(initScript);
 
         report(statusCallback, "Upgrade complete");
@@ -329,7 +336,7 @@ public class ApposeService {
                 // init script because NumPy must be imported BEFORE the Appose
                 // stdin reader thread starts, or it deadlocks on Windows.
                 // See: https://github.com/numpy/numpy/issues/24290
-                String initScript = "import numpy\n" + loadScript("init_services.py");
+                String initScript = buildInitScript();
                 pythonService.init(initScript);
 
                 // Force the Python subprocess to actually start and verify
@@ -714,7 +721,7 @@ public class ApposeService {
                 logger.info("[Appose Python] {}", msg);
                 qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(msg);
             });
-            String initScript = "import numpy\n" + loadScript("init_services.py");
+            String initScript = buildInitScript();
             pythonService.init(initScript);
             logger.info("Appose worker restarted (fresh Python subprocess)");
         } catch (IOException e) {
@@ -839,6 +846,69 @@ public class ApposeService {
     public synchronized void detachEnvironment() {
         shutdown();
         environment = null;
+    }
+
+    /**
+     * Builds the Python init script the Appose worker runs at startup.
+     *
+     * @param separateProtocolStreams move Appose's JSON protocol off fd 0 / fd 1
+     *                                so DataLoader worker processes cannot inherit
+     *                                and deadlock on it (apposed/appose#31)
+     * @return the init script source
+     * @throws IOException if the bundled script cannot be read
+     */
+    String buildInitScript(boolean separateProtocolStreams) throws IOException {
+        // numpy MUST be imported before the Appose stdin reader thread starts,
+        // or it deadlocks on Windows. See numpy#24290 / Appose#23.
+        StringBuilder script = new StringBuilder("import numpy\n");
+        if (separateProtocolStreams) {
+            script.append("_DLC_PROTOCOL_FD_SEPARATION = True\n");
+        }
+        return script.append(loadScript("init_services.py")).toString();
+    }
+
+    /**
+     * Builds the init script for the current session. The protocol streams are
+     * separated only once a run has asked for DataLoader workers, so the
+     * default configuration keeps the worker's stdio exactly as Appose ships
+     * it.
+     *
+     * @return the init script source
+     * @throws IOException if the bundled script cannot be read
+     */
+    private String buildInitScript() throws IOException {
+        return buildInitScript(protocolSeparationRequested);
+    }
+
+    /**
+     * Makes sure the running Python worker can host DataLoader worker
+     * processes, restarting it once if it cannot.
+     * <p>
+     * Worker processes inherit the Python worker's fd 0 / fd 1, which are
+     * Appose's JSON protocol pipes, and deadlock before the first batch
+     * (apposed/appose#31, open upstream). {@code init_services.py} moves the
+     * protocol off those descriptors, but only when told to, and the init
+     * script is fixed when the worker starts. The number of workers comes from
+     * the training dialog, long after that -- so a run asking for workers on a
+     * worker that was started without the separation would hang. Restart it
+     * instead.
+     * <p>
+     * Sticky: once requested, every later worker keeps the separation, so a
+     * second training run does not pay another restart.
+     *
+     * @param needed whether this run uses DataLoader worker processes
+     * @throws IOException if the worker cannot be restarted
+     */
+    public synchronized void ensureProtocolSeparation(boolean needed) throws IOException {
+        if (!needed || protocolSeparationRequested) {
+            return;
+        }
+        protocolSeparationRequested = true;
+        if (pythonService != null) {
+            logger.info("DataLoader workers requested; restarting the Python worker "
+                    + "with the Appose protocol moved off fd 0/1 (apposed/appose#31)");
+            restartWorker();
+        }
     }
 
     /**

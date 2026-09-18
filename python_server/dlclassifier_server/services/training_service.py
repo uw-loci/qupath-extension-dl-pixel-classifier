@@ -2120,6 +2120,7 @@ class TrainingService:
             shuffle=True,
             num_workers=dl_workers,
             persistent_workers=dl_workers > 0,
+            pin_memory=dl_workers > 0,
         )
 
         val_loader = DataLoader(
@@ -2128,6 +2129,7 @@ class TrainingService:
             shuffle=False,
             num_workers=dl_workers,
             persistent_workers=dl_workers > 0,
+            pin_memory=dl_workers > 0,
         )
 
         # Compute class distribution from training masks for diagnostic logging.
@@ -2824,6 +2826,7 @@ class TrainingService:
                 shuffle=True,
                 num_workers=dl_workers,
                 persistent_workers=dl_workers > 0,
+                pin_memory=dl_workers > 0,
             )
             small_val_loader = DataLoader(
                 small_val_dataset,
@@ -2831,6 +2834,7 @@ class TrainingService:
                 shuffle=False,
                 num_workers=dl_workers,
                 persistent_workers=dl_workers > 0,
+                pin_memory=dl_workers > 0,
             )
 
             # Start with small loaders

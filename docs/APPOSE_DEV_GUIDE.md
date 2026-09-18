@@ -12,7 +12,17 @@ Key difference from normal Python: **your code runs inside an embedded interpret
 
 ## Constraint 1: No Multiprocessing (num_workers=0)
 
-**Rule: Always use `num_workers=0` in PyTorch DataLoaders.**
+**Rule: Use `num_workers=0` in PyTorch DataLoaders unless the caller has opted
+in to worker processes.**
+
+> **Updated 2026-09-18.** Training can now run with `num_workers > 0`, behind the
+> "Training: DataLoader Workers" preference (default `0`). It works because
+> `init_services.py` separates Appose's JSON protocol from fd 0 / fd 1 at worker
+> startup, which is the unmerged fix for
+> [apposed/appose#31](https://github.com/apposed/appose/issues/31). That
+> separation is applied ONLY when the preference is above `0`. Everywhere else,
+> and in any new service, the rule below still stands: write `num_workers=0`
+> unless you have deliberately plumbed the preference through.
 
 ```python
 # WRONG -- will silently deadlock on Windows

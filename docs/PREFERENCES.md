@@ -49,6 +49,32 @@ These appear in **Edit > Preferences > DL Pixel Classifier**.
 | Use Augmentation | `dlclassifier.useAugmentation` | `true` | Enable data augmentation |
 | Use Pretrained Weights | `dlclassifier.usePretrainedWeights` | `true` | Use pretrained encoder weights |
 | Default Normalization | `dlclassifier.defaultNormalization` | `PERCENTILE_99` | Channel normalization strategy |
+| Training: DataLoader Workers (experimental) | `dlclassifier.defaultDataLoaderWorkers` | `0` | Starting value for the training dialog's "DataLoader workers" spinner, which is what a run uses. See below. |
+
+### Training: DataLoader Workers (experimental)
+
+At the default of `0`, batches are prepared on the main thread, so the GPU waits
+while each batch is read, decoded and augmented. Raising it to 2 or more overlaps
+that work with GPU compute, which is the main lever on per-epoch time when the GPU
+is otherwise sitting idle between bursts.
+
+Two conditions apply, and both will silently do nothing if you miss them.
+
+**It depends on a fix that is not merged upstream.** Worker processes inherit the
+Python worker's stdin and stdout, which are Appose's JSON protocol pipes, and
+deadlock before the first batch arrives. That is
+[apposed/appose#31](https://github.com/apposed/appose/issues/31), still open. The
+extension applies the fix itself: the first run that asks for workers restarts
+the Python worker with Appose's protocol moved off those two streams, which costs
+one restart and nothing after that. A run that asks for `0` workers leaves the
+streams exactly as Appose ships them. If training stops before the first batch,
+set the spinner back to `0` and please say so in an issue.
+
+**It is ignored while the in-memory dataset cache is on.** Each worker process
+would copy the whole cache, so the cache wins and workers are forced back to `0`
+(you get a popup saying so). To use workers, set the training dialog's in-memory
+dataset option to `off`. Which of the two is faster depends on your disk and
+augmentation settings, so it is worth timing one epoch each way.
 
 ## Training Dialog Preferences (remembered across sessions)
 

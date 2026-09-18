@@ -1492,6 +1492,11 @@ public class TrainingWorkflow {
             final AtomicReference<Double> lastTrainLoss = new AtomicReference<>(0.0);
             final AtomicReference<Double> lastValLoss = new AtomicReference<>(0.0);
 
+            // DataLoader worker processes cannot share the Python worker's
+            // stdio with Appose's protocol; make sure the worker is set up for
+            // them before the run starts, not after it hangs.
+            ApposeService.getInstance().ensureProtocolSeparation(trainingConfig.getDataLoaderWorkers() > 0);
+
             ClassifierClient.TrainingResult serverResult = backend.startTraining(
                     trainingConfig,
                     channelConfig,

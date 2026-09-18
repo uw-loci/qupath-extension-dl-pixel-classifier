@@ -248,6 +248,12 @@ public final class DLClassifierPreferences {
     // Number of PyTorch DataLoader worker processes. 0 = main-thread loading
     // (safest, no IPC overhead); >0 forks workers for parallel disk reads and
     // augmentation. Capped at 8 in TrainingConfig.Builder.
+    //
+    // This is only the DEFAULT for the training dialog's spinner; the run uses
+    // the spinner's value. Above 0 the run also needs Appose's JSON protocol
+    // moved off fd 0 / fd 1, or the worker processes inherit it and training
+    // hangs before the first batch (apposed/appose#31, open upstream) --
+    // ApposeService.ensureProtocolSeparation arranges that per run.
     private static final IntegerProperty defaultDataLoaderWorkers =
             PathPrefs.createPersistentPreference("dlclassifier.defaultDataLoaderWorkers", 0);
 
@@ -619,6 +625,24 @@ public final class DLClassifierPreferences {
                         + "The contrast (std-ratio) check uses a separate fixed "
                         + "threshold of 2x. Use the 'Don't show again' checkbox on "
                         + "the warning popup to disable the check entirely.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(defaultDataLoaderWorkers, Integer.class)
+                .name("Training: DataLoader Workers (experimental)")
+                .category(CATEGORY)
+                .description("Starting value for the training dialog's \"DataLoader workers\" "
+                        + "spinner, which is what a run actually uses. Worker processes "
+                        + "prepare the next batch while the GPU works on the current one; "
+                        + "0 loads on the main thread and is the safe default. Try 2 first; "
+                        + "4-8 helps on slow disks or heavy augmentation. "
+                        + "TWO THINGS TO KNOW. Workers need a fix for apposed/appose#31 that "
+                        + "is not merged upstream; the extension applies it itself, "
+                        + "restarting the Python worker once at the start of the first run "
+                        + "that asks for workers. If training stops before the first batch, "
+                        + "set this to 0 and report it. Second, workers have no effect while "
+                        + "the in-memory dataset cache is on, because each worker would copy "
+                        + "the whole cache: set the training dialog's in-memory dataset "
+                        + "option to 'off' to use workers.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(showMenuDot, Boolean.class)
