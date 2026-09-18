@@ -1248,7 +1248,7 @@ public class ApposeService {
      * </ol>
      */
     /** Extension version. Used for pip URL construction and script generation. */
-    public static final String DL_SERVER_VERSION = "0.8.6";
+    public static final String DL_SERVER_VERSION = "0.8.7-dev";
 
     private static final boolean IS_DEV_BUILD = DL_SERVER_VERSION.contains("-dev");
     private static final String DL_SERVER_PIP_URL;
@@ -1258,7 +1258,10 @@ public class ApposeService {
             // Dev builds: always install latest from main branch
             DL_SERVER_PIP_URL = "dlclassifier-server @ https://github.com/uw-loci/"
                     + "qupath-extension-dl-pixel-classifier/archive/refs/heads/"
-                    + "master.tar.gz#subdirectory=python_server";
+                    // The default branch is main; GitHub currently resolves a
+                    // stale "master" leniently, which would silently install old
+                    // code the day someone creates a real master branch.
+                    + "main.tar.gz#subdirectory=python_server";
         } else {
             // Release builds: install from the matching version tag
             DL_SERVER_PIP_URL = "dlclassifier-server @ https://github.com/uw-loci/"
