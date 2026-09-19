@@ -277,6 +277,12 @@ def get_validation_transform() -> Optional[A.Compose]:
     return None
 
 
+# Peak bytes per (batch x base channel x pixel x element byte) for tiny-unet.
+# MEASURED on an RTX 3090 -- see VramEstimator (Java) for the data points and
+# the protocol for changing it. The two sides must agree.
+TINY_UNET_ACTIVATION_FACTOR = 91.0
+
+
 def build_gpu_augmentation(aug_config: Optional[Dict[str, Any]]):
     """Build a kornia.AugmentationSequential pipeline for GPU-side augmentation.
 
@@ -3065,12 +3071,18 @@ class TrainingService:
                 if context_scale > 1:
                     act_multiplier *= 1.5
                 tiles_per_batch = batch_size
+                # Prefer the PADDED tile the exporter actually wrote. Java sends
+                # it; fall back to input_size for older callers.
+                padded_tile = int(training_params.get("training_tile_padded_px", 0) or 0)
                 tile_pixels = architecture.get("input_size", [512, 512])
-                tile_area = (
-                    tile_pixels[0] * tile_pixels[1]
-                    if isinstance(tile_pixels, (list, tuple))
-                    else 512 * 512
-                )
+                if padded_tile > 0:
+                    tile_area = padded_tile * padded_tile
+                else:
+                    tile_area = (
+                        tile_pixels[0] * tile_pixels[1]
+                        if isinstance(tile_pixels, (list, tuple))
+                        else 512 * 512
+                    )
                 # If progressive resizing is active, estimate for the LARGER
                 # phase 2 tile size (that's where OOM would actually occur)
                 if progressive_resize:
@@ -3081,9 +3093,32 @@ class TrainingService:
                     phase_note = ""
                 # Scale activation estimate by tile area relative to 256x256 baseline
                 area_scale = effective_area / (256 * 256)
-                estimated_mb = model_mb * (
-                    1 + 3 + act_multiplier * area_scale * tiles_per_batch
-                )
+                if model_type == "tiny-unet":
+                    # Activations scale with feature-map volume, not parameter
+                    # count. The parameter-proportional form below predicted
+                    # 118 MB for a run that peaked at 19 GB, because the model
+                    # is only 305k parameters.
+                    #
+                    # KEEP TINY_UNET_ACTIVATION_FACTOR IN STEP WITH
+                    # VramEstimator.TINY_UNET_ACTIVATION_FACTOR on the Java
+                    # side; VramEstimatorTest pins the measurements behind it.
+                    base = int(architecture.get("base", 16) or 16)
+                    bytes_per_elem = 2.0 if use_mixed_precision else 4.0
+                    context_factor = 1.1 if context_scale > 1 else 1.0
+                    estimated_mb = (
+                        tiles_per_batch
+                        * base
+                        * effective_area
+                        * bytes_per_elem
+                        * TINY_UNET_ACTIVATION_FACTOR
+                        * context_factor
+                    ) / (1024.0 * 1024.0) + 5.0 * model_mb
+                else:
+                    estimated_mb = model_mb * (
+                        1 + 3 + act_multiplier * area_scale * tiles_per_batch
+                    )
+                # Remembered so the first batch can report predicted vs actual.
+                self._vram_estimate_mb = estimated_mb
                 if estimated_mb > free_mb * 0.9:
                     logger.warning(
                         "VRAM estimate: %.0f MB needed vs %.0f MB free%s -- "
@@ -3225,8 +3260,17 @@ class TrainingService:
                 logger.info("Training cancelled")
                 break
 
-            # Clear GPU cache at epoch start to prevent memory accumulation
-            self.gpu_manager.clear_cache()
+            # Deliberately NOT clearing the allocator cache here.
+            #
+            # This used to call gpu_manager.clear_cache() every epoch "to
+            # prevent memory accumulation". Cached blocks are reuse, not a
+            # leak: torch.cuda.empty_cache() hands them back to the driver and
+            # the next epoch has to re-acquire them through cudaMalloc, which
+            # is expensive AND synchronizes the device. On a 3090 run this was
+            # measurable as a drop from ~21.4 GB to ~2 GB and a slow ramp back
+            # at every epoch boundary, with GPU utilization around 10% for the
+            # duration of the ramp. Real end-of-run cleanup still happens in
+            # _cleanup_gpu_memory().
 
             # Log memory status at start of epoch
             self.gpu_manager.log_memory_status(
@@ -3408,6 +3452,40 @@ class TrainingService:
                         peak_mb = self.gpu_manager.get_peak_allocated_mb()
                         total_gpu = self.gpu_manager.get_memory_mb()
                         headroom = total_gpu - peak_mb
+
+                        # Predicted vs actual, every run. This is what keeps the
+                        # estimate honest as the code changes: a formula cannot
+                        # be guaranteed correct forever, but drift shows up here
+                        # on the very next run instead of silently telling a user
+                        # that 130% of their card is "73%, green".
+                        predicted_mb = getattr(self, "_vram_estimate_mb", None)
+                        if predicted_mb:
+                            try:
+                                free_b, total_b = torch.cuda.mem_get_info()
+                                device_used_mb = (total_b - free_b) / (1024.0 * 1024.0)
+                            except Exception:
+                                device_used_mb = 0.0
+                            if device_used_mb > 0:
+                                # Device-wide, so it includes the CUDA context and
+                                # anything else on the card -- the same number
+                                # nvidia-smi shows, which is what the estimate
+                                # targets.
+                                ratio = device_used_mb / predicted_mb
+                                detail = (
+                                    "VRAM predicted %.0f MB, device using %.0f MB "
+                                    "(torch peak %.0f MB), ratio %.2f"
+                                ) % (predicted_mb, device_used_mb, peak_mb, ratio)
+                                if ratio > 1.25 or ratio < 0.75:
+                                    logger.warning(
+                                        "%s -- the VRAM estimate has DRIFTED. "
+                                        "Re-measure and update "
+                                        "TINY_UNET_ACTIVATION_FACTOR here and in "
+                                        "VramEstimator.java (see "
+                                        "VramEstimatorTest).",
+                                        detail,
+                                    )
+                                else:
+                                    logger.info("%s -- estimate in range", detail)
                         if headroom > peak_mb * 0.5:
                             logger.info(
                                 "  %.0f MB headroom -- a larger batch size "

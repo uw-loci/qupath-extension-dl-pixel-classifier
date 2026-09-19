@@ -47,6 +47,7 @@ import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner.OrphanedCheckpoint;
 import qupath.ext.dlclassifier.utilities.ImageClassCoverageSplitter;
+import qupath.ext.dlclassifier.utilities.VramEstimator;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.commands.MiniViewers;
@@ -6915,32 +6916,18 @@ public class TrainingDialog {
                         boolean mixedPrec = trainingConfig.isMixedPrecision();
                         int contextScale = trainingConfig.getContextScale();
 
-                        // Backbone-aware model size estimates (MB of parameters)
-                        double modelMb = estimateModelSizeMb(modelType, backbone);
-                        double actMultiplier = "muvit".equals(modelType) ? 10.0 : 4.0;
-                        // Mixed precision roughly halves activation/gradient memory
-                        if (mixedPrec) actMultiplier *= 0.6;
-                        // Context scale enlarges tiles via padding AND doubles channels
-                        int effectiveTile = tileSize;
-                        if (contextScale > 1) {
-                            effectiveTile = tileSize + 2 * (tileSize / contextScale);
-                            actMultiplier *= 1.1;
-                        }
-
-                        double areaScale = (double) (effectiveTile * effectiveTile) / (256.0 * 256.0);
-                        double estimatedMb = modelMb * (1 + 3 + actMultiplier * areaScale * batchSize);
+                        // Same estimator as the live dialog label, on the PADDED
+                        // tile. TrainingConfig.getOverlap() is already pixels.
+                        int effectiveTile = VramEstimator.paddedTileSize(
+                                tileSize, trainingConfig.getOverlap(), trainingConfig.isWholeImage());
+                        double estimatedMb = VramEstimator.estimateMb(
+                                        modelType, backbone, effectiveTile, batchSize, mixedPrec, contextScale)
+                                .totalMb();
                         double budgetMb = totalMb * 0.85;
 
-                        if (estimatedMb > budgetMb) {
-                            // Find the max batch size that fits at current tile size
-                            int maxBatchAtTile = 0;
-                            for (int b = batchSize; b >= 1; b--) {
-                                double est = modelMb * (1 + 3 + actMultiplier * areaScale * b);
-                                if (est <= budgetMb) {
-                                    maxBatchAtTile = b;
-                                    break;
-                                }
-                            }
+                        if (VramEstimator.classify(estimatedMb, totalMb) == VramEstimator.Fit.EXCEEDS) {
+                            int maxBatchAtTile = VramEstimator.maxBatchWithin(
+                                    budgetMb, modelType, backbone, effectiveTile, mixedPrec, contextScale, batchSize);
 
                             int effectiveBatch = batchSize * gradAccum;
                             StringBuilder suggestions = new StringBuilder();
@@ -6964,7 +6951,14 @@ public class TrainingDialog {
                                 // Can fit at current tile size with smaller batch
                                 int suggestedAccum =
                                         Math.max(1, (int) Math.ceil((double) effectiveBatch / maxBatchAtTile));
-                                double estFit = modelMb * (1 + 3 + actMultiplier * areaScale * maxBatchAtTile);
+                                double estFit = VramEstimator.estimateMb(
+                                                modelType,
+                                                backbone,
+                                                effectiveTile,
+                                                maxBatchAtTile,
+                                                mixedPrec,
+                                                contextScale)
+                                        .totalMb();
                                 suggestions.append("Suggested settings that fit in VRAM:\n");
                                 suggestions.append(String.format(
                                         "  - Batch size %d with gradient accumulation %d "
@@ -6977,24 +6971,33 @@ public class TrainingDialog {
                             }
 
                             // Suggest smaller tile sizes if needed
+                            // Overlap is a PERCENTAGE of the tile, so a smaller
+                            // candidate tile carries proportionally less padding.
+                            int overlapPct =
+                                    tileSize > 0 ? (int) Math.round(100.0 * trainingConfig.getOverlap() / tileSize) : 0;
                             for (int candidate : new int[] {512, 384, 256, 128}) {
                                 if (candidate >= tileSize) continue;
-                                int candEffective =
-                                        contextScale > 1 ? candidate + 2 * (candidate / contextScale) : candidate;
-                                double candArea = (double) (candEffective * candEffective) / (256.0 * 256.0);
-                                // Find max batch at this tile size
-                                int candMaxBatch = 0;
-                                for (int b = batchSize; b >= 1; b--) {
-                                    double bEst = modelMb * (1 + 3 + actMultiplier * candArea * b);
-                                    if (bEst <= budgetMb) {
-                                        candMaxBatch = b;
-                                        break;
-                                    }
-                                }
+                                int candEffective = VramEstimator.paddedTileSizeFromPercent(
+                                        candidate, overlapPct, trainingConfig.isWholeImage());
+                                int candMaxBatch = VramEstimator.maxBatchWithin(
+                                        budgetMb,
+                                        modelType,
+                                        backbone,
+                                        candEffective,
+                                        mixedPrec,
+                                        contextScale,
+                                        batchSize);
                                 if (candMaxBatch > 0) {
                                     int candAccum =
                                             Math.max(1, (int) Math.ceil((double) effectiveBatch / candMaxBatch));
-                                    double candEst = modelMb * (1 + 3 + actMultiplier * candArea * candMaxBatch);
+                                    double candEst = VramEstimator.estimateMb(
+                                                    modelType,
+                                                    backbone,
+                                                    candEffective,
+                                                    candMaxBatch,
+                                                    mixedPrec,
+                                                    contextScale)
+                                            .totalMb();
                                     suggestions.append(String.format(
                                             "  - %dpx tiles, batch %d x%d accum " + "(effective %d, ~%.0f MB)\n",
                                             candidate, candMaxBatch, candAccum, candMaxBatch * candAccum, candEst));
@@ -7337,41 +7340,17 @@ public class TrainingDialog {
                 boolean mixedPrec = mixedPrecisionCheck != null && mixedPrecisionCheck.isSelected();
                 int contextScale = contextScaleCombo != null ? parseContextScale(contextScaleCombo.getValue()) : 1;
 
-                double modelMb = estimateModelSizeMb(modelType, backbone);
+                // The model receives the PADDED tile, not the configured one:
+                // the exporter surrounds each tile with real image data. A
+                // 256 px tile at 20% overlap is really 358 px, and estimating
+                // on 256 understated the area by 1.96x.
+                boolean wholeImage = wholeImageCheck != null && wholeImageCheck.isSelected();
+                int overlapPct = overlapSpinner != null ? overlapSpinner.getValue() : 0;
+                int effectiveTile = VramEstimator.paddedTileSizeFromPercent(tileSize, overlapPct, wholeImage);
 
-                // Context scale enlarges tiles via padding AND doubles channels.
-                int effectiveTile = tileSize;
-                if (contextScale > 1) {
-                    effectiveTile = tileSize + 2 * (tileSize / contextScale);
-                }
-
-                double estimatedMb;
-                if ("tiny-unet".equals(modelType)) {
-                    // TinyUNet activations are driven by base channels x spatial
-                    // area x batch -- NOT by param count.  Every encoder/decoder
-                    // stage stores its feature map for backward, and BRN adds
-                    // three (x_hat, weight-broadcast, bias-broadcast) per layer,
-                    // so the integer factor is large.  Empirical at B=64,
-                    // tile=512, base=16, bf16: ~45 GB OOM on a 24 GB 3090 ->
-                    // peak usage about 100x * base * H * W * bytes * batch.
-                    // See agent B1/B2 reports and
-                    // claude-reports/2026-04-17_input-size-divisibility.md.
-                    int base = tinyUnetBase(backbone);
-                    double bytesPerElem = mixedPrec ? 2.0 : 4.0;
-                    double actBytes = (double) batchSize * base * effectiveTile * effectiveTile * bytesPerElem * 100.0;
-                    // Model + gradients + Adam state: tiny (< 20 MB even for
-                    // small-24x4) but include for completeness.
-                    estimatedMb = actBytes / (1024.0 * 1024.0) + 5.0 * modelMb;
-                } else {
-                    // Pretrained encoders (UNet / Fast Pretrained / MuViT).
-                    // Here model weights dominate deeper in the encoder, so a
-                    // param-proportional multiplier is a reasonable first cut.
-                    double actMultiplier = "muvit".equals(modelType) ? 10.0 : 4.0;
-                    if (mixedPrec) actMultiplier *= 0.6;
-                    if (contextScale > 1) actMultiplier *= 1.1;
-                    double areaScale = (double) (effectiveTile * effectiveTile) / (256.0 * 256.0);
-                    estimatedMb = modelMb * (1 + 3 + actMultiplier * areaScale * batchSize);
-                }
+                VramEstimator.Estimate estimate = VramEstimator.estimateMb(
+                        modelType, backbone, effectiveTile, batchSize, mixedPrec, contextScale);
+                double estimatedMb = estimate.totalMb();
 
                 double budgetMb = gpuTotalMb * 0.85;
 
@@ -7379,33 +7358,31 @@ public class TrainingDialog {
 
                 String tileNote =
                         effectiveTile != tileSize ? String.format(" [%dpx with context padding]", effectiveTile) : "";
+                if (!estimate.calibrated()) {
+                    // Say so rather than implying a precision we do not have.
+                    tileNote += " [rough: not yet calibrated for this architecture]";
+                }
                 String text = String.format(
                         "Est. VRAM: ~%.0f MB / %,d MB (%.0f%%)%s", estimatedMb, gpuTotalMb, pct, tileNote);
 
-                if (estimatedMb > budgetMb) {
-                    // Exceeds safe budget -- red warning
+                VramEstimator.Fit fit = VramEstimator.classify(estimatedMb, gpuTotalMb);
+                if (fit == VramEstimator.Fit.EXCEEDS) {
+                    // Genuinely will not fit -- red
                     vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #CC0000; -fx-font-weight: bold;");
                     // Find max batch that fits by linearly scaling the
                     // activation term.  Both estimators above are linear in
                     // batchSize so divide the "above budget" excess out.
-                    double perBatchMb = (estimatedMb - 5.0 * modelMb) / batchSize;
-                    int maxBatch = 0;
-                    for (int b = batchSize; b >= 1; b--) {
-                        double est = 5.0 * modelMb + perBatchMb * b;
-                        if (est <= budgetMb) {
-                            maxBatch = b;
-                            break;
-                        }
-                    }
+                    int maxBatch = VramEstimator.maxBatchWithin(
+                            budgetMb, modelType, backbone, effectiveTile, mixedPrec, contextScale, batchSize);
                     if (maxBatch > 0) {
                         text += String.format("  --  EXCEEDS GPU! Try batch %d or smaller tiles", maxBatch);
                     } else {
                         text += "  --  EXCEEDS GPU! Reduce tile size";
                     }
-                } else if (pct > 75) {
-                    // Tight -- orange warning
+                } else if (fit == VramEstimator.Fit.TIGHT) {
+                    // Fits, but with little room -- orange
                     vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #CC7A00; -fx-font-weight: bold;");
-                    text += "  --  tight, may OOM with large augmentations";
+                    text += "  --  tight; little headroom for validation or augmentation spikes";
                 } else {
                     // OK -- normal color
                     vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #228B22;");
@@ -7428,76 +7405,6 @@ public class TrainingDialog {
          * training time scales linearly with this, so the VRAM estimator
          * reads it directly rather than guessing via param count.
          */
-        private static int tinyUnetBase(String backbone) {
-            if (backbone == null) return 16;
-            return switch (backbone) {
-                case "nano-8x3" -> 8;
-                case "compact-16x3" -> 16;
-                case "tiny-16x4" -> 16;
-                case "small-24x4" -> 24;
-                default -> 16;
-            };
-        }
-
-        private static double estimateModelSizeMb(String modelType, String backbone) {
-            if ("muvit".equals(modelType)) return 140.0;
-            if ("tiny-unet".equals(modelType)) {
-                // Per-preset parameter footprint (weights + grads + Adam state ~4x).
-                if (backbone == null) return 1.5;
-                return switch (backbone) {
-                    case "nano-8x3" -> 0.4;
-                    case "compact-16x3" -> 0.8;
-                    case "tiny-16x4" -> 1.5;
-                    case "small-24x4" -> 3.5;
-                    default -> 1.5;
-                };
-            }
-            if (backbone == null) return 30.0;
-            // Approximate parameter counts (MB) for common backbones in a UNet decoder.
-            // Values include both encoder and decoder parameters.
-            return switch (backbone.toLowerCase()) {
-                // ResNet family
-                case "resnet18" -> 47.0; // ~11.7M params
-                case "resnet34" -> 87.0; // ~21.8M params
-                case "resnet50" -> 100.0; // ~25.6M params
-                case "resnet101" -> 170.0; // ~44.5M params
-                case "resnet152" -> 230.0; // ~60.2M params
-                // EfficientNet family
-                case "efficientnet-b0" -> 21.0; // ~5.3M params
-                case "efficientnet-b1" -> 31.0; // ~7.8M params
-                case "efficientnet-b2" -> 36.0; // ~9.1M params
-                case "efficientnet-b3" -> 48.0; // ~12M params
-                case "efficientnet-b4" -> 76.0; // ~19.3M params
-                case "efficientnet-b5" -> 120.0; // ~30.4M params
-                // DenseNet family
-                case "densenet121" -> 32.0; // ~8M params
-                case "densenet169" -> 56.0; // ~14.1M params
-                case "densenet201" -> 80.0; // ~20M params
-                // MobileNet
-                case "mobilenet_v2" -> 14.0; // ~3.5M params
-                case "timm-mobilenetv3_large_100" -> 22.0; // ~5.4M params
-                // Histology-pretrained ResNet-50 variants
-                case "resnet50_lunit-swav", "resnet50_lunit-bt", "resnet50_kather100k", "resnet50_tcga-brca" ->
-                    100.0; // ~25.6M params
-                // Foundation models (large ViT encoders + UNet decoder)
-                case "h-optimus-0", "midnight" -> 4400.0; // ~1.1B params ViT-G
-                case "virchow" -> 2500.0; // ~632M params ViT-H
-                case "hibou-l", "dinov2-large" -> 1200.0; // ~304M params ViT-L
-                case "hibou-b" -> 350.0; // ~86M params ViT-B
-                // Other pathology encoders
-                case "uni", "conch", "phikon" -> 350.0; // ~86M+ params
-                // Default for unknown backbones
-                default -> {
-                    // Heuristic: if the name contains "50" or "101", assume larger
-                    if (backbone.contains("50")) yield 100.0;
-                    if (backbone.contains("101")) yield 170.0;
-                    if (backbone.contains("optimus") || backbone.contains("midnight")) yield 4400.0;
-                    if (backbone.contains("virchow")) yield 2500.0;
-                    if (backbone.contains("hibou") || backbone.contains("dinov2")) yield 1200.0;
-                    yield 50.0; // Conservative default
-                }
-            };
-        }
 
         // ==================== Display/Value Mapping Helpers ====================
 

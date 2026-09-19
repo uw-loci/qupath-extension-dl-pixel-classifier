@@ -277,6 +277,14 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         // (becomes null in JSON) when the project has uncalibrated
         // images.
         trainingParams.put("training_tile_size_px", trainingConfig.getTileSize());
+        // The size the MODEL receives, which is what memory scales with: the
+        // exporter surrounds each tile with real image data, so a 256 px tile
+        // at 20% overlap arrives as 358 px. Python estimated on the unpadded
+        // number and was 1.96x low on area.
+        trainingParams.put(
+                "training_tile_padded_px",
+                qupath.ext.dlclassifier.utilities.VramEstimator.paddedTileSize(
+                        trainingConfig.getTileSize(), trainingConfig.getOverlap(), trainingConfig.isWholeImage()));
         double trainPx = trainingConfig.getTrainingPixelSizeMicrons();
         if (!Double.isNaN(trainPx) && trainPx > 0) {
             trainingParams.put("training_pixel_size_um", trainPx);

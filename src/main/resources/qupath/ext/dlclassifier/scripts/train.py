@@ -263,7 +263,17 @@ def _query_available_ram_bytes():
 # activations, and the dataloader still has its own working set.
 _AUTO_CACHE_FRACTION = 0.50
 
-if _in_memory_mode in ("auto", "on", "bounded") and not getattr(
+# The validation set is preloaded even when the mode is "off". It is never
+# augmented, it is read identically every epoch, and it is a fraction of the
+# training set. With the cache off -- the configuration that allows DataLoader
+# workers -- validation was the starved half of every epoch: measured GPU
+# utilization fell to single digits while it streamed patches from disk, for
+# roughly a fifth of each epoch. Caching it does NOT re-enable the train-side
+# cache, so it does not suppress the workers (see the bootstrap below, which
+# keys off _in_memory_mode, not this flag).
+_cache_validation_only = str(_in_memory_mode).lower() == "off"
+
+if (_in_memory_mode in ("auto", "on", "bounded") or _cache_validation_only) and not getattr(
         _tsm.SegmentationDataset, "_patched_preload", False):
     _orig_sd_init = _tsm.SegmentationDataset.__init__
     try:
@@ -284,6 +294,51 @@ if _in_memory_mode in ("auto", "on", "bounded") and not getattr(
         n = len(self.image_files)
         if n == 0:
             return
+
+        # Which half is this? The exporter writes <data>/train/images and
+        # <data>/validation/images. `self.augment` cannot be used to tell them
+        # apart: it is also False on the TRAINING set whenever GPU augmentation
+        # is on, which is exactly the configuration being tuned here.
+        _parent = str(getattr(self.images_dir, "parent", "")).replace("\\", "/")
+        _is_validation = _parent.rstrip("/").endswith("/validation")
+        if _cache_validation_only and not _is_validation:
+            return
+
+        if _cache_validation_only:
+            # The user set the cache to "off" -- possibly BECAUSE memory is
+            # tight -- so this opt-in-by-default path has to be conservative
+            # in a way the "auto" guard is not:
+            #
+            #   * budget for parent + one copy per DataLoader worker. On
+            #     Windows/Appose the loader spawns, so each worker pickles the
+            #     whole cache. Budgeting one copy is how a 6 GB validation set
+            #     with 2 workers quietly becomes 18 GB.
+            #   * 25% of available RAM, not 50%. Validation is a fraction of
+            #     the data and should never be the reason a machine swaps.
+            #
+            # Anything that does not fit streams from disk exactly as before.
+            _val_workers = max(0, int(training_params.get("data_loader_workers", 0)))
+            _copies = 1 + _val_workers
+            _available, _source = _query_available_ram_bytes()
+            if _available is None:
+                logger.info(
+                    "Validation cache: skipped -- cannot query available RAM; "
+                    "streaming from disk")
+                return
+            _needed = total_bytes * _copies
+            if _needed >= 0.25 * _available:
+                logger.info(
+                    "Validation cache: declined -- %.2f GB x %d copy/copies = "
+                    "%.2f GB, over 25%% of %.2f GB available (source=%s); "
+                    "streaming from disk",
+                    total_bytes / 1e9, _copies, _needed / 1e9,
+                    _available / 1e9, _source)
+                return
+            logger.info(
+                "Validation cache: preloading %.2f GB x %d copy/copies = "
+                "%.2f GB (%.0f%% of %.2f GB available, source=%s)",
+                total_bytes / 1e9, _copies, _needed / 1e9,
+                100 * _needed / _available, _available / 1e9, _source)
 
         # Estimate bytes by loading one tile. Cache stores native dtype +
         # uint8 masks; normalize happens per-batch.
