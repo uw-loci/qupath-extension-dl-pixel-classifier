@@ -6748,6 +6748,15 @@ public class TrainingDialog {
             }
             DLClassifierPreferences.setDefaultEpochs(epochsSpinner.getValue());
             DLClassifierPreferences.setDefaultBatchSize(batchSizeSpinner.getValue());
+            // Persist the worker count like every other control here. Without
+            // this the spinner read the preference at construction and never
+            // wrote back, so it silently returned to 0 every time the dialog
+            // opened -- whether the previous run finished, failed or was
+            // cancelled -- and a run configured with workers quietly trained
+            // without them.
+            if (dataLoaderWorkersSpinner != null) {
+                DLClassifierPreferences.setDefaultDataLoaderWorkers(dataLoaderWorkersSpinner.getValue());
+            }
             DLClassifierPreferences.setDefaultLearningRate(learningRateSpinner.getValue());
             DLClassifierPreferences.setDefaultWeightDecay(weightDecaySpinner.getValue());
             DLClassifierPreferences.setDefaultDiscriminativeLrRatio(discriminativeLrSpinner.getValue());
