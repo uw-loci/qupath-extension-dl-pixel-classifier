@@ -224,6 +224,29 @@ def fold_brn_to_bn(model: nn.Module) -> nn.Module:
                 momentum=module.momentum if module.momentum is not None else 0.01,
                 affine=module.affine,
             )
+            # A default-constructed BatchNorm2d lands on the CPU. When the
+            # model is on CUDA the folded module stays behind, and the ONNX
+            # export then dies with "weight is on cpu, different from other
+            # tensors on cuda:0" -- seen on a real 100-epoch run 2026-09-19,
+            # which lost model_static_bn.onnx while the other variants wrote
+            # fine. Move the replacement onto the source module's device and
+            # dtype first. Module.to(dtype=...) only touches floating-point
+            # tensors, so num_batches_tracked stays integral.
+            _ref = next(
+                (
+                    t
+                    for t in (
+                        module.running_mean,
+                        module.running_var,
+                        module.weight if module.affine else None,
+                        module.bias if module.affine else None,
+                    )
+                    if t is not None
+                ),
+                None,
+            )
+            if _ref is not None:
+                bn = bn.to(device=_ref.device, dtype=_ref.dtype)
             # Copy running stats and affine params. r/d correction is
             # discarded -- this is the whole point of the fold.
             if module.running_mean is not None:
