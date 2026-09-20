@@ -301,6 +301,10 @@ if (_in_memory_mode in ("auto", "on", "bounded") or _cache_validation_only) and 
         # is on, which is exactly the configuration being tuned here.
         _parent = str(getattr(self.images_dir, "parent", "")).replace("\\", "/")
         _is_validation = _parent.rstrip("/").endswith("/validation")
+        # The DataLoader bootstrap below reads this to keep the validation
+        # loader single-process. Set it before the early return so it is
+        # present on BOTH halves, not just the one that gets cached.
+        self._is_validation_half = _is_validation
         if _cache_validation_only and not _is_validation:
             return
 
@@ -338,8 +342,16 @@ if (_in_memory_mode in ("auto", "on", "bounded") or _cache_validation_only) and 
             #     the data and should never be the reason a machine swaps.
             #
             # Anything that does not fit streams from disk exactly as before.
-            _val_workers = max(0, int(training_params.get("data_loader_workers", 0)))
-            _copies = 1 + _val_workers
+            # One copy, not one per worker: the validation DataLoader is
+            # pinned to num_workers=0 in the bootstrap below, so nothing
+            # pickles this cache into a child process. Budgeting 1 + workers
+            # is what made this decline on 2026-09-20 -- 1.60 GB x 3 = 4.79 GB
+            # against a 3.25 GB cap -- in the exact configuration (cache=off,
+            # workers=2) the cache was written to serve. These two decisions
+            # are coupled: if validation is ever allowed workers again,
+            # restore the multiplier here and the skip in _patched_dl_init
+            # together, or the cache will be under-budgeted.
+            _copies = 1
             _available, _source = _query_available_ram_bytes()
             if _available is None:
                 logger.info(
@@ -647,6 +659,14 @@ if _dl_workers_pref > 0:
         _orig_dl_init = _DataLoader.__init__
 
         def _patched_dl_init(self, *args, **kwargs):
+            # Validation stays single-process. It is never augmented and is
+            # read identically every epoch, so workers buy it nothing, while
+            # on Windows/Appose spawn each one would pickle another copy of
+            # the validation cache. See the _copies comment above -- the two
+            # must change together.
+            _ds = args[0] if args else kwargs.get("dataset")
+            if getattr(_ds, "_is_validation_half", False):
+                return _orig_dl_init(self, *args, **kwargs)
             # Only upgrade when the caller explicitly passed num_workers=0
             # (or omitted it so it defaults to 0). This lets future
             # call-sites that opt out of worker processes stay at 0.

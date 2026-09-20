@@ -337,6 +337,19 @@ public class TrainingDialog {
         // Gates the from-scratch epoch/patience floors so they never override a
         // value the user explicitly chose.
         private boolean epochsUserEdited = false;
+        // What the from-scratch floors actually raised, recorded by
+        // buildTrainingConfig() so buildResult() can tell the user before the
+        // run starts. 0 means "the floor did not change this value".
+        //
+        // The floors used to apply in silence. A user who left Epochs at its
+        // default of 10 and clicked Start Training got 100 -- the spinner still
+        // read 10, the dialog said nothing, and the run took ten times as long
+        // as the number on screen promised (seen 2026-09-20 on a tiny-unet run
+        // that plateaued at epoch 17 and then kept going for 83 more).
+        // Overriding a value the user can see is a decision they have to be
+        // told about, the same as the VRAM pre-flight warning.
+        private int epochsRaisedFrom = 0;
+        private int patienceRaisedFrom = 0;
         // Suppression: when true, value-change listeners skip both the
         // userEdited flip and the preference write. Wrapped around any
         // setValue() we issue programmatically (init from prefs, load
@@ -3238,12 +3251,16 @@ public class TrainingDialog {
             int effectiveEpochs = epochsSpinner.getValue();
             int effectivePatience = earlyStoppingPatienceSpinner != null ? earlyStoppingPatienceSpinner.getValue() : 15;
             boolean fromScratch = "tiny-unet".equals(effectiveType) || !effectiveUsePretrained;
+            epochsRaisedFrom = 0;
+            patienceRaisedFrom = 0;
             if (fromScratch) {
-                if (!epochsUserEdited) {
-                    effectiveEpochs = Math.max(effectiveEpochs, FROM_SCRATCH_MIN_EPOCHS);
+                if (!epochsUserEdited && effectiveEpochs < FROM_SCRATCH_MIN_EPOCHS) {
+                    epochsRaisedFrom = effectiveEpochs;
+                    effectiveEpochs = FROM_SCRATCH_MIN_EPOCHS;
                 }
-                if (!esPatienceUserEdited) {
-                    effectivePatience = Math.max(effectivePatience, FROM_SCRATCH_MIN_PATIENCE);
+                if (!esPatienceUserEdited && effectivePatience < FROM_SCRATCH_MIN_PATIENCE) {
+                    patienceRaisedFrom = effectivePatience;
+                    effectivePatience = FROM_SCRATCH_MIN_PATIENCE;
                 }
             }
 
@@ -6809,6 +6826,43 @@ public class TrainingDialog {
 
             // Build training config from unified weight init strategy
             TrainingConfig trainingConfig = buildTrainingConfig();
+
+            // The from-scratch floors may have raised Epochs / Early Stop
+            // Patience above what the dialog shows. Say so before starting,
+            // and offer the way back -- silently multiplying a visible number
+            // by ten is worse than either leaving it alone or asking.
+            // Patience only matters when early stopping is actually on.
+            boolean warnPatience = patienceRaisedFrom > 0
+                    && earlyStoppingEnabledCheck != null
+                    && earlyStoppingEnabledCheck.isSelected();
+            if (epochsRaisedFrom > 0 || warnPatience) {
+                StringBuilder msg = new StringBuilder();
+                msg.append("This model trains from scratch, so these settings were "
+                        + "raised to defaults that converge more reliably:\n\n");
+                if (epochsRaisedFrom > 0) {
+                    msg.append(String.format(
+                            "  Epochs: %d -> %d\n", epochsRaisedFrom, FROM_SCRATCH_MIN_EPOCHS));
+                }
+                if (warnPatience) {
+                    msg.append(String.format(
+                            "  Early Stop Patience: %d -> %d\n",
+                            patienceRaisedFrom, FROM_SCRATCH_MIN_PATIENCE));
+                }
+                if (epochsRaisedFrom > 0) {
+                    msg.append(String.format(
+                            "\n%d epochs will take roughly %.0fx as long as the %d you set.\n",
+                            FROM_SCRATCH_MIN_EPOCHS,
+                            (double) FROM_SCRATCH_MIN_EPOCHS / Math.max(1, epochsRaisedFrom),
+                            epochsRaisedFrom));
+                }
+                msg.append("\nEdit the value yourself to keep it exactly as you set it "
+                        + "-- the floors only apply to values you have not changed.\n\n"
+                        + "Go back and adjust settings?");
+                if (Dialogs.showConfirmDialog("Settings raised for from-scratch training",
+                        msg.toString())) {
+                    return null; // Stay in dialog so the user can set it deliberately
+                }
+            }
 
             // Surface which small network the basic-mode Fast tier resolved to, so the user knows
             // what is being trained (the auto-pick is by channel count).

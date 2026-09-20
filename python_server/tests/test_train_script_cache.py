@@ -107,13 +107,24 @@ def test_cache_off_training_half_stays_out_of_the_way(fn_src):
     assert logs == []
 
 
-def test_validation_budget_counts_one_copy_per_worker(fn_src):
-    # On Windows/Appose the loader spawns, so each worker pickles the whole
-    # cache. Budgeting a single copy is how a 1.6 GB validation set with two
-    # workers quietly becomes 4.8 GB.
+def test_validation_budget_counts_exactly_one_copy(fn_src):
+    # The validation loader is pinned to num_workers=0, so the cache is never
+    # pickled into a child process and the budget must count one copy however
+    # many workers the run asks for. Counting 1 + workers is what declined a
+    # 1.60 GB validation set at 4.79 GB against a 3.25 GB cap on 2026-09-20 --
+    # in the exact configuration the cache exists to serve.
     logs = _run(fn_src, is_validation=True, n_patches=958, avail_gb=1.2, workers=2)
     assert any("declined" in m for m in logs)
-    assert any("x 3 copy/copies" in m for m in logs)
+    assert any("x 1 copy/copies" in m for m in logs)
+
+
+def test_validation_cache_engages_despite_workers(fn_src):
+    # The regression that motivated the pin: 1.60 GB of validation patches
+    # against ~13 GB available used to need 4.79 GB (1 + 2 workers) and lose
+    # to the 25% cap. One copy fits, so the cache must engage.
+    logs = _run(fn_src, is_validation=True, n_patches=958, avail_gb=13.0, workers=2)
+    assert any("preloading" in m for m in logs), logs
+    assert not any("declined" in m for m in logs), logs
 
 
 def test_generous_ram_lets_the_validation_cache_engage(fn_src):
@@ -124,6 +135,11 @@ def test_generous_ram_lets_the_validation_cache_engage(fn_src):
 
 def test_auto_mode_path_is_unaffected(fn_src):
     logs = _run(
-        fn_src, is_validation=False, n_patches=3830, avail_gb=30.0, workers=0, mode="auto"
+        fn_src,
+        is_validation=False,
+        n_patches=3830,
+        avail_gb=30.0,
+        workers=0,
+        mode="auto",
     )
     assert any("'auto' will preload" in m for m in logs)
