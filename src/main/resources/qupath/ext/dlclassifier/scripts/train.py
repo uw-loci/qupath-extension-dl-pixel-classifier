@@ -304,6 +304,27 @@ if (_in_memory_mode in ("auto", "on", "bounded") or _cache_validation_only) and 
         if _cache_validation_only and not _is_validation:
             return
 
+        # NOTE: this byte estimate MUST stay above the validation-only
+        # budget block below, which reads total_bytes. It used to sit
+        # after it, so every cache=off run died with UnboundLocalError on
+        # the validation dataset. Do not reorder these two blocks.
+        # Estimate bytes by loading one tile. Cache stores native dtype +
+        # uint8 masks; normalize happens per-batch.
+        try:
+            first_img = _tsm.SegmentationDataset._load_patch(self.image_files[0])
+            if first_img.ndim == 2:
+                first_img = first_img[..., _np.newaxis]
+            per_img_bytes = first_img.nbytes
+            # context doubles the stored channels
+            if self.context_dir is not None:
+                per_img_bytes *= 2
+            # masks stored as uint8 (classes < 256), promoted to int64 per batch
+            per_mask_bytes = first_img.shape[0] * first_img.shape[1]
+            total_bytes = n * (per_img_bytes + per_mask_bytes)
+        except Exception as _e:
+            logger.warning("In-memory cache: byte estimate failed (%s); skipping preload", _e)
+            return
+
         if _cache_validation_only:
             # The user set the cache to "off" -- possibly BECAUSE memory is
             # tight -- so this opt-in-by-default path has to be conservative
@@ -339,23 +360,6 @@ if (_in_memory_mode in ("auto", "on", "bounded") or _cache_validation_only) and 
                 "%.2f GB (%.0f%% of %.2f GB available, source=%s)",
                 total_bytes / 1e9, _copies, _needed / 1e9,
                 100 * _needed / _available, _available / 1e9, _source)
-
-        # Estimate bytes by loading one tile. Cache stores native dtype +
-        # uint8 masks; normalize happens per-batch.
-        try:
-            first_img = _tsm.SegmentationDataset._load_patch(self.image_files[0])
-            if first_img.ndim == 2:
-                first_img = first_img[..., _np.newaxis]
-            per_img_bytes = first_img.nbytes
-            # context doubles the stored channels
-            if self.context_dir is not None:
-                per_img_bytes *= 2
-            # masks stored as uint8 (classes < 256), promoted to int64 per batch
-            per_mask_bytes = first_img.shape[0] * first_img.shape[1]
-            total_bytes = n * (per_img_bytes + per_mask_bytes)
-        except Exception as _e:
-            logger.warning("In-memory cache: byte estimate failed (%s); skipping preload", _e)
-            return
 
         # Bounded mode: pick a stratified random subset that fits in
         # `_bounded_fraction` of available RAM, slice self.image_files
