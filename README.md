@@ -105,6 +105,9 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and G
    > **After updating the extension:** If you install a new version of this extension, you **must** rebuild the Python environment to match. The extension enforces version matching and will block training/inference if the environment is out of date. An error notification will appear with instructions. Go to **Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment...** to update.
 
 3. **Train a classifier** -- create annotations, open **Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**, select images, load classes, name your classifier, and click Start Training. The dialog starts in a simplified Basic mode; click "Show All Settings" for advanced options.
+
+   > **Note:** When training from scratch (tiny-unet or without pretrained weights), the extension automatically raises Epochs and Early Stop Patience to more reliable defaults if you left them at their initial values. A confirmation dialog appears before training starts showing what was raised and offers to go back if you want to adjust settings yourself.
+
 4. **Apply the classifier** -- open **Extensions > DL Pixel Classifier > Apply DL Pixel Classifier...**, select a model, choose an output type, and click Apply
 
 See [QUICKSTART.md](QUICKSTART.md) for a complete walkthrough (zero to classifier in ~10 minutes).

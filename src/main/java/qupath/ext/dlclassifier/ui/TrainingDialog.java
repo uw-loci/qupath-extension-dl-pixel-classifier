@@ -6840,13 +6840,11 @@ public class TrainingDialog {
                 msg.append("This model trains from scratch, so these settings were "
                         + "raised to defaults that converge more reliably:\n\n");
                 if (epochsRaisedFrom > 0) {
-                    msg.append(String.format(
-                            "  Epochs: %d -> %d\n", epochsRaisedFrom, FROM_SCRATCH_MIN_EPOCHS));
+                    msg.append(String.format("  Epochs: %d -> %d\n", epochsRaisedFrom, FROM_SCRATCH_MIN_EPOCHS));
                 }
                 if (warnPatience) {
                     msg.append(String.format(
-                            "  Early Stop Patience: %d -> %d\n",
-                            patienceRaisedFrom, FROM_SCRATCH_MIN_PATIENCE));
+                            "  Early Stop Patience: %d -> %d\n", patienceRaisedFrom, FROM_SCRATCH_MIN_PATIENCE));
                 }
                 if (epochsRaisedFrom > 0) {
                     msg.append(String.format(
@@ -6858,8 +6856,7 @@ public class TrainingDialog {
                 msg.append("\nEdit the value yourself to keep it exactly as you set it "
                         + "-- the floors only apply to values you have not changed.\n\n"
                         + "Go back and adjust settings?");
-                if (Dialogs.showConfirmDialog("Settings raised for from-scratch training",
-                        msg.toString())) {
+                if (Dialogs.showConfirmDialog("Settings raised for from-scratch training", msg.toString())) {
                     return null; // Stay in dialog so the user can set it deliberately
                 }
             }
