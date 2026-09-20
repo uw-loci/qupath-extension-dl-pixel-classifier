@@ -835,7 +835,7 @@ public class MAEPretrainingDialog {
         // Progress dialog that blocks until detection completes
         Alert progressAlert = new Alert(Alert.AlertType.INFORMATION);
         progressAlert.initOwner(parent.getDialogPane().getScene().getWindow());
-        progressAlert.setTitle("Detect Tissue");
+        progressAlert.setTitle("Detect Tissue - Progress");
         progressAlert.setHeaderText("Running tissue detection...");
         progressAlert.setContentText("Starting...");
         progressAlert.getButtonTypes().setAll(ButtonType.CANCEL);
