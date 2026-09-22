@@ -44,7 +44,7 @@ import qupath.ext.dlclassifier.model.InferenceConfig;
  * it to taste.
  *
  * @author UW-LOCI
- * @since 0.8.7
+ * @since 0.9.0
  */
 public final class VramEstimator {
 
