@@ -46,9 +46,15 @@ public class ClassifierMetadata {
     // inference: if inference normalizes differently than training did, the
     // model sees inputs it never trained on and a whole output class can vanish
     // (a DAB/brown class disappeared at inference because per_channel was false
-    // at training but true at apply -- 2026-06-17). The default false/99.0 is
-    // the training-safe value (AnnotationExtractor hardcodes per_channel=false),
-    // so older models that never persisted the flag fall back correctly.
+    // at training but true at apply -- 2026-06-17). The default false/99.0 is a
+    // fallback for OLDER models that predate persisting the flag; it is NOT
+    // "the training-safe value". Training normalizes with whatever
+    // ApposeClassifierBackend.buildInputConfig sent, i.e. the user's setting,
+    // which ChannelSelectionPanel auto-enables for non-brightfield images with
+    // more than three channels. The builders in TrainingWorkflow must therefore
+    // set these explicitly -- leaving them at the default recorded `false` for
+    // runs that actually trained per-channel, and desynced every inference path
+    // that rebuilds its config from metadata.
     // ANY new preprocessing field added here must follow the full round-trip
     // checklist in docs/NORMALIZATION_ROUNDTRIP.md.
     private final boolean perChannelNormalization;

@@ -310,7 +310,15 @@ public class TileProcessor {
      * ~4x more tiles needed for full coverage.
      */
     private void createCenterCropWeights(float[][] weights) {
-        int margin = overlap;
+        // `overlap` is the TOTAL overlap between neighbouring tiles, so the
+        // margin to discard on each side is half of it. Using the total here
+        // kept a band of (tileSize - 2*overlap) while the grid advances by
+        // (tileSize - overlap), so the kept band was always narrower than the
+        // stride and left uncovered stripes -- at tileSize 256 and 51 px of
+        // context padding, a 52 px band against a 154 px stride, i.e. 102 px
+        // of every step contributed by no tile at all. Once overlap reached
+        // tileSize/2 the band collapsed to nothing and the output went blank.
+        int margin = overlap / 2;
         for (int y = 0; y < tileSize; y++) {
             for (int x = 0; x < tileSize; x++) {
                 boolean inCenter = x >= margin && x < tileSize - margin && y >= margin && y < tileSize - margin;

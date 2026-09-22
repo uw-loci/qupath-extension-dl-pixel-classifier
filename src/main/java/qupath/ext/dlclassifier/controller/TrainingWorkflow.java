@@ -1728,6 +1728,13 @@ public class TrainingWorkflow {
                         .trainingTileSizePx(effectiveTileSize)
                         .classes(classInfoList)
                         .normalizationStrategy(channelConfig.getNormalizationStrategy())
+                        // Record the normalization actually used, not the builder
+                        // default. ApposeClassifierBackend.buildInputConfig sends
+                        // these same two values to training, and every inference
+                        // path that rebuilds its config FROM METADATA (overlay,
+                        // AdaBN, scripting, retrain) has to see what training saw.
+                        .perChannelNormalization(channelConfig.isPerChannelNormalization())
+                        .clipPercentile(channelConfig.getClipPercentile())
                         .bitDepthTrained(channelConfig.getBitDepth())
                         .trainingEpochs(serverResult.lastEpoch())
                         .finalLoss(serverResult.finalLoss())
@@ -1795,6 +1802,13 @@ public class TrainingWorkflow {
                     .trainingTileSizePx(effectiveTileSize)
                     .classes(classInfoList)
                     .normalizationStrategy(channelConfig.getNormalizationStrategy())
+                    // Record the normalization actually used, not the builder
+                    // default. ApposeClassifierBackend.buildInputConfig sends
+                    // these same two values to training, and every inference
+                    // path that rebuilds its config FROM METADATA (overlay,
+                    // AdaBN, scripting, retrain) has to see what training saw.
+                    .perChannelNormalization(channelConfig.isPerChannelNormalization())
+                    .clipPercentile(channelConfig.getClipPercentile())
                     .bitDepthTrained(channelConfig.getBitDepth())
                     .trainingEpochs(trainingConfig.getEpochs())
                     .finalLoss(serverResult.finalLoss())
@@ -2326,6 +2340,13 @@ public class TrainingWorkflow {
                             .trainingTileSizePx(effectiveTileSize)
                             .classes(rClassInfo)
                             .normalizationStrategy(channelConfig.getNormalizationStrategy())
+                            // Record the normalization actually used, not the builder
+                            // default. ApposeClassifierBackend.buildInputConfig sends
+                            // these same two values to training, and every inference
+                            // path that rebuilds its config FROM METADATA (overlay,
+                            // AdaBN, scripting, retrain) has to see what training saw.
+                            .perChannelNormalization(channelConfig.isPerChannelNormalization())
+                            .clipPercentile(channelConfig.getClipPercentile())
                             .bitDepthTrained(channelConfig.getBitDepth())
                             .trainingEpochs(serverResult.lastEpoch())
                             .finalLoss(serverResult.finalLoss())
@@ -2378,6 +2399,13 @@ public class TrainingWorkflow {
                         .trainingTileSizePx(effectiveTileSize)
                         .classes(classInfoList)
                         .normalizationStrategy(channelConfig.getNormalizationStrategy())
+                        // Record the normalization actually used, not the builder
+                        // default. ApposeClassifierBackend.buildInputConfig sends
+                        // these same two values to training, and every inference
+                        // path that rebuilds its config FROM METADATA (overlay,
+                        // AdaBN, scripting, retrain) has to see what training saw.
+                        .perChannelNormalization(channelConfig.isPerChannelNormalization())
+                        .clipPercentile(channelConfig.getClipPercentile())
                         .bitDepthTrained(channelConfig.getBitDepth())
                         .trainingEpochs(params.totalEpochs())
                         .finalLoss(serverResult.finalLoss())
@@ -2544,6 +2572,13 @@ public class TrainingWorkflow {
                     .trainingTileSizePx(effectiveTileSize)
                     .classes(classInfoList)
                     .normalizationStrategy(channelConfig.getNormalizationStrategy())
+                    // Record the normalization actually used, not the builder
+                    // default. ApposeClassifierBackend.buildInputConfig sends
+                    // these same two values to training, and every inference
+                    // path that rebuilds its config FROM METADATA (overlay,
+                    // AdaBN, scripting, retrain) has to see what training saw.
+                    .perChannelNormalization(channelConfig.isPerChannelNormalization())
+                    .clipPercentile(channelConfig.getClipPercentile())
                     .bitDepthTrained(channelConfig.getBitDepth())
                     .trainingEpochs(checkpoint.lastEpoch())
                     .finalLoss(serverResult.finalLoss())

@@ -1429,14 +1429,19 @@ public class AnnotationExtractor {
         json.append("],\n");
         json.append("    \"bit_depth\": ").append(channelConfig.getBitDepth()).append(",\n");
         // NORMALIZATION CONTRACT (see docs/NORMALIZATION_ROUNDTRIP.md):
-        // training currently always exports single-range (joint) normalization
-        // -- per_channel is hardcoded false here. This is the source of truth
-        // that the model's metadata records and that inference MUST reproduce.
-        // If you ever make per_channel configurable, you MUST drive it from
-        // channelConfig.isPerChannelNormalization() here AND keep the value
-        // flowing through ClassifierMetadata -> ModelManager parse -> the
-        // apply-path ChannelConfiguration, or inference will silently desync
-        // from training (a brown output class vanished this way, 2026-06-17).
+        // this block is NOT the source of truth, despite what a comment here
+        // used to claim. Nothing reads it: the extractor writes raw patches and
+        // does not scale pixels, and the Python side never looks at
+        // channel_config (it reads only unlabeled_index, class_weights and
+        // class colors out of this file).
+        //
+        // The values training actually normalizes with come from the Appose
+        // input_config built in ApposeClassifierBackend.buildInputConfig, which
+        // passes channelConfig.isPerChannelNormalization() through unchanged.
+        // That is what ClassifierMetadata must record and what inference must
+        // reproduce -- a brown output class vanished when the two disagreed
+        // (2026-06-17). The literals below are inert; leaving them as false/99.0
+        // keeps the file shape stable for anything reading it out-of-band.
         json.append("    \"normalization\": {\n");
         json.append("      \"strategy\": \"").append(normStrategy).append("\",\n");
         json.append("      \"per_channel\": false,\n");
@@ -1972,14 +1977,19 @@ public class AnnotationExtractor {
         json.append("],\n");
         json.append("    \"bit_depth\": ").append(channelConfig.getBitDepth()).append(",\n");
         // NORMALIZATION CONTRACT (see docs/NORMALIZATION_ROUNDTRIP.md):
-        // training currently always exports single-range (joint) normalization
-        // -- per_channel is hardcoded false here. This is the source of truth
-        // that the model's metadata records and that inference MUST reproduce.
-        // If you ever make per_channel configurable, you MUST drive it from
-        // channelConfig.isPerChannelNormalization() here AND keep the value
-        // flowing through ClassifierMetadata -> ModelManager parse -> the
-        // apply-path ChannelConfiguration, or inference will silently desync
-        // from training (a brown output class vanished this way, 2026-06-17).
+        // this block is NOT the source of truth, despite what a comment here
+        // used to claim. Nothing reads it: the extractor writes raw patches and
+        // does not scale pixels, and the Python side never looks at
+        // channel_config (it reads only unlabeled_index, class_weights and
+        // class colors out of this file).
+        //
+        // The values training actually normalizes with come from the Appose
+        // input_config built in ApposeClassifierBackend.buildInputConfig, which
+        // passes channelConfig.isPerChannelNormalization() through unchanged.
+        // That is what ClassifierMetadata must record and what inference must
+        // reproduce -- a brown output class vanished when the two disagreed
+        // (2026-06-17). The literals below are inert; leaving them as false/99.0
+        // keeps the file shape stable for anything reading it out-of-band.
         json.append("    \"normalization\": {\n");
         json.append("      \"strategy\": \"").append(normStrategy).append("\",\n");
         json.append("      \"per_channel\": false,\n");

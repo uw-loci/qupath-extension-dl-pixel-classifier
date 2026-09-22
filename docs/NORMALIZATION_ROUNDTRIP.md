@@ -27,9 +27,21 @@ Every preprocessing parameter that affects the pixels fed to the model MUST
 travel this full loop. A parameter that stops at any stage is a latent
 train/inference desync.
 
-1. **Training export**: `AnnotationExtractor` writes the value into the export
-   `config.json` (`channel_config.normalization` and `input_config.normalization`).
-   *Today `per_channel` is hardcoded `false` here, that is the source of truth.*
+1. **Training normalization**: the values training actually normalizes with come
+   from the Appose `input_config` built by
+   `ApposeClassifierBackend.buildInputConfig`, which passes the user's
+   `channelConfig.isPerChannelNormalization()` through unchanged. Python applies
+   it per batch in `SegmentationDataset._normalize` ->
+   `utils/normalization.normalize_image`. **This is the source of truth.**
+
+   `AnnotationExtractor` also writes a `channel_config.normalization` block into
+   the export `config.json` with `per_channel` hardcoded `false`, but that block
+   is inert: the extractor writes raw patches without scaling pixels, and the
+   Python side never reads `channel_config` from that file. An earlier version
+   of this document and of the comment in `AnnotationExtractor` both called the
+   hardcoded literal the source of truth. It is not, and believing it is how
+   `TrainingWorkflow` came to record `per_channel: false` for runs that had
+   actually trained per-channel.
 2. **Model save**: the Python `TrainingService._save_model` persists
    `input_config.normalization` (and `channel_config`) into the model's
    `metadata.json`. It must not drop fields.
