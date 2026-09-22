@@ -330,6 +330,33 @@ public class OutputGenerator {
     }
 
     /**
+     * Decides which class indices become objects.
+     * <p>
+     * Every class is eligible except the ones QuPath considers ignored -- those
+     * whose name ends with {@code '*'}. There is deliberately no implicit
+     * background: see the note in {@link #createObjectsFromMergedMap} and
+     * GitHub issue #24.
+     *
+     * @param classes    class metadata, may be shorter than {@code numClasses}
+     * @param numClasses number of channels in the classification map
+     * @return eligible class indices, ascending
+     */
+    static List<Integer> classIndicesForObjects(List<ClassifierMetadata.ClassInfo> classes, int numClasses) {
+        List<Integer> eligible = new ArrayList<>();
+        for (int classIdx = 0; classIdx < numClasses; classIdx++) {
+            String className = classes != null && classIdx < classes.size()
+                    ? classes.get(classIdx).name()
+                    : "Class " + classIdx;
+            if (PathClassTools.isIgnoredClass(PathClass.fromString(className))) {
+                logger.debug("Skipping ignored class: {}", className);
+                continue;
+            }
+            eligible.add(classIdx);
+        }
+        return eligible;
+    }
+
+    /**
      * Creates detection/annotation objects from a merged classification map.
      * <p>
      * The downsample parameter maps classification pixels to image coordinates:
@@ -368,14 +395,23 @@ public class OutputGenerator {
         RegionRequest region = RegionRequest.createInstance(
                 imageData.getServer().getPath(), downsample, offsetX, offsetY, fullResW, fullResH);
 
-        // Process each class (skip background = class 0, skip ignored classes)
+        // Process every class, skipping only the ones QuPath considers ignored
+        // (name ends with '*').
+        //
+        // This loop used to start at 1, treating class index 0 as background.
+        // Nothing in the pipeline makes that true: unannotated pixels train as
+        // ignore_index=255, never as class 0, so index 0 is an ordinary class.
+        // The result was that the alphabetically-first class silently vanished
+        // -- "Gland, Stroma" produced only Stroma (GitHub issue #24) -- and
+        // users worked around it by inventing a throwaway background class.
+        // The MEASUREMENTS path never had this rule and reports every class
+        // from 0; the two outputs disagreed with each other.
+        //
+        // To exclude a class from object generation, name it with a trailing
+        // '*' (e.g. "BG*"), which is QuPath's own convention and is what
+        // isIgnoredClass below tests.
         List<ClassifierMetadata.ClassInfo> classes = metadata.getClasses();
-        for (int classIdx = 1; classIdx < numClasses; classIdx++) {
-            String className = classIdx < classes.size() ? classes.get(classIdx).name() : "Class " + classIdx;
-            if (PathClassTools.isIgnoredClass(PathClass.fromString(className))) {
-                logger.debug("Skipping ignored class: {}", className);
-                continue;
-            }
+        for (int classIdx : classIndicesForObjects(classes, numClasses)) {
             List<PathObject> classObjects = traceClassContours(classMap, classIdx, width, height, region, objectType);
             objects.addAll(classObjects);
         }
