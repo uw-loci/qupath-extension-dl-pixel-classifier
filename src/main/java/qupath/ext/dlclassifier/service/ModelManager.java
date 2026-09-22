@@ -498,8 +498,23 @@ public class ModelManager {
             try {
                 String existingJson = Files.readString(metadataPath);
                 JsonObject pythonMeta = JsonParser.parseString(existingJson).getAsJsonObject();
-                // Preserve Python-only fields that Java metadata doesn't produce
-                for (String key : List.of("input_config", "normalization_stats")) {
+                // Preserve Python-written fields that the Java metadata may not
+                // reproduce. This write REPLACES the file training_service just
+                // wrote, so anything missing from both toMap() and this list is
+                // destroyed on every run.
+                //
+                // training_pixel_size_um / training_tile_size_px are the
+                // resolution contract: without them applying a model to a batch
+                // acquired at a different pixel size silently skips both the
+                // mismatch warning and the resample step, which is the whole
+                // cross-batch use case. They were being lost on every single
+                // training run -- no saved model had them.
+                for (String key : List.of(
+                        "input_config",
+                        "normalization_stats",
+                        "training_pixel_size_um",
+                        "training_tile_size_px",
+                        "onnx_variants")) {
                     if (pythonMeta.has(key) && !javaMetadata.containsKey(key)) {
                         javaMetadata.put(key, gson.fromJson(pythonMeta.get(key), Object.class));
                     }

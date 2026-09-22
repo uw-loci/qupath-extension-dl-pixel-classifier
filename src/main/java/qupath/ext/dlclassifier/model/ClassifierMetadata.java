@@ -347,6 +347,21 @@ public class ClassifierMetadata {
         channelConfig.put("bit_depth_trained", bitDepthTrained);
         map.put("channel_config", channelConfig);
 
+        // Resolution contract, top level to match what training_service writes
+        // and what ModelManager's parser reads back. Emitted only when actually
+        // set, so a model that genuinely lacks it stays absent rather than
+        // claiming a pixel size of NaN or a tile size of 0.
+        //
+        // Without these, applying a model to a batch acquired at a different
+        // pixel size silently skips the mismatch warning in DLPixelClassifier
+        // and the resample in inference_preprocess.
+        if (!Double.isNaN(trainingPixelSizeMicrons) && trainingPixelSizeMicrons > 0) {
+            map.put("training_pixel_size_um", trainingPixelSizeMicrons);
+        }
+        if (trainingTileSizePx > 0) {
+            map.put("training_tile_size_px", trainingTileSizePx);
+        }
+
         List<Map<String, Object>> classesInfo = new ArrayList<>();
         for (ClassInfo ci : classes) {
             Map<String, Object> classMap = new HashMap<>();

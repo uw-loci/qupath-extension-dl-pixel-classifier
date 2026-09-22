@@ -951,10 +951,17 @@ public class DLPixelClassifier implements PixelClassifier {
                             sourcePx, trainPx, Math.round((ratio - 1.0) * 100));
                 }
             } else if (Double.isNaN(trainPx) || trainPx <= 0) {
-                logger.debug("Model lacks training_pixel_size_um in metadata; "
-                        + "skipping pixel-size mismatch check. "
-                        + "(Older model or trained on uncalibrated "
-                        + "images.)");
+                // WARN, not DEBUG. This branch means the resolution safety net
+                // is off: a model applied to a batch at a different pixel size
+                // will be silently degraded with nothing in the log. It was
+                // DEBUG while a metadata bug stripped the field from every
+                // saved model, so the check never ran and never said so.
+                logger.warn("Model lacks training_pixel_size_um in metadata; "
+                        + "skipping pixel-size mismatch check. Predictions on "
+                        + "images acquired at a different resolution than "
+                        + "training cannot be checked. (Older model, model "
+                        + "saved before this field was persisted, or trained "
+                        + "on uncalibrated images.)");
             }
         } catch (Exception e) {
             // Never let the warning path block inference -- log and move on.

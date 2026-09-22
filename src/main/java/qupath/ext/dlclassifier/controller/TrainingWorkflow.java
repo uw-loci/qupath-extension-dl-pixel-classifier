@@ -1721,6 +1721,11 @@ public class TrainingWorkflow {
                         .downsample(trainingConfig.getDownsample())
                         .expectedChannelNames(channelConfig.getChannelNames())
                         .inputSize(effectiveTileSize, effectiveTileSize)
+                        // Resolution contract. Without these the saved model cannot be
+                        // checked or resampled when applied to a batch acquired at a
+                        // different pixel size, which is the cross-batch use case.
+                        .trainingPixelSizeMicrons(trainingConfig.getTrainingPixelSizeMicrons())
+                        .trainingTileSizePx(effectiveTileSize)
                         .classes(classInfoList)
                         .normalizationStrategy(channelConfig.getNormalizationStrategy())
                         .bitDepthTrained(channelConfig.getBitDepth())
@@ -1783,6 +1788,11 @@ public class TrainingWorkflow {
                     .downsample(trainingConfig.getDownsample())
                     .expectedChannelNames(channelConfig.getChannelNames())
                     .inputSize(effectiveTileSize, effectiveTileSize)
+                    // Resolution contract. Without these the saved model cannot be
+                    // checked or resampled when applied to a batch acquired at a
+                    // different pixel size, which is the cross-batch use case.
+                    .trainingPixelSizeMicrons(trainingConfig.getTrainingPixelSizeMicrons())
+                    .trainingTileSizePx(effectiveTileSize)
                     .classes(classInfoList)
                     .normalizationStrategy(channelConfig.getNormalizationStrategy())
                     .bitDepthTrained(channelConfig.getBitDepth())
@@ -2309,6 +2319,11 @@ public class TrainingWorkflow {
                             .downsample(trainingConfig.getDownsample())
                             .expectedChannelNames(channelConfig.getChannelNames())
                             .inputSize(effectiveTileSize, effectiveTileSize)
+                            // Resolution contract. Without these the saved model cannot be
+                            // checked or resampled when applied to a batch acquired at a
+                            // different pixel size, which is the cross-batch use case.
+                            .trainingPixelSizeMicrons(trainingConfig.getTrainingPixelSizeMicrons())
+                            .trainingTileSizePx(effectiveTileSize)
                             .classes(rClassInfo)
                             .normalizationStrategy(channelConfig.getNormalizationStrategy())
                             .bitDepthTrained(channelConfig.getBitDepth())
@@ -2356,6 +2371,11 @@ public class TrainingWorkflow {
                         .downsample(trainingConfig.getDownsample())
                         .expectedChannelNames(channelConfig.getChannelNames())
                         .inputSize(effectiveTileSize, effectiveTileSize)
+                        // Resolution contract. Without these the saved model cannot be
+                        // checked or resampled when applied to a batch acquired at a
+                        // different pixel size, which is the cross-batch use case.
+                        .trainingPixelSizeMicrons(trainingConfig.getTrainingPixelSizeMicrons())
+                        .trainingTileSizePx(effectiveTileSize)
                         .classes(classInfoList)
                         .normalizationStrategy(channelConfig.getNormalizationStrategy())
                         .bitDepthTrained(channelConfig.getBitDepth())
@@ -2517,6 +2537,11 @@ public class TrainingWorkflow {
                     .downsample(trainingConfig.getDownsample())
                     .expectedChannelNames(channelConfig.getChannelNames())
                     .inputSize(effectiveTileSize, effectiveTileSize)
+                    // Resolution contract. Without these the saved model cannot be
+                    // checked or resampled when applied to a batch acquired at a
+                    // different pixel size, which is the cross-batch use case.
+                    .trainingPixelSizeMicrons(trainingConfig.getTrainingPixelSizeMicrons())
+                    .trainingTileSizePx(effectiveTileSize)
                     .classes(classInfoList)
                     .normalizationStrategy(channelConfig.getNormalizationStrategy())
                     .bitDepthTrained(channelConfig.getBitDepth())
