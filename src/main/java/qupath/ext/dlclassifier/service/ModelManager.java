@@ -249,17 +249,34 @@ public class ModelManager {
             // inference or the model sees inputs it never trained on (a brown
             // output class vanished at apply because per_channel was false at
             // training but defaulted to true at inference -- 2026-06-17). The
-            // authoritative record is the nested "normalization" block written
-            // by both training_service (input_config.normalization) and
-            // AnnotationExtractor (channel_config.normalization). Search both
-            // parents; default to the training-safe values (per_channel=false,
-            // clip=99) and WARN when neither is present so a silently-degraded
-            // older model is visible in the log. See
-            // docs/NORMALIZATION_ROUNDTRIP.md.
+            // The authoritative record is input_config.normalization, written by
+            // training_service from the same Appose input_config that training
+            // actually normalized with. channel_config.normalization comes from
+            // ClassifierMetadata.toMap() and is only as good as what the builder
+            // was given -- it is the fallback, not the primary.
+            //
+            // ORDER MATTERS: this loop stops at the first parent that carries a
+            // per_channel flag. It used to check channel_config first, which
+            // silently shadowed the truthful input_config value for every model
+            // saved between 2026-06-17 (when toMap() began emitting the block,
+            // populated from a builder default that was always false) and
+            // 2026-09-22 (when the builders began setting it for real). Those
+            // models trained per-channel and were applied joint. Reading
+            // input_config first recovers them and is a no-op for every other
+            // vintage: newer models agree in both blocks, older ones have no
+            // input_config block to find.
+            //
+            // AnnotationExtractor does NOT write either block into metadata.json
+            // -- an earlier version of this comment claimed it did. It writes an
+            // inert copy into the training export's config.json, which nothing
+            // reads. See docs/NORMALIZATION_ROUNDTRIP.md.
+            //
+            // Default to per_channel=false / clip=99 and WARN when neither parent
+            // has the flag, so a silently-degraded older model is visible.
             boolean perChannelNorm = false;
             double clipPercentile = 99.0;
             boolean foundNormBlock = false;
-            for (String parent : new String[] {"channel_config", "input_config"}) {
+            for (String parent : new String[] {"input_config", "channel_config"}) {
                 if (!obj.has(parent) || !obj.get(parent).isJsonObject()) {
                     continue;
                 }
