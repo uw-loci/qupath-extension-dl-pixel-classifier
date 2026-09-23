@@ -36,6 +36,7 @@ import qupath.ext.dlclassifier.service.NormalizationStatsComputer;
 import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.ext.dlclassifier.service.PrecomputedPixelClassifier;
 import qupath.ext.dlclassifier.service.ood.OutOfDistributionPreflight;
+import qupath.ext.dlclassifier.ui.DialogOwner;
 import qupath.ext.dlclassifier.ui.InferenceDialog;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.utilities.OutputGenerator;
@@ -1672,6 +1673,7 @@ public class InferenceWorkflow {
             alert.setTitle(title);
             alert.setHeaderText(null);
             alert.setContentText(message);
+            DialogOwner.own(alert);
             alert.showAndWait();
         });
     }

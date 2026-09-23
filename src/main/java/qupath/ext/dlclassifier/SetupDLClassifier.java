@@ -45,6 +45,7 @@ import qupath.ext.dlclassifier.service.SessionLogBuffer;
 import qupath.ext.dlclassifier.service.warnings.InteractionWarningRegistration;
 import qupath.ext.dlclassifier.ui.AdaBNDialog;
 import qupath.ext.dlclassifier.ui.BugReportDialog;
+import qupath.ext.dlclassifier.ui.DialogOwner;
 import qupath.ext.dlclassifier.ui.MAEPretrainingDialog;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
@@ -166,6 +167,11 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             alert.setContentText(body);
             alert.getButtonTypes().setAll(javafx.scene.control.ButtonType.OK);
             alert.getDialogPane().setMinWidth(500);
+            // This fires during startup, exactly when the main window is
+            // appearing and taking focus. Unowned, the modal alert can land
+            // behind it -- and because it is APPLICATION_MODAL, QuPath then
+            // accepts no input with nothing on screen to explain why.
+            DialogOwner.own(alert);
             javafx.scene.control.Label content =
                     (javafx.scene.control.Label) alert.getDialogPane().lookup(".content");
             if (content != null) {
@@ -954,6 +960,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             event.consume();
         });
 
+        DialogOwner.own(dialog);
         dialog.showAndWait();
     }
 
@@ -1089,6 +1096,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             event.consume();
         });
 
+        DialogOwner.own(dialog);
         dialog.showAndWait();
     }
 

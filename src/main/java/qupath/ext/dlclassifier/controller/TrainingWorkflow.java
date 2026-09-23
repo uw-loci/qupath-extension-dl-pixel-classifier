@@ -49,6 +49,7 @@ import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
+import qupath.ext.dlclassifier.ui.DialogOwner;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
 import qupath.ext.dlclassifier.ui.TrainingAreaIssuesDialog;
@@ -1079,6 +1080,7 @@ public class TrainingWorkflow {
                                             + "- Training for more epochs\n"
                                             + "- Checking that the class appears in the validation split",
                                     result.focusClassIoU(), result.focusClassName()));
+                            DialogOwner.own(alert);
                             alert.show();
                         });
                     } else {
@@ -3162,6 +3164,7 @@ public class TrainingWorkflow {
             alert.setTitle(title);
             alert.setHeaderText(null);
             alert.setContentText(message);
+            DialogOwner.own(alert);
             alert.showAndWait();
         });
     }

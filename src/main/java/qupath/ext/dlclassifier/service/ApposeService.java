@@ -213,8 +213,52 @@ public class ApposeService {
         String initScript = buildInitScript();
         pythonService.init(initScript);
 
+        // Re-run the health check against the WORKER WE JUST RESTARTED.
+        // Without this, lastHealthy/lastVersionWarning still describe the
+        // pre-upgrade worker: the caller in SetupDLClassifier reads
+        // isLastHealthy() immediately after this method returns, saw the stale
+        // failure, and reported "Auto-rebuild completed but health check still
+        // fails" on an environment that had just been fixed. The upgrade
+        // worked; nothing asked again.
+        refreshHealth();
+
         report(statusCallback, "Upgrade complete");
-        logger.info("dlclassifier-server package upgraded successfully");
+        logger.info(
+                "dlclassifier-server package upgraded successfully (healthy={}, version={})",
+                lastHealthy,
+                lastServerVersion);
+    }
+
+    /**
+     * Re-runs the health check against the current Python worker and refreshes
+     * the cached results.
+     * <p>
+     * The cached values are only otherwise written during {@link #initialize},
+     * so any operation that replaces the worker or the installed package must
+     * call this or leave callers reading a stale verdict.
+     */
+    private void refreshHealth() {
+        if (pythonService == null) {
+            lastHealthy = false;
+            return;
+        }
+        try {
+            String healthScript = "task.outputs['healthy'] = inference_service is not None\n"
+                    + "import dlclassifier_server as _dls\n"
+                    + "task.outputs['server_version'] = getattr(_dls, '__version__', 'unknown')\n"
+                    + "task.outputs['version_warning'] = globals().get('version_warning', '') or ''\n";
+            Task healthTask = pythonService.task(healthScript);
+            healthTask.waitFor();
+            lastHealthy = Boolean.TRUE.equals(healthTask.outputs.get("healthy"));
+            lastServerVersion = String.valueOf(healthTask.outputs.getOrDefault("server_version", "unknown"));
+            lastVersionWarning = String.valueOf(healthTask.outputs.getOrDefault("version_warning", ""));
+        } catch (Exception e) {
+            // A health check that cannot run is not a healthy environment, but
+            // it is also not evidence the upgrade failed -- say which.
+            logger.warn("Could not re-run health check after upgrade: {}", e.getMessage());
+            lastHealthy = false;
+            lastVersionWarning = "Health check could not be run after the upgrade: " + e.getMessage();
+        }
     }
 
     /**

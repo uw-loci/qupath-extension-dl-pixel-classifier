@@ -21,6 +21,7 @@ import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.service.ClassifierClient.PixelInferenceResult;
 import qupath.ext.dlclassifier.service.ood.OutOfDistributionPreflight;
+import qupath.ext.dlclassifier.ui.DialogOwner;
 import qupath.ext.dlclassifier.utilities.TileEncoder;
 import qupath.lib.classifiers.pixel.PixelClassifier;
 import qupath.lib.classifiers.pixel.PixelClassifierMetadata;
@@ -667,6 +668,7 @@ public class DLPixelClassifier implements PixelClassifier {
                     alert.setHeaderText("Classification overlay has been disabled");
                     alert.setContentText("The server returned repeated errors:\n" + lastErrorMessage + "\n\n"
                             + "Remove the overlay and check the server connection.");
+                    DialogOwner.own(alert);
                     alert.show();
                 });
             }
