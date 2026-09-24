@@ -136,7 +136,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
      * The current version is always persisted so the advisory fires once per install/update.
      * Unpackaged IDE/dev runs report no manifest version and are skipped.
      */
-    private void warnIfExtensionRecentlyUpdated() {
+    private void warnIfExtensionRecentlyUpdated(QuPathGUI qupath) {
         String current = GeneralTools.getPackageVersion(SetupDLClassifier.class);
         if (current == null || current.isBlank() || "dev".equals(current)) {
             return;
@@ -167,18 +167,34 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             alert.setContentText(body);
             alert.getButtonTypes().setAll(javafx.scene.control.ButtonType.OK);
             alert.getDialogPane().setMinWidth(500);
-            // This fires during startup, exactly when the main window is
-            // appearing and taking focus. Unowned, the modal alert can land
-            // behind it -- and because it is APPLICATION_MODAL, QuPath then
-            // accepts no input with nothing on screen to explain why.
-            DialogOwner.own(alert);
             javafx.scene.control.Label content =
                     (javafx.scene.control.Label) alert.getDialogPane().lookup(".content");
             if (content != null) {
                 content.setWrapText(true);
             }
-            alert.showAndWait();
+            showStartupAlert(qupath, alert);
         });
+    }
+
+    /**
+     * Shows a startup alert owned by the QuPath main window and non-modal. An owned window
+     * always stays above its owner, and a non-modal one can never block input to QuPath --
+     * an unowned APPLICATION_MODAL alert fired during startup can land behind the main window
+     * and leave QuPath accepting no input with nothing visible to explain why. Uses the
+     * {@code qupath} handed to {@code installExtension} directly (no dependence on
+     * {@code QuPathGUI.getInstance()}) and, unlike {@link DialogOwner#own} alone, drops the
+     * modality so QuPath stays usable whatever the window manager does. Skipped when the
+     * main window is not showing (headless run).
+     */
+    private static void showStartupAlert(QuPathGUI qupath, Alert alert) {
+        javafx.stage.Stage stage = qupath == null ? null : qupath.getStage();
+        if (stage == null || !stage.isShowing()) {
+            logger.info("Main window not showing; skipping startup alert '{}'", alert.getTitle());
+            return;
+        }
+        alert.initOwner(stage);
+        alert.initModality(javafx.stage.Modality.NONE);
+        alert.show();
     }
 
     @Override
@@ -191,7 +207,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         // Register persistent preferences
         DLClassifierPreferences.installPreferences(qupath);
-        warnIfExtensionRecentlyUpdated();
+        warnIfExtensionRecentlyUpdated(qupath);
 
         // Warm the GPU probe off the FX thread. It shells out to nvidia-smi,
         // which can hang on a broken driver, and both the setup wizard and the
