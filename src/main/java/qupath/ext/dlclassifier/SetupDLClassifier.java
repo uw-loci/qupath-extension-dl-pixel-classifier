@@ -797,6 +797,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             confirm.setContentText("The recovered model will be saved to the Python server's\n"
                     + "default model directory instead of a project folder.\n\n"
                     + "Continue?");
+            DialogOwner.own(confirm);
             if (confirm.showAndWait().orElse(null) != javafx.scene.control.ButtonType.OK) {
                 return;
             }
@@ -2580,6 +2581,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         content.setPadding(new Insets(10, 0, 0, 0));
         alert.getDialogPane().setContent(content);
 
+        DialogOwner.own(alert);
         alert.showAndWait();
         if (dontShowAgain.isSelected()) {
             DLClassifierPreferences.setOverlayNoticeDismissed(true);
@@ -3016,6 +3018,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                     alert.setHeaderText("Collapse probe aborted training");
                     alert.setContentText(message);
                     alert.getDialogPane().setPrefWidth(560);
+                    DialogOwner.own(alert);
                     alert.show();
                 } else if (cancelled) {
                     Dialogs.showWarningNotification(
@@ -3025,6 +3028,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                     alert.setHeaderText("Training stopped early; partial encoder saved");
                     alert.setContentText(message);
                     alert.getDialogPane().setPrefWidth(560);
+                    DialogOwner.own(alert);
                     alert.show();
                 } else if (hasWarnings) {
                     Dialogs.showWarningNotification(

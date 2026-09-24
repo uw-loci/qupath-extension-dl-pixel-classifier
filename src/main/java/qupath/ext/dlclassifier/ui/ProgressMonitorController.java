@@ -794,6 +794,7 @@ public class ProgressMonitorController {
         confirm.setTitle("Pause Training");
         confirm.setHeaderText("Pause training at the end of the current epoch?");
         confirm.setContentText("You can add annotations and resume training later.");
+        confirm.initOwner(stage);
 
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
@@ -822,6 +823,7 @@ public class ProgressMonitorController {
                 + "saved as the final classifier.\n\n"
                 + "Training will stop after the current epoch finishes.");
         confirm.getDialogPane().setMinWidth(400);
+        confirm.initOwner(stage);
 
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
@@ -857,6 +859,7 @@ public class ProgressMonitorController {
         ButtonType discardBtn = new ButtonType("Do Not Save");
         ButtonType cancelBtn = new ButtonType("Go Back", ButtonBar.ButtonData.CANCEL_CLOSE);
         dialog.getButtonTypes().setAll(bestBtn, lastBtn, discardBtn, cancelBtn);
+        dialog.initOwner(stage);
 
         dialog.showAndWait().ifPresent(response -> {
             if (response == cancelBtn) return;

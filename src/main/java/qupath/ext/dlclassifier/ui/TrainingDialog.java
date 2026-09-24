@@ -7207,6 +7207,9 @@ public class TrainingDialog {
             alert.getDialogPane().setContent(content);
             alert.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
             ((Button) alert.getDialogPane().lookupButton(ButtonType.OK)).setText("Proceed with bounded training");
+            if (dialog != null) {
+                alert.initOwner(dialog);
+            }
 
             var result = alert.showAndWait();
             if (dontShowAgain.isSelected()) {
@@ -7246,6 +7249,9 @@ public class TrainingDialog {
             alert.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
             ((Button) alert.getDialogPane().lookupButton(ButtonType.OK)).setText("Train anyway");
             ((Button) alert.getDialogPane().lookupButton(ButtonType.CANCEL)).setText("Back to Settings");
+            if (dialog != null) {
+                alert.initOwner(dialog);
+            }
 
             var result = alert.showAndWait();
             if (dontShowAgain.isSelected()) {

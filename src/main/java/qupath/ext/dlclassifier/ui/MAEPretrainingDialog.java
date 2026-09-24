@@ -325,7 +325,7 @@ public class MAEPretrainingDialog {
         content.setPadding(new Insets(10));
 
         Hyperlink tipsLink = new Hyperlink("Pretraining tips");
-        tipsLink.setOnAction(e -> showPretrainingTipsDialog());
+        tipsLink.setOnAction(e -> showPretrainingTipsDialog(dialog));
         tipsLink.setStyle("-fx-font-size: 11px;");
         content.getChildren().add(tipsLink);
 
@@ -960,8 +960,9 @@ public class MAEPretrainingDialog {
         epochsSpinner.getValueFactory().setValue(suggestedEpochs);
     }
 
-    private static void showPretrainingTipsDialog() {
+    private static void showPretrainingTipsDialog(Dialog<?> parent) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.initOwner(parent.getDialogPane().getScene().getWindow());
         alert.setTitle("MAE Pretraining Tips");
         alert.setHeaderText("Self-Supervised Pretraining Guide");
         alert.setResizable(true);

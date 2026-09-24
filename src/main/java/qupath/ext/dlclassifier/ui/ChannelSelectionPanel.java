@@ -544,6 +544,10 @@ public class ChannelSelectionPanel extends VBox {
         dialog.setTitle("Select by Pattern");
         dialog.setHeaderText("Enter a regex pattern to match channel names");
         dialog.setContentText("Pattern:");
+        if (getScene() != null && getScene().getWindow() != null) {
+            dialog.initOwner(getScene().getWindow());
+        }
+        DialogOwner.own(dialog);
         dialog.showAndWait().ifPresent(patternStr -> {
             if (patternStr.isEmpty()) return;
             try {
