@@ -99,6 +99,7 @@ public class AdaBNDialog {
 
         dialog.getDialogPane().setContent(grid);
 
+        DialogOwner.own(dialog);
         Optional<ButtonType> result = dialog.showAndWait();
         if (result.isEmpty() || result.get() != ButtonType.OK) {
             return Optional.empty();

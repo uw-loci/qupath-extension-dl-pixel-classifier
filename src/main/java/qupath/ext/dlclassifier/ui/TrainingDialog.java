@@ -7899,6 +7899,9 @@ public class TrainingDialog {
             scrollPane.setPrefHeight(400);
             dialog.getDialogPane().setContent(scrollPane);
             dialog.getDialogPane().setPrefWidth(520);
+            if (TrainingDialogBuilder.this.dialog != null) {
+                dialog.initOwner(TrainingDialogBuilder.this.dialog);
+            }
             dialog.showAndWait();
         }
 
@@ -8144,6 +8147,9 @@ public class TrainingDialog {
             scrollPane.setPrefHeight(500);
             dialog.getDialogPane().setContent(scrollPane);
             dialog.getDialogPane().setPrefWidth(600);
+            if (TrainingDialogBuilder.this.dialog != null) {
+                dialog.initOwner(TrainingDialogBuilder.this.dialog);
+            }
             dialog.showAndWait();
         }
 

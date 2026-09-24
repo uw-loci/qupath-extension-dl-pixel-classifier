@@ -604,6 +604,7 @@ public class TrainingWorkflow {
                 .addAll(javafx.scene.control.ButtonType.OK, javafx.scene.control.ButtonType.CANCEL);
         dialog.getDialogPane().setPrefWidth(560);
 
+        DialogOwner.own(dialog);
         var result = dialog.showAndWait();
         if (result.isPresent() && result.get() == javafx.scene.control.ButtonType.OK) {
             if (neverAgain.isSelected()) {
@@ -2706,6 +2707,7 @@ public class TrainingWorkflow {
             return null;
         });
 
+        DialogOwner.own(dialog);
         return dialog.showAndWait();
     }
 
