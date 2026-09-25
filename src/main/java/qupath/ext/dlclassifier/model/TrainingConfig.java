@@ -6,6 +6,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Configuration parameters for training a deep learning pixel classifier.
@@ -14,6 +16,8 @@ import java.util.Objects;
  * @since 0.1.0
  */
 public class TrainingConfig {
+
+    private static final Logger logger = LoggerFactory.getLogger(TrainingConfig.class);
 
     // Model architecture
     private final String modelType;
@@ -1433,8 +1437,45 @@ public class TrainingConfig {
          *
          * @param classWeightMultipliers map of class name to multiplier (default 1.0)
          */
-        public Builder classWeightMultipliers(Map<String, Double> classWeightMultipliers) {
-            this.classWeightMultipliers = new LinkedHashMap<>(classWeightMultipliers);
+        public Builder classWeightMultipliers(Map<String, ?> classWeightMultipliers) {
+            // Coerce every value rather than copying the map as-is.
+            //
+            // This is called from Groovy, where a decimal literal is a
+            // BigDecimal, not a Double. Generic erasure lets a
+            // Map<String, BigDecimal> be passed as Map<String, Double> without
+            // complaint, and the mismatch only surfaces much later, when
+            // something unboxes it:
+            //
+            //   ClassCastException: class java.math.BigDecimal cannot be cast
+            //   to class java.lang.Double
+            //     at AnnotationExtractor.saveProjectConfig
+            //
+            // The scripts our own "Copy as Groovy Script" generates contain
+            // exactly that map literal, so every scripted run with class
+            // weights died at export while the identical GUI run succeeded.
+            this.classWeightMultipliers = new LinkedHashMap<>();
+            if (classWeightMultipliers == null) {
+                return this;
+            }
+            classWeightMultipliers.forEach((k, v) -> {
+                if (k == null || v == null) {
+                    return;
+                }
+                if (v instanceof Number n) {
+                    this.classWeightMultipliers.put(k, n.doubleValue());
+                } else {
+                    // A script may hand us "2.0" as a string; take it if it
+                    // parses, and say so clearly if it does not.
+                    try {
+                        this.classWeightMultipliers.put(k, Double.parseDouble(String.valueOf(v)));
+                    } catch (NumberFormatException e) {
+                        logger.warn(
+                                "Ignoring class weight multiplier for '{}': {} is not a number",
+                                k,
+                                v.getClass().getSimpleName());
+                    }
+                }
+            });
             return this;
         }
 
