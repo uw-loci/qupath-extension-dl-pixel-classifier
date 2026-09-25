@@ -75,7 +75,7 @@ if globals().get("_DLC_PROTOCOL_FD_SEPARATION", False):
 # Both sides MUST be in sync. This version MUST match pyproject.toml and
 # __init__.py exactly. When EITHER side is updated, ALL THREE version
 # locations must be bumped together (see memory/feedback_version_sync.md).
-_REQUIRED_PYTHON_VERSION = "0.9.3"
+_REQUIRED_PYTHON_VERSION = "0.9.4"
 
 
 def _parse_version(v):
