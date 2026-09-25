@@ -167,7 +167,10 @@ public class TrainingDialog {
     /**
      * Inner builder class for constructing the dialog.
      */
-    private static class TrainingDialogBuilder {
+    // Package-private rather than private so the profile-loading helpers
+    // below can be unit tested. Load profile shipped broken for every
+    // profile because nothing could reach it to test it.
+    static class TrainingDialogBuilder {
 
         private Stage dialog;
         private Consumer<TrainingDialogResult> onResult;
@@ -266,10 +269,6 @@ public class TrainingDialog {
         private CheckBox useTorchCompileCheck;
         private ComboBox<String> inMemoryDatasetCombo;
         private Spinner<Integer> dataLoaderWorkersSpinner;
-
-        // Holds class names from a loaded profile when classes haven't been
-        // loaded yet -- applied once loadClassesFromSelectedImages finishes.
-        private Set<String> pendingProfileClassNames;
 
         // Focus class
         private ComboBox<String> focusClassCombo;
@@ -5670,17 +5669,6 @@ public class TrainingDialog {
                         autoMatchModelClasses();
                     }
 
-                    // Apply class selection from a profile that was loaded
-                    // before classes existed. Wanted names that don't appear
-                    // in the loaded class set are silently dropped.
-                    if (pendingProfileClassNames != null) {
-                        Set<String> wanted = pendingProfileClassNames;
-                        pendingProfileClassNames = null;
-                        for (ClassItem ci : classListView.getItems()) {
-                            ci.selected().set(wanted.contains(ci.name()));
-                        }
-                    }
-
                     // Reset button state
                     loadClassesButton.setText("Load Classes from Selected Images");
                     updateLoadClassesButtonState();
@@ -7741,6 +7729,23 @@ public class TrainingDialog {
          * Selected class names and channel normalization strategy are applied
          * separately when present.
          */
+        /**
+         * A single throwaway class so profile metadata can be built.
+         * <p>
+         * {@link ClassifierMetadata.Builder#build()} rejects an empty class
+         * list, but a profile deliberately carries no classes: those come from
+         * the data loaded in the dialog. Only {@code loadSettingsFromModel}
+         * sees this, and it reads architecture and training settings without
+         * touching classes.
+         *
+         * @return a one-element list, never empty
+         */
+        static List<ClassifierMetadata.ClassInfo> placeholderClasses() {
+            List<ClassifierMetadata.ClassInfo> stub = new ArrayList<>();
+            stub.add(new ClassifierMetadata.ClassInfo(0, "Class 0", "#808080"));
+            return stub;
+        }
+
         private void loadProfileFromFile(Button sourceButton) {
             FileChooser chooser = new FileChooser();
             chooser.setTitle("Load Training Profile");
@@ -7813,23 +7818,27 @@ public class TrainingDialog {
                     }
                 }
 
-                loadSettingsFromModel(mb.build());
+                // A profile carries SETTINGS, not classes. The classes always
+                // come from the data currently loaded in the dialog, and are
+                // left exactly as they are here.
+                //
+                // Profiles outlive the annotations they were saved against:
+                // classes get renamed, added, dropped, or the profile is reused
+                // on a different project entirely. Applying a saved selection
+                // would silently tick the wrong boxes -- or, when no name
+                // matched, untick every one and leave a dialog that looks
+                // configured but would train on nothing.
+                //
+                // The stub below exists only because ClassifierMetadata refuses
+                // to build without at least one class. loadSettingsFromModel
+                // reads architecture and training settings and never looks at
+                // it. This used to be built before the profile's class names
+                // were read, with no classes passed at all, so every load threw
+                // "At least one class must be defined" and the feature never
+                // worked for anyone.
+                mb.classes(placeholderClasses());
 
-                // Apply selected class names if classes are already loaded.
-                // If not, defer the application: stash the names and reapply
-                // once Load Classes finishes.
-                Object selClasses = profile.get("selected_classes");
-                if (selClasses instanceof List<?> raw) {
-                    Set<String> wanted = new HashSet<>();
-                    for (Object o : raw) wanted.add(String.valueOf(o));
-                    if (classListView != null && !classListView.getItems().isEmpty()) {
-                        for (ClassItem item : classListView.getItems()) {
-                            item.selected().set(wanted.contains(item.name()));
-                        }
-                    } else {
-                        pendingProfileClassNames = wanted;
-                    }
-                }
+                loadSettingsFromModel(mb.build());
 
                 logger.info("Loaded training profile from {}", in.getAbsolutePath());
                 showCopyFeedback(sourceButton, "Profile loaded from " + in.getName());
