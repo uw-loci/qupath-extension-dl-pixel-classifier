@@ -106,7 +106,7 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and G
 
 3. **Train a classifier** -- create annotations, open **Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**, select images, load classes, name your classifier, and click Start Training. The dialog starts in a simplified Basic mode; click "Show All Settings" for advanced options.
 
-   > **Note:** When training from scratch (tiny-unet or without pretrained weights), the extension automatically raises Epochs and Early Stop Patience to more reliable defaults if you left them at their initial values. A confirmation dialog appears before training starts showing what was raised and offers to go back if you want to adjust settings yourself.
+   > **Note:** When training from scratch (tiny-unet or without pretrained weights), an advisory appears beneath the Epochs spinner recommending a minimum epoch count. This is advice only — the spinner value is always what trains. You are free to follow the recommendation or set a different value.
 
 4. **Apply the classifier** -- open **Extensions > DL Pixel Classifier > Apply DL Pixel Classifier...**, select a model, choose an output type, and click Apply
 

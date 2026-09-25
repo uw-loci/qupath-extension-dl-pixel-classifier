@@ -333,23 +333,10 @@ public class TrainingDialog {
         private boolean esEnabledUserEdited = false;
         private boolean suppressEsEnabledListener = false;
         private boolean esPatienceUserEdited = false;
-        // True once the Epochs spinner is changed (by the user or a model load).
-        // Gates the from-scratch epoch/patience floors so they never override a
-        // value the user explicitly chose.
-        private boolean epochsUserEdited = false;
-        // What the from-scratch floors actually raised, recorded by
-        // buildTrainingConfig() so buildResult() can tell the user before the
-        // run starts. 0 means "the floor did not change this value".
-        //
-        // The floors used to apply in silence. A user who left Epochs at its
-        // default of 10 and clicked Start Training got 100 -- the spinner still
-        // read 10, the dialog said nothing, and the run took ten times as long
-        // as the number on screen promised (seen 2026-09-20 on a tiny-unet run
-        // that plateaued at epoch 17 and then kept going for 83 more).
-        // Overriding a value the user can see is a decision they have to be
-        // told about, the same as the VRAM pre-flight warning.
-        private int epochsRaisedFrom = 0;
-        private int patienceRaisedFrom = 0;
+        // Advisory shown beneath Epochs when a from-scratch model is configured
+        // with fewer epochs than it usually needs. Advice only -- nothing is
+        // overridden, so the spinner value is always what trains.
+        private Label epochAdvisoryLabel;
         // Suppression: when true, value-change listeners skip both the
         // userEdited flip and the preference write. Wrapped around any
         // setValue() we issue programmatically (init from prefs, load
@@ -677,6 +664,7 @@ public class TrainingDialog {
             updateValidation();
             updateVramEstimate();
             updateTileAdvisory();
+            updateEpochAdvisory();
 
             // Scan for orphaned best-in-progress checkpoints so we can offer
             // one-click recovery for any interrupted training.
@@ -3035,7 +3023,11 @@ public class TrainingDialog {
                     "https://arxiv.org/abs/1505.04597",
                     archLabel,
                     architectureCombo);
-            architectureCombo.valueProperty().addListener((obs, old, newVal) -> updateBackboneOptions(newVal));
+            architectureCombo.valueProperty().addListener((obs, old, newVal) -> {
+                updateBackboneOptions(newVal);
+                // What counts as "from scratch" depends on the architecture.
+                updateEpochAdvisory();
+            });
 
             Button archHelpBtn = new Button("?");
             archHelpBtn.setStyle("-fx-font-size: 10; -fx-padding: 1 6 1 6; -fx-min-width: 22;");
@@ -3164,6 +3156,44 @@ public class TrainingDialog {
          * Builds a TrainingConfig from the current dialog state.
          * Used by both buildResult() and copyTrainingScript() to avoid duplication.
          */
+        /**
+         * Shows or hides the from-scratch epoch advisory.
+         * <p>
+         * Advice only. Nothing here changes the configuration -- the Epochs
+         * spinner is always what trains. The thresholds are the same constants
+         * that used to be enforced as floors.
+         */
+        private void updateEpochAdvisory() {
+            if (epochAdvisoryLabel == null || epochsSpinner == null) {
+                return;
+            }
+            boolean show = false;
+            String text = "";
+            try {
+                // Ask the config that would actually be built, so the advisory
+                // cannot disagree with the run about what "from scratch" means
+                // -- the basic-mode Fast preset resolves to different networks
+                // by channel count.
+                TrainingConfig preview = buildTrainingConfig();
+                boolean fromScratch = "tiny-unet".equals(preview.getModelType()) || !preview.isUsePretrainedWeights();
+                int epochs = epochsSpinner.getValue();
+                if (fromScratch && epochs < FROM_SCRATCH_MIN_EPOCHS) {
+                    show = true;
+                    text = String.format(
+                            "This model trains from scratch, which usually needs %d or more epochs "
+                                    + "to converge. %d may underfit. Training will use %d.",
+                            FROM_SCRATCH_MIN_EPOCHS, epochs, epochs);
+                }
+            } catch (Exception e) {
+                // An incomplete dialog cannot be previewed yet. Say nothing
+                // rather than guess.
+                logger.debug("Could not evaluate the epoch advisory: {}", e.getMessage());
+            }
+            epochAdvisoryLabel.setText(text);
+            epochAdvisoryLabel.setVisible(show);
+            epochAdvisoryLabel.setManaged(show);
+        }
+
         private TrainingConfig buildTrainingConfig() {
             ClassifierHandler.WeightInitStrategy strategy = getSelectedWeightInitStrategy();
             if (strategy == null) {
@@ -3243,26 +3273,22 @@ public class TrainingDialog {
                 }
             }
 
-            // From-scratch models (Tiny UNet, or any model trained without
-            // pretrained weights) converge slowly and noisily, so they need more
-            // runway than fine-tuning. Apply higher epoch / early-stop-patience
-            // floors -- but only when the user has not explicitly set those
-            // values, so a deliberate choice is never overridden.
+            // The number on screen is the number that runs.
+            //
+            // These used to be raised to from-scratch floors whenever a flag
+            // said the user had not "edited" them. That flag could not tell an
+            // accepted default from a deliberate choice, so it was wrong in
+            // both directions: leaving Epochs at its default of 10 silently
+            // trained 100, and setting it to 80 on purpose still trained 100
+            // because re-selecting a value a Spinner already holds fires no
+            // change event. The advice offered to escape it -- "edit the value
+            // to keep it" -- was impossible when the value was already right.
+            //
+            // FROM_SCRATCH_MIN_EPOCHS / _PATIENCE survive as the thresholds for
+            // the advisory shown beneath the Epochs spinner. They recommend;
+            // they no longer override.
             int effectiveEpochs = epochsSpinner.getValue();
             int effectivePatience = earlyStoppingPatienceSpinner != null ? earlyStoppingPatienceSpinner.getValue() : 15;
-            boolean fromScratch = "tiny-unet".equals(effectiveType) || !effectiveUsePretrained;
-            epochsRaisedFrom = 0;
-            patienceRaisedFrom = 0;
-            if (fromScratch) {
-                if (!epochsUserEdited && effectiveEpochs < FROM_SCRATCH_MIN_EPOCHS) {
-                    epochsRaisedFrom = effectiveEpochs;
-                    effectiveEpochs = FROM_SCRATCH_MIN_EPOCHS;
-                }
-                if (!esPatienceUserEdited && effectivePatience < FROM_SCRATCH_MIN_PATIENCE) {
-                    patienceRaisedFrom = effectivePatience;
-                    effectivePatience = FROM_SCRATCH_MIN_PATIENCE;
-                }
-            }
 
             return TrainingConfig.builder()
                     .classifierType(effectiveType)
@@ -3623,6 +3649,17 @@ public class TrainingDialog {
             // up below where earlyStoppingEnabledCheck is constructed.
             this.epochsHintLabel = epochsHint;
             grid.add(epochsHint, 0, row, 2, 1);
+            row++;
+
+            // From-scratch epoch advisory. Visible in BOTH modes -- an advanced
+            // user who deliberately sets 80 should still see why 100 is the
+            // usual recommendation, and is equally free to ignore it.
+            epochAdvisoryLabel = new Label();
+            epochAdvisoryLabel.setWrapText(true);
+            epochAdvisoryLabel.setStyle("-fx-text-fill: #8a6d00; -fx-font-size: 11px;");
+            epochAdvisoryLabel.setVisible(false);
+            epochAdvisoryLabel.setManaged(false);
+            grid.add(epochAdvisoryLabel, 0, row, 2, 1);
             row++;
 
             // Early stopping status (basic mode only). Initialised lazily after
@@ -4387,10 +4424,11 @@ public class TrainingDialog {
                 if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
             });
             epochsSpinner.valueProperty().addListener((obs, o, n) -> {
-                epochsUserEdited = true;
+                updateEpochAdvisory();
                 if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
             });
             backboneCombo.valueProperty().addListener((obs, o, n) -> {
+                updateEpochAdvisory();
                 if (lastLoadedClassCount > 0) updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
             });
             // Context scale affects the in-memory cache estimate (2x storage
@@ -6815,40 +6853,6 @@ public class TrainingDialog {
 
             // Build training config from unified weight init strategy
             TrainingConfig trainingConfig = buildTrainingConfig();
-
-            // The from-scratch floors may have raised Epochs / Early Stop
-            // Patience above what the dialog shows. Say so before starting,
-            // and offer the way back -- silently multiplying a visible number
-            // by ten is worse than either leaving it alone or asking.
-            // Patience only matters when early stopping is actually on.
-            boolean warnPatience = patienceRaisedFrom > 0
-                    && earlyStoppingEnabledCheck != null
-                    && earlyStoppingEnabledCheck.isSelected();
-            if (epochsRaisedFrom > 0 || warnPatience) {
-                StringBuilder msg = new StringBuilder();
-                msg.append("This model trains from scratch, so these settings were "
-                        + "raised to defaults that converge more reliably:\n\n");
-                if (epochsRaisedFrom > 0) {
-                    msg.append(String.format("  Epochs: %d -> %d\n", epochsRaisedFrom, FROM_SCRATCH_MIN_EPOCHS));
-                }
-                if (warnPatience) {
-                    msg.append(String.format(
-                            "  Early Stop Patience: %d -> %d\n", patienceRaisedFrom, FROM_SCRATCH_MIN_PATIENCE));
-                }
-                if (epochsRaisedFrom > 0) {
-                    msg.append(String.format(
-                            "\n%d epochs will take roughly %.0fx as long as the %d you set.\n",
-                            FROM_SCRATCH_MIN_EPOCHS,
-                            (double) FROM_SCRATCH_MIN_EPOCHS / Math.max(1, epochsRaisedFrom),
-                            epochsRaisedFrom));
-                }
-                msg.append("\nEdit the value yourself to keep it exactly as you set it "
-                        + "-- the floors only apply to values you have not changed.\n\n"
-                        + "Go back and adjust settings?");
-                if (Dialogs.showConfirmDialog("Settings raised for from-scratch training", msg.toString())) {
-                    return null; // Stay in dialog so the user can set it deliberately
-                }
-            }
 
             // Surface which small network the basic-mode Fast tier resolved to, so the user knows
             // what is being trained (the auto-pick is by channel count).
