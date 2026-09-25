@@ -333,6 +333,20 @@ try:
     else:
         logger.info("No model.onnx found; per-tile eval uses model.pt (PyTorch eager)")
 
+    # Spatial alignment the EXPORTED GRAPH needs, which is not the same as the
+    # divisor the PyTorch path reports. get_spatial_divisor() returns 1 for
+    # tiny-unet precisely because the module pads itself -- true in eager, false
+    # once traced. For TinyUNet the graph needs a multiple of 2**depth.
+    onnx_align = 1
+    if onnx_session is not None and model_type == "tiny-unet":
+        onnx_align = 1 << int(model_arch.get("depth", 4))
+        logger.info(
+            "ONNX input will be aligned to a multiple of %d (tiny-unet depth %s)",
+            onnx_align,
+            model_arch.get("depth", 4),
+        )
+    onnx_fallback_warned = False
+
     # Determine ignore index from config
     config_path = Path(data_path) / "config.json"
     ignore_index = 255
@@ -403,11 +417,52 @@ try:
             with torch.no_grad():
                 if onnx_session is not None:
                     # Production parity: same ONNX runtime as applying the model.
-                    onnx_out = onnx_session.run(
-                        None,
-                        {onnx_input_name: batch_images.detach().cpu().numpy()},
-                    )[0]
-                    logits = torch.from_numpy(onnx_out).to(device)
+                    #
+                    # The input must be aligned before it goes in. TinyUNet pads
+                    # to a multiple of 2**depth inside forward(), but that math
+                    # reads x.shape in Python, so the tracer bakes the pad as a
+                    # CONSTANT. model.onnx is exported at the bare tile size
+                    # (e.g. 256, already aligned -> pad baked as 0), while the
+                    # tiles on disk carry context padding (e.g. 358). Feeding
+                    # 358 to a graph that believes it needs no padding dies in
+                    # the first decoder concat:
+                    #
+                    #   Non concat axis dimensions must match:
+                    #   Axis 2 has mismatched dimensions of 89 and 88
+                    #
+                    # dynamic_axes cannot save this -- it marks the axes
+                    # dynamic but cannot un-bake a traced constant. Aligning
+                    # here makes the baked zero-pad correct, and we crop back.
+                    onnx_in = batch_images
+                    crop_h, crop_w = onnx_in.shape[-2:]
+                    if onnx_align > 1:
+                        pad_h = (onnx_align - crop_h % onnx_align) % onnx_align
+                        pad_w = (onnx_align - crop_w % onnx_align) % onnx_align
+                        if pad_h or pad_w:
+                            onnx_in = F.pad(
+                                onnx_in, (0, pad_w, 0, pad_h), mode="reflect"
+                            )
+                    try:
+                        onnx_out = onnx_session.run(
+                            None,
+                            {onnx_input_name: onnx_in.detach().cpu().numpy()},
+                        )[0]
+                        logits = torch.from_numpy(onnx_out).to(device)
+                        logits = logits[..., :crop_h, :crop_w]
+                    except Exception as onnx_err:
+                        # A broken ONNX run must not cost the user the whole
+                        # review. Fall back to the weights we already loaded,
+                        # once, and say so.
+                        if not onnx_fallback_warned:
+                            logger.warning(
+                                "ONNX evaluation failed (%s); falling back to "
+                                "model.pt for the remaining tiles. Per-tile "
+                                "maps may differ slightly from production.",
+                                onnx_err,
+                            )
+                            onnx_fallback_warned = True
+                        onnx_session = None
+                        logits = model(batch_images)
                 else:
                     logits = model(batch_images)
                 # Per-tile cross-entropy loss

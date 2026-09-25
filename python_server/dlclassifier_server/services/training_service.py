@@ -5057,7 +5057,21 @@ class TrainingService:
                 # contextInferencePad == inputPadding); plain models use tileSize.
                 # Round up to the encoder spatial divisor so the baked graph
                 # matches the post-pad_to_multiple tensor the inference service
-                # feeds. The dynamic model.onnx keeps dynamic H/W and is unaffected.
+                # feeds.
+                #
+                # NOTE: model.onnx is NOT size-agnostic just because its H/W
+                # axes are marked dynamic. TinyUNet pads to a multiple of
+                # 2**depth inside forward(), computing the amount from x.shape
+                # in Python, so the tracer bakes that pad as a CONSTANT chosen
+                # by THIS dummy input. Exported at an aligned input_size the
+                # constant is zero, and the graph then fails on any unaligned
+                # input with
+                #   "Non concat axis dimensions must match: Axis 2 has
+                #    mismatched dimensions of 89 and 88"
+                # in the first decoder concat. dynamic_axes marks the axes
+                # dynamic; it cannot un-bake a traced constant. Callers feeding
+                # model.onnx must align the input themselves -- see
+                # evaluate_tiles.py, which pads to 2**depth and crops back.
                 context_padding = int(input_config.get("context_padding", 0))
                 context_scale = int(architecture.get("context_scale", 1))
                 static_h, static_w = compute_static_onnx_hw(
