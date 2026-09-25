@@ -3,3 +3,6 @@
 # so check-doc-images.sh stops flagging them. Re-flags when NEW UI changes land
 # on top of the acked commit. Manage via: tools/check-doc-images.sh --ack <Image.png>
 # image	acked_commit	acked_date	note
+train-dialog-configure-classifier.png	a08682ebb8a2584ff0189ffef1f96de280204675	2026-09-25	Adds epochAdvisoryLabel under Epochs, hidden unless a from-scratch model is set below the recommended epoch count. Not visible in these figures.
+train-dialog-tiles-resolution-preview.png	a08682ebb8a2584ff0189ffef1f96de280204675	2026-09-25	Adds epochAdvisoryLabel under Epochs, hidden unless a from-scratch model is set below the recommended epoch count. Not visible in these figures.
+train-dialog-transfer-learning-layers.png	a08682ebb8a2584ff0189ffef1f96de280204675	2026-09-25	Adds epochAdvisoryLabel under Epochs, hidden unless a from-scratch model is set below the recommended epoch count. Not visible in these figures.
