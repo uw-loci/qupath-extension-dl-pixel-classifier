@@ -6863,16 +6863,17 @@ public class TrainingDialog {
                 showTemporaryNotification("Fast preset: training " + resolved + ".");
             }
 
-            // If the from-scratch floors raised epochs/patience above the spinner
-            // values, tell the user (so the change is visible, not silent).
-            int spinnerPatience = earlyStoppingPatienceSpinner != null ? earlyStoppingPatienceSpinner.getValue() : 15;
-            if (trainingConfig.getEpochs() > epochsSpinner.getValue()
-                    || trainingConfig.getEarlyStoppingPatience() > spinnerPatience) {
-                showTemporaryNotification(String.format(
-                        "From-scratch training: raised epochs to %d and early-stop patience to %d "
-                                + "(set them in advanced settings to override).",
-                        trainingConfig.getEpochs(), trainingConfig.getEarlyStoppingPatience()));
-            }
+            // The from-scratch floors are reported by the confirmation above,
+            // which knows exactly which values it raised and from what.
+            //
+            // A notification used to be shown here as well. It fired when
+            // EITHER epochs or patience had been raised, then named both
+            // effective values as though both had changed -- so a run with
+            // epochs already at 120 (above the 100 floor, untouched) and
+            // patience at the default 15 (below the 20 floor, raised)
+            // announced "raised epochs to 120", which was simply untrue. It
+            // also fired when early stopping was switched off, where raising
+            // patience changes nothing at all.
 
             // Run pairwise interaction checks against the built config.
             // BLOCKING watchers (e.g. overlap + no-per-image-split-roles)
