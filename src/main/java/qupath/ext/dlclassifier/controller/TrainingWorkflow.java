@@ -1510,6 +1510,14 @@ public class TrainingWorkflow {
 
             final AtomicInteger lastLoggedEpoch = new AtomicInteger(-1);
             final AtomicReference<Map<String, Double>> lastPerClassIoU = new AtomicReference<>(Map.of());
+            // Best per-class IoU seen across the whole run. The "never learned"
+            // hint used the LAST epoch, which says "never learned" about a class
+            // that reached 0.840 earlier and only collapsed at the end -- while
+            // the model actually handed to the user is the BEST epoch, where
+            // that class was fine. A run can also seesaw between collapsing onto
+            // one class and collapsing onto the other, so the final epoch is a
+            // coin flip rather than a summary.
+            final Map<String, Double> bestPerClassIoU = new LinkedHashMap<>();
             final AtomicReference<Double> lastTrainLoss = new AtomicReference<>(0.0);
             final AtomicReference<Double> lastValLoss = new AtomicReference<>(0.0);
 
@@ -1686,6 +1694,13 @@ public class TrainingWorkflow {
                                 // Store latest metrics for post-training diagnostic hints
                                 if (trainingProgress.perClassIoU() != null) {
                                     lastPerClassIoU.set(trainingProgress.perClassIoU());
+                                    synchronized (bestPerClassIoU) {
+                                        trainingProgress.perClassIoU().forEach((name, iou) -> {
+                                            if (iou == null) return;
+                                            Double prev = bestPerClassIoU.get(name);
+                                            if (prev == null || iou > prev) bestPerClassIoU.put(name, iou);
+                                        });
+                                    }
                                 }
                                 lastTrainLoss.set(trainingProgress.loss());
                                 lastValLoss.set(trainingProgress.valLoss());
@@ -1981,12 +1996,40 @@ public class TrainingWorkflow {
             if (tl > 0 && vl > 0 && vl > tl * 2.0) {
                 hints.add("Possible overfitting. Try: more augmentation, smaller model, more data.");
             }
+            // "Never learned" must mean never, across the whole run -- judged on
+            // the best IoU each class reached, not the last epoch's. A class that
+            // peaked at 0.84 and collapsed by the final epoch is not a class with
+            // bad annotations, and saying so sends the user to fix the wrong
+            // thing. The two cases get different advice.
             boolean anyNeverLearned = false;
-            for (var iouEntry : lastPerClassIoU.get().entrySet()) {
-                if (iouEntry.getValue() != null && iouEntry.getValue() == 0.0) {
+            Map<String, Double> bestIoUSnapshot;
+            synchronized (bestPerClassIoU) {
+                bestIoUSnapshot = new LinkedHashMap<>(bestPerClassIoU);
+            }
+            for (var iouEntry : bestIoUSnapshot.entrySet()) {
+                Double best = iouEntry.getValue();
+                if (best != null && best <= 0.0) {
                     anyNeverLearned = true;
                     hints.add(String.format(
-                            "Class '%s' was never learned. Check annotation quality/quantity.", iouEntry.getKey()));
+                            "Class '%s' was never learned -- its IoU stayed at 0 for every epoch. "
+                                    + "Check annotation quality/quantity.",
+                            iouEntry.getKey()));
+                }
+            }
+            // Collapsed at the end but fine earlier: the saved checkpoint is the
+            // best epoch, so the model is usable, and the run wanted more time
+            // or less regularisation rather than better annotations.
+            for (var iouEntry : lastPerClassIoU.get().entrySet()) {
+                Double last = iouEntry.getValue();
+                Double best = bestIoUSnapshot.get(iouEntry.getKey());
+                if (last != null && last <= 0.0 && best != null && best > 0.1) {
+                    hints.add(String.format(
+                            "Class '%s' ended at 0 IoU but reached %.3f earlier, so the run collapsed onto "
+                                    + "another class late. The saved model is the best epoch, not the last, so it "
+                                    + "is not the collapsed one. If this repeats, the run is oscillating: give it "
+                                    + "more epochs so the scheduler can cut the learning rate, turn early stopping "
+                                    + "on with 'Mean IoU' as the metric, or lower the weight decay.",
+                            iouEntry.getKey(), best));
                 }
             }
             // Fine structures are easily lost at coarse downsample; nudge toward

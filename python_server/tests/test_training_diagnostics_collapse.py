@@ -116,6 +116,51 @@ def test_reports_a_late_collapse():
     assert any("everywhere" in w for w in warnings)
 
 
+def test_a_collapse_onto_the_other_class_is_reported_separately():
+    """The observed TinyClaude run, 2026-09-25.
+
+    Classes were near-balanced (Ignore* 44.8%, Tissue 55.2%). It collapsed
+    onto Ignore* for epochs 2-16, escaped to mIoU 0.847 at epoch 18, then
+    collapsed onto Tissue by epoch 28. Keying warn-once on the check alone
+    reported the first and stayed silent through the second -- and the second
+    is the state the run ends in.
+    """
+    diag = TrainingDiagnostics(classes=CLASSES)
+
+    onto_ignore = [_collapsed_epoch(prior=0.448, onto="Ignore*") for _ in range(10)]
+    first = diag.run_checks(onto_ignore, min_epochs=10)
+    assert any("predicting 'Ignore*' everywhere" in w for w in first)
+
+    history = (
+        onto_ignore
+        + [_healthy_epoch() for _ in range(7)]
+        + [_collapsed_epoch(prior=0.552, onto="Tissue") for _ in range(3)]
+    )
+    second = diag.run_checks(history, min_epochs=10)
+
+    assert any(
+        "predicting 'Tissue' everywhere" in w for w in second
+    ), "the inverted collapse is a new event, not a repeat of the first"
+
+
+def test_near_balanced_collapse_that_a_threshold_check_misses():
+    """Ignore* IoU 0.448 is BELOW 0.5.
+
+    _check_majority_collapse gates on the dominant class exceeding 0.5 IoU, so
+    it never fires on this run. The identity does, because it compares accuracy
+    against that class's IoU rather than against a constant.
+    """
+    diag = TrainingDiagnostics(classes=CLASSES)
+    history = [_collapsed_epoch(prior=0.448, onto="Ignore*") for _ in range(10)]
+
+    warnings = diag.run_checks(history, min_epochs=10)
+
+    assert any("everywhere" in w for w in warnings)
+    assert not any(
+        "Majority-class collapse" in w for w in warnings
+    ), "documents that the threshold check is silent here -- the identity carries this case"
+
+
 def test_warns_once_not_every_ten_epochs():
     diag = TrainingDiagnostics(classes=CLASSES)
     history = [_collapsed_epoch() for _ in range(10)]

@@ -217,7 +217,12 @@ class TrainingDiagnostics:
             f"learning rate, and whether the annotations for "
             f"{', '.join(missing)} are actually present in the training split."
         )
-        w = self._warn_once("single_class_prediction", msg)
+        # Keyed by the collapsed-onto class, not by the check. A run can escape
+        # one collapse and fall into its mirror image: observed going Ignore*
+        # (epochs 2-16) -> healthy (18) -> Tissue (28-30) on near-balanced
+        # classes. A single key would report the first and stay silent through
+        # the second, which is the one the user is left holding.
+        w = self._warn_once("single_class_prediction_%s" % predicted, msg)
         if w:
             warnings.append(w)
         return warnings
