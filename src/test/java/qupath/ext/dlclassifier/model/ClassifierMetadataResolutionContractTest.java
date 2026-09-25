@@ -53,6 +53,53 @@ class ClassifierMetadataResolutionContractTest {
     }
 
     @Test
+    @DisplayName("the effective pixel size is emitted as native x downsample")
+    void effectivePixelSizeIsEmitted() {
+        // training_pixel_size_um is the SOURCE image's pixel size; the model
+        // trained on tiles read at native x downsample. An external consumer
+        // resampling to the native value is too fine by exactly the downsample
+        // factor, silently. The explicit field spares every reader that
+        // arithmetic and the guess about whether a file predates it.
+        ClassifierMetadata metadata =
+                minimalBuilder().trainingPixelSizeMicrons(0.499).downsample(8.0).build();
+
+        Map<String, Object> map = metadata.toMap();
+
+        assertEquals(0.499, (Double) map.get("training_pixel_size_um"), 1e-9, "native size unchanged");
+        assertEquals(3.992, (Double) map.get("training_effective_pixel_size_um"), 1e-9, "what the model actually saw");
+        assertEquals(3.992, metadata.getTrainingEffectivePixelSizeMicrons(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("at downsample 1 the two pixel sizes agree")
+    void effectiveEqualsNativeAtFullResolution() {
+        Map<String, Object> map = minimalBuilder()
+                .trainingPixelSizeMicrons(0.25)
+                .downsample(1.0)
+                .build()
+                .toMap();
+
+        assertEquals(
+                (Double) map.get("training_pixel_size_um"),
+                (Double) map.get("training_effective_pixel_size_um"),
+                1e-12);
+    }
+
+    @Test
+    @DisplayName("no native size means no effective size either")
+    void effectiveIsOmittedWhenNativeIsUnknown() {
+        // A training set whose images had differing pixel sizes records no
+        // native size, and there genuinely is no single training resolution:
+        // each image was read at its OWN native times the downsample, so the
+        // model saw a mixture. Inventing one here would be a fabricated
+        // measurement.
+        Map<String, Object> map = minimalBuilder().downsample(4.0).build().toMap();
+
+        assertFalse(map.containsKey("training_effective_pixel_size_um"));
+        assertTrue(Double.isNaN(minimalBuilder().downsample(4.0).build().getTrainingEffectivePixelSizeMicrons()));
+    }
+
+    @Test
     @DisplayName("an unset contract is omitted rather than written as NaN/0")
     void unsetContractIsOmitted() {
         // Absent must stay absent. Writing NaN or 0 would look like a real

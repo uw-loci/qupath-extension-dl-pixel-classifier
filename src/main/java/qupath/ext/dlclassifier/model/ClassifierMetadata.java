@@ -82,6 +82,13 @@ public class ClassifierMetadata {
     // Resolution contract (may be NaN/0 for older models trained before
     // these fields were saved). Used at inference to detect cross-batch
     // pixel-size mismatch with the source image and warn the user.
+    //
+    // NOTE trainingPixelSizeMicrons is the NATIVE pixel size of the source
+    // images, NOT the resolution the model trained at. Tiles are read at
+    // native * downsample, so a model trained at downsample 8 on a 0.499
+    // um/px slide saw 3.992 um/px. Use getTrainingEffectivePixelSizeMicrons()
+    // for the resolution the model actually consumed; that is the one an
+    // external consumer must resample to.
     private final double trainingPixelSizeMicrons;
     private final int trainingTileSizePx;
 
@@ -152,12 +159,39 @@ public class ClassifierMetadata {
     }
 
     /**
-     * Physical pixel size of the training data in microns per pixel,
-     * or NaN when the model was trained on uncalibrated images / saved
-     * before this contract was added.
+     * Native pixel size of the source images in microns per pixel, or NaN
+     * when the model was trained on uncalibrated images, on images of
+     * differing pixel size, or was saved before this contract was added.
+     * <p>
+     * This is <b>not</b> the resolution the model trained at. Training tiles
+     * are read with a downsample relative to each server's full resolution,
+     * so the model consumed {@code native * downsample}. See
+     * {@link #getTrainingEffectivePixelSizeMicrons()}.
+     *
+     * @return native microns per pixel, or NaN
      */
     public double getTrainingPixelSizeMicrons() {
         return trainingPixelSizeMicrons;
+    }
+
+    /**
+     * The pixel size the model actually trained at, in microns per pixel:
+     * {@link #getTrainingPixelSizeMicrons()} times {@link #getDownsample()}.
+     * <p>
+     * This is the value an external consumer must resample its input to.
+     * QuPath does not need it, because {@code DLPixelClassifier} scales the
+     * image calibration by the downsample itself and so requests tiles at
+     * this resolution already.
+     *
+     * @return effective microns per pixel, or NaN when the native size is
+     *     unknown (uncalibrated images, or images of differing pixel size)
+     */
+    public double getTrainingEffectivePixelSizeMicrons() {
+        if (Double.isNaN(trainingPixelSizeMicrons) || trainingPixelSizeMicrons <= 0) {
+            return Double.NaN;
+        }
+        double ds = downsample > 0 ? downsample : 1.0;
+        return trainingPixelSizeMicrons * ds;
     }
 
     /**
@@ -397,6 +431,15 @@ public class ClassifierMetadata {
         // and the resample in inference_preprocess.
         if (!Double.isNaN(trainingPixelSizeMicrons) && trainingPixelSizeMicrons > 0) {
             map.put("training_pixel_size_um", trainingPixelSizeMicrons);
+            // The resolution the model actually consumed. Written explicitly
+            // because training_pixel_size_um is the SOURCE image's pixel size
+            // and every external consumer needs native * downsample instead.
+            // Readers of older models can reconstruct this as
+            // training_pixel_size_um * architecture.downsample, which has
+            // always been recorded correctly -- but an explicit field means a
+            // reader never has to know that, and never has to guess whether a
+            // given file predates this change.
+            map.put("training_effective_pixel_size_um", getTrainingEffectivePixelSizeMicrons());
         }
         if (trainingTileSizePx > 0) {
             map.put("training_tile_size_px", trainingTileSizePx);

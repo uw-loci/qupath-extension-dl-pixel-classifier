@@ -1,11 +1,19 @@
 """Portable inference preprocessing helpers.
 
-This module is the **public inference-preprocessing API** for models
-trained by the DL Pixel Classifier extension. Both QuPath's inference
-path and any standalone Python inference code (e.g. an external
-fly-wing pipeline that loads ``model.pt`` directly) call into the same
-functions here, so the preprocessing applied to model inputs is
-identical in both environments.
+This module is the **public inference-preprocessing API** for standalone
+Python code that loads ``model.pt`` directly (e.g. an external fly-wing
+pipeline).
+
+It is NOT used by QuPath. QuPath's inference path prepares tiles in Java
+(``DLPixelClassifier`` scales the image calibration by the model's
+downsample and reads tiles through QuPath's own server) and never imports
+this module. Nothing inside this repository calls it, which is worth
+knowing before trusting it: a scale error of up to 8x lived here
+undetected because no code path in the project exercised it. Changes here
+need their own tests -- see ``tests/test_inference_preprocess_resolution.py``.
+
+The goal is still that preprocessing match training exactly; the two
+implementations simply have to be kept in agreement by hand.
 
 Whatever the model was trained against is the contract; the contract is
 encoded in ``metadata.json`` next to ``model.pt``. This module reads that
@@ -39,6 +47,7 @@ that case, ``preprocess_for_inference`` skips the missing steps and logs
 a warning -- predictions are still computed but cross-batch correctness
 cannot be guaranteed.
 """
+
 import json
 import logging
 from pathlib import Path
@@ -75,13 +84,15 @@ def load_metadata(model_dir) -> Dict[str, Any]:
         raise FileNotFoundError(
             "metadata.json not found in %s -- this directory does not "
             "contain a model produced by the DL Pixel Classifier "
-            "extension." % model_dir)
+            "extension." % model_dir
+        )
     try:
         with open(path, "r", encoding="utf-8") as fh:
             return json.load(fh)
     except json.JSONDecodeError as e:
-        raise ValueError("metadata.json in %s is not valid JSON: %s"
-                         % (model_dir, e)) from e
+        raise ValueError(
+            "metadata.json in %s is not valid JSON: %s" % (model_dir, e)
+        ) from e
 
 
 def select_and_order_channels(
@@ -112,13 +123,12 @@ def select_and_order_channels(
     if any(c < 0 or c >= n_ch for c in selected):
         raise ValueError(
             "metadata selected_channels=%s but image has only %d "
-            "channels" % (selected, n_ch))
+            "channels" % (selected, n_ch)
+        )
     return image[..., selected]
 
 
-def cast_and_rescale(
-    image: np.ndarray, metadata: Dict[str, Any]
-) -> np.ndarray:
+def cast_and_rescale(image: np.ndarray, metadata: Dict[str, Any]) -> np.ndarray:
     """Cast to float32 and rescale to the training value range.
 
     Uses ``input_config.bit_depth`` from metadata if present to compute
@@ -146,6 +156,70 @@ def cast_and_rescale(
     return arr.astype(np.float32, copy=False)
 
 
+def training_pixel_size(metadata: Dict[str, Any]) -> Optional[float]:
+    """The pixel size the model actually trained at, in microns.
+
+    ``metadata['training_pixel_size_um']`` is the NATIVE pixel size of the
+    source images, not the resolution the model consumed. Training tiles are
+    read with a downsample relative to each server's full resolution, so the
+    model saw ``native * downsample``. A model trained at downsample 8 on a
+    0.499 um/px slide saw 3.992 um/px.
+
+    Resampling to the native value instead leaves the input too fine by
+    exactly the downsample factor, which is silent: the model runs, and the
+    structures in view are simply the wrong size for it.
+
+    Prefers the explicit ``training_effective_pixel_size_um`` field. Models
+    written before that field existed are handled by the fallback, because
+    ``architecture.downsample`` has always been recorded correctly -- so no
+    model needs retraining for this.
+
+    Args:
+        metadata: Output of :func:`load_metadata`.
+
+    Returns:
+        Effective microns per pixel, or None when it cannot be determined
+        (uncalibrated training images, or a training set whose images had
+        differing pixel sizes -- in which case there is no single training
+        resolution and the extension records none).
+    """
+    effective = metadata.get("training_effective_pixel_size_um")
+    if effective is not None:
+        try:
+            value = float(effective)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0:
+            return value
+
+    native = metadata.get("training_pixel_size_um")
+    if native is None:
+        return None
+    try:
+        native_value = float(native)
+    except (TypeError, ValueError):
+        return None
+    if native_value <= 0 or native_value != native_value:  # NaN check
+        return None
+
+    architecture = metadata.get("architecture") or {}
+    try:
+        downsample = float(architecture.get("downsample", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        downsample = 1.0
+    if downsample <= 0:
+        downsample = 1.0
+    if downsample != 1.0:
+        logger.debug(
+            "metadata lacks training_effective_pixel_size_um -- deriving "
+            "%.6g um/px from native %.6g x downsample %.6g",
+            native_value * downsample,
+            native_value,
+            downsample,
+        )
+    return native_value * downsample
+
+
 def resample_to_training_resolution(
     image: np.ndarray,
     source_um_per_px: Optional[float],
@@ -155,10 +229,10 @@ def resample_to_training_resolution(
 ) -> Tuple[np.ndarray, float]:
     """Resample ``image`` to the model's training pixel size.
 
-    The decision is driven entirely by metadata: training pixel size is
-    read from ``metadata['training_pixel_size_um']``. If the metadata
-    lacks that field (older models), or the source pixel size is
-    unknown, this is a no-op.
+    The decision is driven entirely by metadata, via
+    :func:`training_pixel_size` -- which is ``native * downsample``, NOT the
+    raw ``training_pixel_size_um`` field. If the training resolution cannot be
+    determined, or the source pixel size is unknown, this is a no-op.
 
     Anti-aliasing on downsample, bilinear on upsample. Identity within
     a 1% tolerance on the ratio.
@@ -182,14 +256,12 @@ def resample_to_training_resolution(
     if not resample:
         return image, 1.0
 
-    train_px = metadata.get("training_pixel_size_um")
+    train_px = training_pixel_size(metadata)
     if train_px is None or train_px <= 0:
-        logger.debug(
-            "metadata lacks training_pixel_size_um -- skipping resample")
+        logger.debug("training resolution unknown -- skipping resample")
         return image, 1.0
     if source_um_per_px is None:
-        logger.debug(
-            "source_um_per_px not provided -- skipping resample")
+        logger.debug("source_um_per_px not provided -- skipping resample")
         return image, 1.0
     try:
         source_px = float(source_um_per_px)
@@ -215,14 +287,16 @@ def resample_to_training_resolution(
         raise ImportError(
             "skimage is required for pixel-size resampling. "
             "Either install scikit-image, or pass resample=False to "
-            "skip this step.") from e
+            "skip this step."
+        ) from e
 
     if image.ndim == 2:
         h, w = image.shape
         new_h = max(1, int(round(h * ratio)))
         new_w = max(1, int(round(w * ratio)))
         out = _sk_resize(
-            image, (new_h, new_w),
+            image,
+            (new_h, new_w),
             order=1,  # bilinear
             mode="reflect",
             anti_aliasing=(ratio < 1.0),
@@ -233,26 +307,28 @@ def resample_to_training_resolution(
         new_h = max(1, int(round(h * ratio)))
         new_w = max(1, int(round(w * ratio)))
         out = _sk_resize(
-            image, (new_h, new_w, c),
+            image,
+            (new_h, new_w, c),
             order=1,
             mode="reflect",
             anti_aliasing=(ratio < 1.0),
             preserve_range=True,
         ).astype(image.dtype, copy=False)
     else:
-        raise ValueError(
-            "image must be HW or HWC; got shape %s" % (image.shape,))
+        raise ValueError("image must be HW or HWC; got shape %s" % (image.shape,))
 
     logger.info(
-        "Resampled %s -> %s (source=%.4f um/px, training=%.4f um/px, "
-        "ratio=%.4f)",
-        image.shape, out.shape, source_px, train_px, ratio)
+        "Resampled %s -> %s (source=%.4f um/px, training=%.4f um/px, " "ratio=%.4f)",
+        image.shape,
+        out.shape,
+        source_px,
+        train_px,
+        ratio,
+    )
     return out, ratio
 
 
-def normalize_for_inference(
-    image: np.ndarray, metadata: Dict[str, Any]
-) -> np.ndarray:
+def normalize_for_inference(image: np.ndarray, metadata: Dict[str, Any]) -> np.ndarray:
     """Apply the model's saved per-channel normalization.
 
     Delegates to the shared
@@ -301,16 +377,45 @@ def preprocess_for_inference(
         float32 array, channel-selected, value-rescaled,
         pixel-size-corrected, and normalized.
     """
+    architecture = metadata.get("architecture") or {}
+    try:
+        context_scale = float(architecture.get("context_scale", 1) or 1)
+    except (TypeError, ValueError):
+        context_scale = 1.0
+    if context_scale > 1:
+        # A context-scale model takes a detail tile AND a wider, downsampled
+        # context tile concatenated on the channel axis, so it expects
+        # 2 * num_channels inputs. Nothing here builds the second tile, and
+        # returning the detail tile alone fails later as a channel-count
+        # mismatch inside the model, which reads as a broken model rather
+        # than an unsupported preprocessing path. Say so here instead.
+        raise NotImplementedError(
+            "This model was trained with context_scale=%g, so it expects a "
+            "detail tile and a wider downsampled context tile concatenated "
+            "on the channel axis (%s input channels, not %s). "
+            "preprocess_for_inference does not build the context tile. "
+            "Construct both tiles yourself -- the geometry is documented in "
+            "docs/CONTEXT_AND_DOWNSAMPLE_DESIGN.md -- and run the per-step "
+            "functions on each."
+            % (
+                context_scale,
+                architecture.get("effective_input_channels", "2x"),
+                architecture.get("input_channels", "?"),
+            )
+        )
+
     img = select_and_order_channels(image, metadata)
     img = cast_and_rescale(img, metadata)
     img, _ = resample_to_training_resolution(
-        img, source_um_per_px, metadata, resample=resample)
+        img, source_um_per_px, metadata, resample=resample
+    )
     img = normalize_for_inference(img, metadata)
     return img
 
 
 __all__ = [
     "load_metadata",
+    "training_pixel_size",
     "select_and_order_channels",
     "cast_and_rescale",
     "resample_to_training_resolution",

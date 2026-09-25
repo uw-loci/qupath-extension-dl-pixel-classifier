@@ -931,6 +931,16 @@ public class DLPixelClassifier implements PixelClassifier {
         // resample_to_training_resolution. Two-times-or-more mismatch
         // is the rough threshold past which scale jitter in training
         // augmentation can no longer compensate.
+        //
+        // BOTH SIDES OF THIS RATIO ARE NATIVE, DELIBERATELY. sourcePx is the
+        // inference image's own pixel size and trainPx is the training
+        // image's; the downsample below is applied to the inference image
+        // just as it was to the training tiles, so the ratio of effective
+        // resolutions equals the ratio of native ones. Do not "fix" this to
+        // use getTrainingEffectivePixelSizeMicrons() without also scaling
+        // sourcePx by the downsample -- comparing an effective training size
+        // against a native source size would report a spurious mismatch of
+        // exactly the downsample factor on every correctly-matched image.
         try {
             double trainPx = metadata.getTrainingPixelSizeMicrons();
             double sourcePx = cal.getAveragedPixelSizeMicrons();
