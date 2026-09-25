@@ -2138,6 +2138,109 @@ class TrainingService:
             pin_memory=dl_workers > 0,
         )
 
+        # ---- Optimizer-step budget -------------------------------------
+        # How many times the optimizer actually moves. This is arithmetic,
+        # not a heuristic about any particular dataset: a batch_size at or
+        # above len(train_dataset) makes the loader yield a single batch, so
+        # an epoch buys one step and the epoch count stops measuring the
+        # training budget at all. Such a run still looks healthy -- the loss
+        # curve falls, the progress bar advances, the log prints an epoch a
+        # second -- while the model barely moves off its initialization.
+        # Report the numbers on every run so they land in the log; warn only
+        # where the arithmetic makes the epoch setting meaningless.
+        #
+        # This is computed from the loader rather than the exported patch
+        # count because the loader is what actually trains. Progressive
+        # resizing and the bounded in-memory cache can both shrink the
+        # dataset further after this point, so treat these counts as an
+        # upper bound on the steps a run will take.
+        _accum_steps = max(
+            1, int(training_params.get("gradient_accumulation_steps", 1) or 1)
+        )
+        _batches_per_epoch = len(train_loader)
+        # training_service steps the optimizer every accumulation_steps
+        # batches AND on the last batch of the epoch, so the tail always
+        # flushes -- round up rather than down.
+        _steps_per_epoch = -(-_batches_per_epoch // _accum_steps)
+        _planned_epochs = int(training_params.get("epochs", 0) or 0)
+        _total_steps = _steps_per_epoch * _planned_epochs
+        logger.info(
+            "Optimizer-step budget: %d train patches / batch %d = %d batch(es) "
+            "per epoch; accumulation %d -> %d optimizer step(s) per epoch, "
+            "%d over %d epochs. Validation patches: %d.",
+            len(train_dataset),
+            batch_size,
+            _batches_per_epoch,
+            _accum_steps,
+            _steps_per_epoch,
+            _total_steps,
+            _planned_epochs,
+            len(val_dataset),
+        )
+        _budget = {
+            "train_patches": str(len(train_dataset)),
+            "val_patches": str(len(val_dataset)),
+            "batch_size": str(batch_size),
+            "batches_per_epoch": str(_batches_per_epoch),
+            "accumulation_steps": str(_accum_steps),
+            "steps_per_epoch": str(_steps_per_epoch),
+            "total_steps": str(_total_steps),
+            "epochs": str(_planned_epochs),
+        }
+        if _steps_per_epoch < 2:
+            _budget["severity"] = "critical"
+            _budget["message"] = (
+                "Batch size %d is not smaller than the %d training patches, so "
+                "every epoch performs %d optimizer step and the whole run gets "
+                "%d. Raising the epoch count will not compensate. Reduce the "
+                "batch size, reduce gradient accumulation, or export more "
+                "patches (more annotations, or a lower downsample)."
+                % (batch_size, len(train_dataset), _steps_per_epoch, _total_steps)
+            )
+        elif _steps_per_epoch < 5:
+            _budget["severity"] = "warning"
+            _budget["message"] = (
+                "Only %d optimizer steps per epoch (%d train patches, batch %d, "
+                "accumulation %d), %d over the run. Each epoch is a very coarse "
+                "unit here, so early stopping and the learning-rate schedule "
+                "both act on very little evidence."
+                % (
+                    _steps_per_epoch,
+                    len(train_dataset),
+                    batch_size,
+                    _accum_steps,
+                    _total_steps,
+                )
+            )
+        else:
+            _budget["severity"] = "info"
+        if _budget.get("message"):
+            logger.warning("TRAINING DIAGNOSTIC: %s", _budget["message"])
+
+        # Validation granularity. With N validation patches a single patch is
+        # 1/N of the reported metric, which sets the floor on how finely
+        # mean IoU can move. Below ~20 patches that floor exceeds 5%, so
+        # epoch-to-epoch swings are mostly the measurement, and picking a
+        # "best" epoch by argmax over them selects noise as much as skill.
+        _n_val = len(val_dataset)
+        if 0 < _n_val < 20:
+            _budget["val_message"] = (
+                "Validation set is %d patches, so one patch is about %.0f%% of "
+                "the reported metric. Epoch-to-epoch mean IoU will swing for "
+                "that reason alone, and the saved best epoch may be a lucky "
+                "one rather than the best model. Treat the reported best score "
+                "as optimistic, and raise the validation split or annotate "
+                "more area if you need to compare runs." % (_n_val, 100.0 / _n_val)
+            )
+            logger.warning("TRAINING DIAGNOSTIC: %s", _budget["val_message"])
+        elif _n_val == 0:
+            _budget["val_message"] = (
+                "Validation set is empty. Best-epoch selection and early "
+                "stopping have nothing to measure."
+            )
+            logger.warning("TRAINING DIAGNOSTIC: %s", _budget["val_message"])
+        _report_setup("step_budget", _budget)
+
         # Compute class distribution from training masks for diagnostic logging.
         # This helps diagnose class imbalance issues when reviewing training logs.
         try:
@@ -3073,7 +3176,9 @@ class TrainingService:
                 tiles_per_batch = batch_size
                 # Prefer the PADDED tile the exporter actually wrote. Java sends
                 # it; fall back to input_size for older callers.
-                padded_tile = int(training_params.get("training_tile_padded_px", 0) or 0)
+                padded_tile = int(
+                    training_params.get("training_tile_padded_px", 0) or 0
+                )
                 tile_pixels = architecture.get("input_size", [512, 512])
                 if padded_tile > 0:
                     tile_area = padded_tile * padded_tile
@@ -3694,10 +3799,21 @@ class TrainingService:
                 }
             )
 
-            # Run training diagnostics periodically to detect common issues
+            # Run training diagnostics periodically to detect common issues.
+            # The return value is what the user sees: these warnings used to
+            # go only to the Python logger, so a run could sit collapsed for
+            # 80 epochs with a progress dialog that looked healthy. Push each
+            # one through the setup channel so it reaches the training log in
+            # QuPath at the epoch it was detected. Warnings are issued once
+            # per condition (TrainingDiagnostics._warn_once), so this does not
+            # repeat every ten epochs.
             _hist_len = len(training_history)
-            if _hist_len >= 15 and _hist_len % 10 == 0:
-                _diagnostics.run_checks(training_history)
+            if _hist_len >= 10 and _hist_len % 10 == 0:
+                for _w in _diagnostics.run_checks(training_history, min_epochs=10):
+                    _report_setup(
+                        "diagnostic_warning",
+                        {"at_epoch": str(_hist_len), "message": _w},
+                    )
 
             # Log with per-class breakdown
             # Use scientific notation for very small train_loss to avoid
@@ -4046,9 +4162,18 @@ class TrainingService:
         # Run all diagnostic checks at completion
         completion_warnings = _diagnostics.run_all_checks(training_history)
         if completion_warnings:
+            # The count alone used to be all that was emitted here, so the log
+            # announced "3 warnings" and never said what they were. Each
+            # message was already logged by _warn_once when it fired; report
+            # them so they reach the QuPath training log too.
             logger.info(
                 "=== Training Diagnostics (%d warnings) ===", len(completion_warnings)
             )
+            for _w in completion_warnings:
+                _report_setup(
+                    "diagnostic_warning",
+                    {"at_epoch": str(len(training_history)), "message": _w},
+                )
 
         # Save checkpoint for potential "continue training" (before restoring best weights).
         # This preserves the last-epoch model/optimizer/scheduler state for seamless resume.

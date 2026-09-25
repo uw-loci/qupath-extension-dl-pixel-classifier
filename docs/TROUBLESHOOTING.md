@@ -299,6 +299,71 @@ Quick checklist:
 - [ ] Appropriate backbone for dataset size
 - [ ] Augmentation enabled (at least flips and rotation)
 
+### The model predicts one class everywhere
+
+**Symptom:** One class sits at exactly 0.000 IoU epoch after epoch while accuracy holds steady
+at a plausible-looking number. Training loss keeps falling the whole time, so the run looks
+healthy.
+
+**Cause: the model has collapsed onto the majority class.** It answers with a single class for
+every pixel and gets more confident about that one answer. The accuracy is not a sign of partial
+success -- it is that class's share of the labelled pixels, which the model scores by predicting
+it everywhere. Watch the per-class losses: the collapsed-onto class falls while the missing class
+*rises*. That divergence is the signature, and it distinguishes a collapse from a model that is
+simply weak on one class.
+
+Training reports this itself. From epoch 10 the log prints
+
+```
+*** Diagnostic (epoch 10) ***
+  Model is predicting 'Ignore*' everywhere: the last 10 epochs had every other class
+  (Tissue) at zero IoU with accuracy equal to 'Ignore*' IoU (0.586), ...
+```
+
+Runs do sometimes escape on their own, occasionally after a hundred epochs, so the warning is not
+a verdict. If it persists, work through these in order:
+
+1. **Check the step budget printed at startup.** The line reads `Step budget: 64 train / 16 val
+   patches, batch 20, accumulation 1 -> 4 optimizer step(s) per epoch, 600 over 150 epochs`. Too
+   few steps per epoch and the model never moves far enough to break out of the collapse,
+   whatever else is set. See the next section.
+2. **Turn on hard-pixel mining (OHEM)** if it is off. OHEM concentrates the loss on the hardest
+   pixels, and in a collapsed model the hardest pixels are exactly the ones being missed.
+3. **Raise the class weight** on the missing class.
+4. **Lower the learning rate.** A rate that is too high for the model can drive it into the
+   constant-output solution early and keep it there.
+5. **Confirm the class is actually in the training split.** A class whose annotations all landed
+   in validation cannot be learned at all; see the section below on inconsistent per-class IoU.
+
+### "Batch size is not smaller than the training patches"
+
+**Symptom:** A confirmation dialog after export says the run will perform one optimizer step per
+epoch, or the training log shows `*** STEP BUDGET ***`.
+
+**Cause: arithmetic, not tuning.** The data loader splits the training patches into batches of
+the configured size. When the batch size is at or above the patch count there is exactly one
+batch, so each epoch produces a single gradient update. A 150-epoch run then performs 150
+updates in total, which is far too few for any model, and no amount of extra epochs changes it.
+
+Gradient accumulation multiplies the effect: accumulating 4 batches when there are only 4 turns
+four steps into one.
+
+**Fixes, in order of directness:**
+
+1. **Lower the batch size.** This is the whole fix in most cases.
+2. **Lower gradient accumulation** if it is above 1.
+3. **Produce more patches** -- annotate more area, lower the downsample, use a smaller tile size,
+   or increase tile overlap. Each of these raises the patch count for the same annotations.
+
+The dialog lets you continue anyway, because a deliberately tiny run is a legitimate thing to do
+while checking that a pipeline works end to end. It is not a way to train a model.
+
+> The same block reports the validation patch count. Below about 20 validation patches, a single
+> patch is more than 5% of the reported mean IoU, so the metric swings between epochs for
+> measurement reasons alone. With early stopping off, the "best epoch" is then chosen by argmax
+> over that noise, and the saved score is optimistic. Raise the validation split or annotate more
+> area before comparing runs against each other.
+
 ### One class has wildly inconsistent IoU or loss across epochs
 
 **Symptom:** A class oscillates between good IoU (e.g., 0.85) and terrible IoU (0.00 or near-zero) from one epoch to the next, while other classes are stable. The per-class loss for that class may spike to a suspiciously consistent high value on bad epochs.

@@ -75,9 +75,14 @@ class TrainingDiagnostics:
             return []
 
         warnings = []
+        warnings.extend(self._check_single_class_prediction(history))
         warnings.extend(self._check_val_outlier(history))
         warnings.extend(self._check_majority_collapse(history))
         warnings.extend(self._check_training_stall(history))
+        # Runs here as well as at completion: a class that has produced
+        # nothing for twenty epochs is worth saying at epoch twenty, not
+        # after the run has spent its whole budget.
+        warnings.extend(self._check_class_never_learned(history))
         return warnings
 
     def run_all_checks(self, history: List[Dict[str, Any]]) -> List[str]:
@@ -93,6 +98,7 @@ class TrainingDiagnostics:
             return []
 
         warnings = []
+        warnings.extend(self._check_single_class_prediction(history))
         warnings.extend(self._check_val_outlier(history))
         warnings.extend(self._check_majority_collapse(history))
         warnings.extend(self._check_training_stall(history))
@@ -114,6 +120,107 @@ class TrainingDiagnostics:
         return message
 
     # ==================== Individual Checks ====================
+
+    # Tolerance for the single-class identity below. per_class_iou is stored
+    # rounded to 4 decimals, so anything at this scale is exact equality.
+    _COLLAPSE_TOL = 0.01
+
+    @staticmethod
+    def _looks_single_class(
+        entry: Dict[str, Any], class_names: List[str], tol: float
+    ) -> Optional[str]:
+        """Return the predicted class when this epoch matches the identity.
+
+        A model that predicts one class everywhere satisfies an exact
+        identity rather than a threshold. For the predicted class M there
+        are no false negatives, so
+
+            IoU(M) = |M| / (|M| + |not M|) = |M| / total = accuracy
+
+        and every other class has zero true positives, so IoU = 0. Both
+        quantities are measured over the same labeled-pixel mask, so the
+        equality is algebraic.
+
+        Testing the identity instead of "is the majority class above 0.5"
+        makes the check independent of how balanced the classes are: it
+        fires the same way on a 58/42 split and a 95/5 one, where a fixed
+        IoU threshold would miss the first or the second.
+
+        Returns the collapsed-onto class name, or None.
+        """
+        ious = entry.get("per_class_iou") or {}
+        present = [c for c in class_names if c in ious]
+        if len(present) < 2:
+            return None  # nothing to collapse onto
+        accuracy = entry.get("accuracy")
+        if accuracy is None or accuracy <= 0:
+            return None
+        nonzero = [c for c in present if ious.get(c, 0.0) > tol]
+        if len(nonzero) != 1:
+            return None
+        predicted = nonzero[0]
+        if abs(ious[predicted] - accuracy) > tol:
+            return None
+        return predicted
+
+    def _check_single_class_prediction(
+        self, history: List[Dict[str, Any]]
+    ) -> List[str]:
+        """Detect a model predicting one class over the whole image.
+
+        This is the state the run has to escape before anything it reports
+        means much, and nothing else in the training log says so: training
+        loss keeps falling, the progress bar keeps advancing, and accuracy
+        sits at a number that looks respectable because it IS the class
+        prior. Reported early so the epochs after it are a choice.
+        """
+        warnings: List[str] = []
+        if len(history) < 5:
+            return warnings
+
+        recent = history[-min(len(history), 10) :]
+        collapsed = [
+            self._looks_single_class(e, self.classes, self._COLLAPSE_TOL)
+            for e in recent
+        ]
+        # Count backwards from the latest epoch rather than over the window.
+        # The state has to be current -- a run that already escaped needs no
+        # warning -- and it has to have lasted, because the first epochs of a
+        # healthy run often look like this before the model finds the smaller
+        # class. Scattered collapsed epochs inside an otherwise healthy run
+        # are the "periodically predicts everything as X" pattern, which
+        # _check_majority_collapse already owns.
+        streak = 0
+        for predicted_class in reversed(collapsed):
+            if predicted_class is None:
+                break
+            streak += 1
+        if streak < 3:
+            return warnings
+
+        predicted = collapsed[-1]
+        missing = [c for c in self.classes if c != predicted]
+        latest = recent[-1]
+        acc = latest.get("accuracy", 0.0)
+        msg = (
+            f"Model is predicting '{predicted}' everywhere: the last {streak} "
+            f"epochs had every other class "
+            f"({', '.join(missing)}) at zero IoU with accuracy equal to "
+            f"'{predicted}' IoU ({acc:.3f}), which is that class's share of "
+            f"the labeled pixels. Training loss can keep falling in this "
+            f"state -- the model is getting more confident about the one "
+            f"answer it gives. Runs sometimes escape on their own, so this "
+            f"is not necessarily fatal, but if it persists the things worth "
+            f"checking are: the optimizer-step budget reported at startup "
+            f"(too few steps per epoch and the model never moves far enough "
+            f"to break out), class weights, hard-pixel mining (OHEM), the "
+            f"learning rate, and whether the annotations for "
+            f"{', '.join(missing)} are actually present in the training split."
+        )
+        w = self._warn_once("single_class_prediction", msg)
+        if w:
+            warnings.append(w)
+        return warnings
 
     def _check_val_outlier(self, history: List[Dict[str, Any]]) -> List[str]:
         """Detect validation outlier pattern: a class has loss spikes that

@@ -68,6 +68,13 @@ class TrainingConfigCoverageTest {
             "runtimeBatchSize", // Whole-image runtime override
             "runtimeGradAccumSteps", // Whole-image runtime override
             "hasPerImageSplitRoles", // Derived from per-image UI state
+            // Patch counts are an OUTCOME of export (annotations, downsample,
+            // tile geometry), not an input a user sets or a script replays.
+            // They are recorded as first-class metadata fields
+            // (training_patches_*) rather than as training settings.
+            "exportedPatchesTotal",
+            "exportedPatchesTrain",
+            "exportedPatchesValidation",
             "limitedDataClasses", // Auto-detected at launch from selected images, not user input
             "augmentationParams" // Optional advanced sub-map; default-filled in Python
             );
@@ -87,6 +94,13 @@ class TrainingConfigCoverageTest {
             "runtimeGradAccumSteps",
             "hasPerImageSplitRoles",
             "limitedDataClasses", // Auto-detected; surfaced in training log, not persisted as a setting
+            // Patch counts are an OUTCOME of export (annotations, downsample,
+            // tile geometry), not an input a user sets or a script replays.
+            // They are recorded as first-class metadata fields
+            // (training_patches_*) rather than as training settings.
+            "exportedPatchesTotal",
+            "exportedPatchesTrain",
+            "exportedPatchesValidation",
             // Top-level metadata fields, not part of the hyperparameters map
             "modelType",
             "backbone",
@@ -117,6 +131,13 @@ class TrainingConfigCoverageTest {
      */
     private static final Set<String> DOCS_EXEMPT = Set.of(
             "modelOutputDir",
+            // Patch counts are an OUTCOME of export (annotations, downsample,
+            // tile geometry), not an input a user sets or a script replays.
+            // They are recorded as first-class metadata fields
+            // (training_patches_*) rather than as training settings.
+            "exportedPatchesTotal",
+            "exportedPatchesTrain",
+            "exportedPatchesValidation",
             "classifierName",
             "runtimeTileSize",
             "runtimeBatchSize",

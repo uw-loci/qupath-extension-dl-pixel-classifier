@@ -85,6 +85,16 @@ public class ClassifierMetadata {
     private final double trainingPixelSizeMicrons;
     private final int trainingTileSizePx;
 
+    // How much data the run actually saw (0 for models saved before these
+    // were recorded). The training-patch count is what makes the batch size
+    // interpretable: a batch at or above it means one optimizer step per
+    // epoch, which is the difference between a model that could learn and
+    // one that could not. The validation count sets how finely the reported
+    // mean IoU can move, so it says how much to trust a "best epoch".
+    private final int trainingPatchesTotal;
+    private final int trainingPatchesTrain;
+    private final int trainingPatchesValidation;
+
     private ClassifierMetadata(Builder builder) {
         this.id = builder.id;
         this.name = builder.name;
@@ -115,6 +125,30 @@ public class ClassifierMetadata {
                 : null;
         this.trainingPixelSizeMicrons = builder.trainingPixelSizeMicrons;
         this.trainingTileSizePx = builder.trainingTileSizePx;
+        this.trainingPatchesTotal = builder.trainingPatchesTotal;
+        this.trainingPatchesTrain = builder.trainingPatchesTrain;
+        this.trainingPatchesValidation = builder.trainingPatchesValidation;
+    }
+
+    /**
+     * Total patches exported for this run, or 0 when not recorded.
+     */
+    public int getTrainingPatchesTotal() {
+        return trainingPatchesTotal;
+    }
+
+    /**
+     * Patches in the training split, or 0 when not recorded.
+     */
+    public int getTrainingPatchesTrain() {
+        return trainingPatchesTrain;
+    }
+
+    /**
+     * Patches in the validation split, or 0 when not recorded.
+     */
+    public int getTrainingPatchesValidation() {
+        return trainingPatchesValidation;
     }
 
     /**
@@ -367,6 +401,17 @@ public class ClassifierMetadata {
         if (trainingTileSizePx > 0) {
             map.put("training_tile_size_px", trainingTileSizePx);
         }
+        // Same absent-rather-than-zero rule: a model from before these were
+        // recorded should read as "unknown", not as "trained on no patches".
+        if (trainingPatchesTotal > 0) {
+            map.put("training_patches_total", trainingPatchesTotal);
+        }
+        if (trainingPatchesTrain > 0) {
+            map.put("training_patches_train", trainingPatchesTrain);
+        }
+        if (trainingPatchesValidation > 0) {
+            map.put("training_patches_validation", trainingPatchesValidation);
+        }
 
         List<Map<String, Object>> classesInfo = new ArrayList<>();
         for (ClassInfo ci : classes) {
@@ -478,6 +523,9 @@ public class ClassifierMetadata {
         private List<Map<String, Double>> normalizationStats;
         private double trainingPixelSizeMicrons = Double.NaN;
         private int trainingTileSizePx = 0;
+        private int trainingPatchesTotal = 0;
+        private int trainingPatchesTrain = 0;
+        private int trainingPatchesValidation = 0;
 
         public Builder id(String id) {
             this.id = id;
@@ -632,6 +680,22 @@ public class ClassifierMetadata {
          */
         public Builder trainingTileSizePx(int value) {
             this.trainingTileSizePx = value;
+            return this;
+        }
+
+        /**
+         * Records how many patches the exporter produced for this run.
+         * Negative values are stored as 0, which reads as "not recorded".
+         *
+         * @param total      total patches written
+         * @param train      patches in the training split
+         * @param validation patches in the validation split
+         * @return this builder
+         */
+        public Builder trainingPatchCounts(int total, int train, int validation) {
+            this.trainingPatchesTotal = Math.max(0, total);
+            this.trainingPatchesTrain = Math.max(0, train);
+            this.trainingPatchesValidation = Math.max(0, validation);
             return this;
         }
 

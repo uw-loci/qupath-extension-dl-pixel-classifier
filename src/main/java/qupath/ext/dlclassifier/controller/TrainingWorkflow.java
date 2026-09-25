@@ -1419,6 +1419,8 @@ public class TrainingWorkflow {
             }
 
             int patchCount;
+            int trainPatchCount;
+            int valPatchCount;
             if (selectedImages != null && !selectedImages.isEmpty()) {
                 // Multi-image project export
                 if (progress != null) {
@@ -1443,6 +1445,8 @@ public class TrainingWorkflow {
                         trainingConfig.getMinTileLabelFraction(),
                         trainingConfig.getOverlap());
                 patchCount = exportResult.totalPatches();
+                trainPatchCount = exportResult.trainPatches();
+                valPatchCount = exportResult.validationPatches();
             } else {
                 // Single-image export
                 AnnotationExtractor extractor = new AnnotationExtractor(
@@ -1459,11 +1463,25 @@ public class TrainingWorkflow {
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit(), weightMultipliers);
                 patchCount = exportResult.totalPatches();
+                trainPatchCount = exportResult.trainPatches();
+                valPatchCount = exportResult.validationPatches();
             }
+            trainingConfig.setExportedPatchCounts(patchCount, trainPatchCount, valPatchCount);
             if (progress != null) {
-                progress.log("Exported " + patchCount + " training patches");
+                progress.log("Exported " + patchCount + " training patches (" + trainPatchCount + " train, "
+                        + valPatchCount + " validation)");
                 progress.setStatus("Exported " + patchCount + " patches. Connecting to backend...");
                 logInMemoryCacheEstimate(progress, trainingConfig, channelConfig, patchCount);
+            }
+
+            // Step-budget pre-flight. The export is the first moment both
+            // numbers are known, and the arithmetic is decisive: a batch at
+            // or above the training-patch count yields a single batch, so
+            // each epoch buys one optimizer step and the epoch setting stops
+            // being a training budget. Ask rather than proceed, because the
+            // run that follows will look healthy for its whole length.
+            if (!confirmStepBudget(trainingConfig, trainPatchCount, progress)) {
+                return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false, "Training cancelled by user");
             }
 
             if (progress != null && progress.isCancelled()) {
@@ -1526,6 +1544,61 @@ public class TrainingWorkflow {
                                     if (config != null) {
                                         for (var entry : config.entrySet()) {
                                             progress.log("  " + entry.getKey() + ": " + entry.getValue());
+                                        }
+                                    }
+                                } else if ("step_budget".equals(trainingProgress.setupPhase())) {
+                                    // How many times the optimizer actually
+                                    // moves. Python computes this from the
+                                    // loader that will train, so it accounts
+                                    // for anything that shrank the dataset
+                                    // after export.
+                                    var cfg = trainingProgress.configSummary();
+                                    if (cfg != null) {
+                                        progress.log(String.format(
+                                                "Step budget: %s train / %s val patches, batch %s, "
+                                                        + "accumulation %s -> %s optimizer step(s) per epoch, "
+                                                        + "%s over %s epochs",
+                                                cfg.getOrDefault("train_patches", "?"),
+                                                cfg.getOrDefault("val_patches", "?"),
+                                                cfg.getOrDefault("batch_size", "?"),
+                                                cfg.getOrDefault("accumulation_steps", "?"),
+                                                cfg.getOrDefault("steps_per_epoch", "?"),
+                                                cfg.getOrDefault("total_steps", "?"),
+                                                cfg.getOrDefault("epochs", "?")));
+                                        String budgetMsg = cfg.get("message");
+                                        if (budgetMsg != null && !budgetMsg.isEmpty()) {
+                                            boolean critical =
+                                                    "critical".equals(cfg.getOrDefault("severity", "warning"));
+                                            logDiagnostic(
+                                                    progress, critical ? "STEP BUDGET" : "Step budget", budgetMsg);
+                                            if (critical) {
+                                                Dialogs.showWarningNotification(
+                                                        "Training step budget",
+                                                        "Batch size is not smaller than the training set -- "
+                                                                + "see the training log.");
+                                            }
+                                        }
+                                        String valMsg = cfg.get("val_message");
+                                        if (valMsg != null && !valMsg.isEmpty()) {
+                                            logDiagnostic(progress, "Validation size", valMsg);
+                                        }
+                                    }
+                                } else if ("diagnostic_warning".equals(trainingProgress.setupPhase())) {
+                                    // Training diagnostics used to reach only
+                                    // the Python log, so a run could sit
+                                    // collapsed for 80 epochs behind a dialog
+                                    // that looked healthy.
+                                    var cfg = trainingProgress.configSummary();
+                                    if (cfg != null) {
+                                        String msg = cfg.get("message");
+                                        if (msg != null && !msg.isEmpty()) {
+                                            logDiagnostic(
+                                                    progress,
+                                                    // "at_epoch", not "epoch": setup_callback in
+                                                    // train.py hoists a config "epoch" into the
+                                                    // progress bar's position.
+                                                    "Diagnostic (epoch " + cfg.getOrDefault("at_epoch", "?") + ")",
+                                                    msg);
                                         }
                                     }
                                 } else if ("bounded_cache_subset".equals(trainingProgress.setupPhase())) {
@@ -1729,6 +1802,10 @@ public class TrainingWorkflow {
                         // different pixel size, which is the cross-batch use case.
                         .trainingPixelSizeMicrons(trainingConfig.getTrainingPixelSizeMicrons())
                         .trainingTileSizePx(effectiveTileSize)
+                        .trainingPatchCounts(
+                                trainingConfig.getExportedPatchesTotal(),
+                                trainingConfig.getExportedPatchesTrain(),
+                                trainingConfig.getExportedPatchesValidation())
                         .classes(classInfoList)
                         .normalizationStrategy(channelConfig.getNormalizationStrategy())
                         // Record the normalization actually used, not the builder
@@ -1803,6 +1880,10 @@ public class TrainingWorkflow {
                     // different pixel size, which is the cross-batch use case.
                     .trainingPixelSizeMicrons(trainingConfig.getTrainingPixelSizeMicrons())
                     .trainingTileSizePx(effectiveTileSize)
+                    .trainingPatchCounts(
+                            trainingConfig.getExportedPatchesTotal(),
+                            trainingConfig.getExportedPatchesTrain(),
+                            trainingConfig.getExportedPatchesValidation())
                     .classes(classInfoList)
                     .normalizationStrategy(channelConfig.getNormalizationStrategy())
                     // Record the normalization actually used, not the builder
@@ -2142,6 +2223,8 @@ public class TrainingWorkflow {
                         trainingConfig.getMinTileLabelFraction(),
                         trainingConfig.getOverlap());
                 patchCount = exportResult.totalPatches();
+                trainingConfig.setExportedPatchCounts(
+                        exportResult.totalPatches(), exportResult.trainPatches(), exportResult.validationPatches());
             } else {
                 ImageData<BufferedImage> imageData = qupath.getImageData();
                 AnnotationExtractor extractor = new AnnotationExtractor(
@@ -2158,6 +2241,8 @@ public class TrainingWorkflow {
                 AnnotationExtractor.ExportResult exportResult = extractor.exportTrainingData(
                         tempDir, classNames, trainingConfig.getValidationSplit(), resumeMultipliers);
                 patchCount = exportResult.totalPatches();
+                trainingConfig.setExportedPatchCounts(
+                        exportResult.totalPatches(), exportResult.trainPatches(), exportResult.validationPatches());
             }
             progress.log("Re-exported " + patchCount + " training patches");
             progress.setStatus("Resuming training...");
@@ -2341,6 +2426,10 @@ public class TrainingWorkflow {
                             // different pixel size, which is the cross-batch use case.
                             .trainingPixelSizeMicrons(trainingConfig.getTrainingPixelSizeMicrons())
                             .trainingTileSizePx(effectiveTileSize)
+                            .trainingPatchCounts(
+                                    trainingConfig.getExportedPatchesTotal(),
+                                    trainingConfig.getExportedPatchesTrain(),
+                                    trainingConfig.getExportedPatchesValidation())
                             .classes(rClassInfo)
                             .normalizationStrategy(channelConfig.getNormalizationStrategy())
                             // Record the normalization actually used, not the builder
@@ -2400,6 +2489,10 @@ public class TrainingWorkflow {
                         // different pixel size, which is the cross-batch use case.
                         .trainingPixelSizeMicrons(trainingConfig.getTrainingPixelSizeMicrons())
                         .trainingTileSizePx(effectiveTileSize)
+                        .trainingPatchCounts(
+                                trainingConfig.getExportedPatchesTotal(),
+                                trainingConfig.getExportedPatchesTrain(),
+                                trainingConfig.getExportedPatchesValidation())
                         .classes(classInfoList)
                         .normalizationStrategy(channelConfig.getNormalizationStrategy())
                         // Record the normalization actually used, not the builder
@@ -2573,6 +2666,10 @@ public class TrainingWorkflow {
                     // different pixel size, which is the cross-batch use case.
                     .trainingPixelSizeMicrons(trainingConfig.getTrainingPixelSizeMicrons())
                     .trainingTileSizePx(effectiveTileSize)
+                    .trainingPatchCounts(
+                            trainingConfig.getExportedPatchesTotal(),
+                            trainingConfig.getExportedPatchesTrain(),
+                            trainingConfig.getExportedPatchesValidation())
                     .classes(classInfoList)
                     .normalizationStrategy(channelConfig.getNormalizationStrategy())
                     // Record the normalization actually used, not the builder
@@ -3042,6 +3139,159 @@ public class TrainingWorkflow {
      * two agree to within a factor of two and that is good enough for the
      * user to decide whether to cancel and flip the preference off.
      */
+    /**
+     * How many times the optimizer will move, given what was exported.
+     *
+     * @param trainPatches   training patches written by the exporter
+     * @param batchSize      configured batch size
+     * @param accumulation   gradient accumulation steps (>= 1)
+     * @param epochs         configured epoch count
+     * @param batchesPerEpoch batches the loader will yield per epoch
+     * @param stepsPerEpoch  optimizer steps per epoch
+     * @param totalSteps     optimizer steps over the whole run
+     */
+    record StepBudget(
+            int trainPatches,
+            int batchSize,
+            int accumulation,
+            int epochs,
+            int batchesPerEpoch,
+            int stepsPerEpoch,
+            int totalSteps) {
+
+        /**
+         * Whether the epoch count has stopped meaning anything.
+         * <p>
+         * One optimizer step per epoch is not a slow configuration, it is a
+         * broken one: the run performs exactly as many gradient updates as it
+         * has epochs, so raising the epochs cannot fix it.
+         *
+         * @return true when each epoch buys fewer than two optimizer steps
+         */
+        boolean isUntrainable() {
+            return trainPatches > 0 && stepsPerEpoch < 2;
+        }
+    }
+
+    /**
+     * Computes the optimizer-step budget for a configuration.
+     * <p>
+     * Mirrors the loader arithmetic in {@code training_service._run_training}:
+     * the DataLoader keeps its short final batch ({@code drop_last} defaults
+     * to false), and the optimizer steps every {@code accumulation} batches
+     * and again on the last batch of the epoch, so both divisions round up.
+     * <p>
+     * This is an upper bound on what the run will actually do. Progressive
+     * resizing and the bounded in-memory cache can shrink the dataset after
+     * export, which only lowers the step count; Python reports the exact
+     * figure from the loader once it exists.
+     *
+     * @param trainPatches training patches written by the exporter
+     * @param batchSize    configured batch size
+     * @param accumulation gradient accumulation steps; values below 1 count as 1
+     * @param epochs       configured epoch count
+     * @return the computed budget
+     */
+    static StepBudget computeStepBudget(int trainPatches, int batchSize, int accumulation, int epochs) {
+        int batch = Math.max(1, batchSize);
+        int accum = Math.max(1, accumulation);
+        int batchesPerEpoch = trainPatches <= 0 ? 0 : ceilDiv(trainPatches, batch);
+        int stepsPerEpoch = ceilDiv(batchesPerEpoch, accum);
+        return new StepBudget(
+                trainPatches,
+                batch,
+                accum,
+                Math.max(0, epochs),
+                batchesPerEpoch,
+                stepsPerEpoch,
+                stepsPerEpoch * Math.max(0, epochs));
+    }
+
+    private static int ceilDiv(int numerator, int denominator) {
+        if (denominator <= 0) return 0;
+        return (numerator + denominator - 1) / denominator;
+    }
+
+    /**
+     * Asks before running a configuration that cannot train.
+     * <p>
+     * Placed after export because that is the first point where the patch
+     * count exists. The alternative -- logging it and starting anyway -- is
+     * what the training log already did for other findings, and a run in this
+     * state gives no other sign that anything is wrong.
+     *
+     * @param config       the configuration about to be trained
+     * @param trainPatches training patches written by the exporter
+     * @param progress     the monitor, for the log trail
+     * @return true to proceed
+     */
+    private static boolean confirmStepBudget(
+            TrainingConfig config, int trainPatches, ProgressMonitorController progress) {
+        StepBudget budget = computeStepBudget(
+                trainPatches, config.getBatchSize(), config.getGradientAccumulationSteps(), config.getEpochs());
+        if (!budget.isUntrainable()) {
+            return true;
+        }
+        String summary = String.format(
+                "Batch size %d with %d training patches gives %d batch per epoch, "
+                        + "so this run performs %d optimizer step per epoch and %d in total.",
+                budget.batchSize(),
+                budget.trainPatches(),
+                budget.batchesPerEpoch(),
+                budget.stepsPerEpoch(),
+                budget.totalSteps());
+        logger.warn("Step budget: {}", summary);
+        logDiagnostic(progress, "STEP BUDGET", summary);
+        String message = summary
+                + "\n\nThe epoch count no longer measures the training budget: "
+                + "the model gets one gradient update per epoch regardless of how "
+                + "long the run takes. Raising the epochs will not compensate.\n\n"
+                + "To get more steps, pick any of:\n"
+                + "  - a smaller batch size (the direct fix)\n"
+                + "  - less gradient accumulation, if it is above 1\n"
+                + "  - more patches: more annotated area, a lower downsample, "
+                + "a smaller tile size, or more tile overlap\n\n"
+                + "Continue anyway?";
+        boolean proceed = Dialogs.showConfirmDialog("Training Step Budget", message);
+        if (!proceed) {
+            logger.info("Training cancelled by user: {} optimizer step(s) per epoch", budget.stepsPerEpoch());
+        } else {
+            logger.warn("Training proceeding with {} optimizer step(s) per epoch", budget.stepsPerEpoch());
+        }
+        return proceed;
+    }
+
+    /**
+     * Writes a diagnostic message into the training log, wrapped.
+     * <p>
+     * Diagnostics arrive from Python as one long sentence-per-finding string.
+     * The progress log does not wrap, so an unwrapped message is read as far
+     * as the window is wide and no further -- which is how a run could report
+     * majority-class collapse and still look healthy. Wrapping at a fixed
+     * column keeps the whole finding on screen.
+     *
+     * @param progress the monitor to write to
+     * @param label    short prefix identifying the kind of finding
+     * @param message  the finding text
+     */
+    private static void logDiagnostic(ProgressMonitorController progress, String label, String message) {
+        if (progress == null || message == null || message.isEmpty()) return;
+        progress.log("");
+        progress.log("*** " + label + " ***");
+        int width = 88;
+        StringBuilder line = new StringBuilder("  ");
+        for (String word : message.split("\\s+")) {
+            if (line.length() > 2 && line.length() + 1 + word.length() > width) {
+                progress.log(line.toString());
+                line = new StringBuilder("  ");
+            }
+            if (line.length() > 2) line.append(' ');
+            line.append(word);
+        }
+        if (line.length() > 2) progress.log(line.toString());
+        progress.log("");
+    }
+
     private static void logInMemoryCacheEstimate(
             ProgressMonitorController progress, TrainingConfig config, ChannelConfiguration channels, int patchCount) {
         if (progress == null) return;

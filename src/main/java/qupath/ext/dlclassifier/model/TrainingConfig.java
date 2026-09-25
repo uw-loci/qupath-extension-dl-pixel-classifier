@@ -156,6 +156,17 @@ public class TrainingConfig {
     // the Builder because it's auto-detected, not user-configurable.
     private java.util.Set<String> limitedDataClasses = java.util.Set.of();
 
+    // Transient runtime fields: how many patches the exporter actually wrote.
+    // Not builder-configurable -- they are an outcome of the annotations, the
+    // downsample and the tile geometry, and are only known once export has
+    // run. Recorded in the saved metadata because without them a finished
+    // model cannot be diagnosed: batch size relative to the training-patch
+    // count decides whether a run could learn at all, and the patch count was
+    // previously recoverable only from a log the user still happened to have.
+    private int exportedPatchesTotal = 0;
+    private int exportedPatchesTrain = 0;
+    private int exportedPatchesValidation = 0;
+
     // Transient runtime overrides for whole-image mode.
     // When set (> 0), these override the builder-configured values so that
     // downstream code (backend, serialization) automatically uses the safe values.
@@ -757,6 +768,41 @@ public class TrainingConfig {
      */
     public void setLimitedDataClasses(java.util.Set<String> classes) {
         this.limitedDataClasses = classes == null ? java.util.Set.of() : java.util.Set.copyOf(classes);
+    }
+
+    /**
+     * Records the patch counts the exporter produced.
+     * Called by TrainingWorkflow immediately after export.
+     *
+     * @param total      total patches written
+     * @param train      patches in the training split
+     * @param validation patches in the validation split
+     */
+    public void setExportedPatchCounts(int total, int train, int validation) {
+        this.exportedPatchesTotal = Math.max(0, total);
+        this.exportedPatchesTrain = Math.max(0, train);
+        this.exportedPatchesValidation = Math.max(0, validation);
+    }
+
+    /**
+     * @return total patches written by the exporter, or 0 if export has not run
+     */
+    public int getExportedPatchesTotal() {
+        return exportedPatchesTotal;
+    }
+
+    /**
+     * @return patches in the training split, or 0 if export has not run
+     */
+    public int getExportedPatchesTrain() {
+        return exportedPatchesTrain;
+    }
+
+    /**
+     * @return patches in the validation split, or 0 if export has not run
+     */
+    public int getExportedPatchesValidation() {
+        return exportedPatchesValidation;
     }
 
     /**

@@ -453,6 +453,16 @@ public class ModelManager {
                     logger.debug("Could not parse training_tile_size_px: {}", e.getMessage());
                 }
             }
+            // Patch counts: how much data the run saw. Absent in models saved
+            // before they were recorded, which reads back as 0.
+            try {
+                builder.trainingPatchCounts(
+                        readInt(obj, "training_patches_total"),
+                        readInt(obj, "training_patches_train"),
+                        readInt(obj, "training_patches_validation"));
+            } catch (RuntimeException e) {
+                logger.debug("Could not parse training patch counts: {}", e.getMessage());
+            }
             if (createdAt != null) {
                 builder.createdAt(createdAt);
             }
@@ -462,6 +472,26 @@ public class ModelManager {
             // I/O failure or malformed metadata.json; treat as "no metadata".
             logger.error("Failed to load metadata from {}: {}", metadataPath, e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * Reads an integer field from metadata JSON, treating anything missing or
+     * unparseable as 0 (the "not recorded" value).
+     *
+     * @param obj metadata object
+     * @param key field name
+     * @return the value, or 0
+     */
+    private static int readInt(JsonObject obj, String key) {
+        if (obj == null || !obj.has(key) || !obj.get(key).isJsonPrimitive()) {
+            return 0;
+        }
+        try {
+            return obj.get(key).getAsInt();
+        } catch (NumberFormatException | IllegalStateException e) {
+            logger.debug("Could not parse {}: {}", key, e.getMessage());
+            return 0;
         }
     }
 
@@ -560,6 +590,9 @@ public class ModelManager {
                         "normalization_stats",
                         "training_pixel_size_um",
                         "training_tile_size_px",
+                        "training_patches_total",
+                        "training_patches_train",
+                        "training_patches_validation",
                         "onnx_variants")) {
                     if (pythonMeta.has(key) && !javaMetadata.containsKey(key)) {
                         javaMetadata.put(key, gson.fromJson(pythonMeta.get(key), Object.class));
