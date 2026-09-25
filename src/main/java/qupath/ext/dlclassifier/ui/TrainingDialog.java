@@ -8063,11 +8063,12 @@ public class TrainingDialog {
             content.getChildren()
                     .add(createModelEntry(
                             "Lunit SwAV / Lunit Barlow Twins",
-                            "Trained on 30M+ H&E patches from TCGA using SwAV or Barlow Twins "
-                                    + "self-supervised learning. Among the best-performing histology encoders "
-                                    + "for downstream tasks. Non-commercial license.",
-                            "Kang et al. 2023",
-                            "https://doi.org/10.1038/s41591-023-02512-1"));
+                            "Trained on 19M H&E patches from TCGA using SwAV or Barlow Twins "
+                                    + "self-supervised learning. Non-commercial license (research use only).",
+                            "Kang et al. 2023 (CVPR)",
+                            "https://openaccess.thecvf.com/content/CVPR2023/papers/"
+                                    + "Kang_Benchmarking_Self-Supervised_Learning_on_Diverse_Pathology_"
+                                    + "Datasets_CVPR_2023_paper.pdf"));
 
             content.getChildren()
                     .add(createModelEntry(
@@ -8099,8 +8100,8 @@ public class TrainingDialog {
                             "ViT-G pathology foundation model trained on 500K+ whole slide images. "
                                     + "1.1B parameters, 1536-dim features. Apache 2.0 license. "
                                     + "Requires HuggingFace token (see below).",
-                            "Filiot et al. 2024",
-                            "https://arxiv.org/abs/2309.07778"));
+                            "Bioptimus model card (no paper)",
+                            "https://huggingface.co/bioptimus/H-optimus-0"));
 
             content.getChildren()
                     .add(createModelEntry(
@@ -8118,7 +8119,7 @@ public class TrainingDialog {
                                     + "Hibou-L (304M params) is more powerful. Apache 2.0 license. "
                                     + "Requires HuggingFace token (see below).",
                             "Nechaev et al. 2024",
-                            "https://arxiv.org/abs/2406.09414"));
+                            "https://arxiv.org/abs/2406.05074"));
 
             content.getChildren()
                     .add(createModelEntry(
