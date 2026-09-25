@@ -48,6 +48,35 @@ public class ModelManager {
     }
 
     /**
+     * The directory where this project's DL classifier files belong.
+     * <p>
+     * Returns {@code <project>/classifiers/dl} when a project is open, and the
+     * user-level {@code ~/.qupath/classifiers/dl} otherwise -- the same two
+     * locations {@link #listClassifiers()} reads from and
+     * {@link #saveClassifier} writes to.
+     * <p>
+     * Exists so that file choosers offering to save or load training artifacts
+     * can open where those artifacts live. Without it every chooser starts
+     * wherever the OS last left one, which scatters a project's training
+     * profiles across the filesystem and leaves nothing beside the models they
+     * describe.
+     *
+     * @return the preferred directory; not guaranteed to exist yet
+     */
+    public static Path resolveStorageDir() {
+        try {
+            QuPathGUI gui = QuPathGUI.getInstance();
+            Project<?> project = gui == null ? null : gui.getProject();
+            if (project != null && project.getPath() != null) {
+                return project.getPath().getParent().resolve(CLASSIFIERS_DIR);
+            }
+        } catch (Exception e) {
+            logger.debug("Could not resolve the project classifier directory: {}", e.getMessage());
+        }
+        return Path.of(System.getProperty("user.home"), ".qupath", "classifiers", "dl");
+    }
+
+    /**
      * Builds the Gson used to read and rewrite {@code metadata.json}.
      * <p>
      * {@link ToNumberPolicy#LONG_OR_DOUBLE} is essential, not cosmetic. Gson's

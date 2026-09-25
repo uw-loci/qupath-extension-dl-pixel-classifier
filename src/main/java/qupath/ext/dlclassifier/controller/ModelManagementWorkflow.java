@@ -530,12 +530,23 @@ public class ModelManagementWorkflow {
 
         Button deleteBtn = new Button("Delete");
         deleteBtn.setOnAction(e -> deleteSelectedClassifier());
+        deleteBtn.setTooltip(new Tooltip("Permanently removes the selected classifier and its model files from this\n"
+                + "project. Asks for confirmation first. This cannot be undone -- export it\n"
+                + "first if you may want it back."));
         deleteBtn
                 .disableProperty()
                 .bind(classifierTable.getSelectionModel().selectedItemProperty().isNull());
 
         Button exportDescriptorBtn = new Button("Export Descriptor...");
         exportDescriptorBtn.setOnAction(e -> exportDescriptorOnly());
+        // The Export Full tooltip below sends people here as the safer option,
+        // so this button in particular should not be the unlabelled one.
+        exportDescriptorBtn.setTooltip(
+                new Tooltip("Saves this classifier's metadata.json: architecture, classes, normalization\n"
+                        + "and training settings. A few kilobytes, no model weights, readable as text.\n"
+                        + "Use it to record or share how a model was configured, or to inspect it outside\n"
+                        + "QuPath. The result is NOT runnable -- to move a working model to another\n"
+                        + "project use \"Export Full (with weights)\"."));
         exportDescriptorBtn
                 .disableProperty()
                 .bind(classifierTable.getSelectionModel().selectedItemProperty().isNull());
@@ -554,6 +565,9 @@ public class ModelManagementWorkflow {
 
         Button importBtn = new Button("Import...");
         importBtn.setOnAction(e -> importClassifier());
+        importBtn.setTooltip(new Tooltip("Adds a classifier to this project from a .zip produced by\n"
+                + "\"Export Full (with weights)\". A descriptor-only .json cannot be\n"
+                + "imported -- it records the configuration but carries no model weights."));
 
         Button closeBtn = new Button("Close");
         closeBtn.setOnAction(e -> dialogStage.close());
@@ -635,6 +649,29 @@ public class ModelManagementWorkflow {
      * configuration and is NOT re-importable as a runnable model (no weights). For a
      * fully runnable, Import-compatible archive use {@link #exportSelectedClassifier()}.
      */
+    /**
+     * Points a chooser at {@code <project>/classifiers/dl}, where this
+     * project's classifiers already live, so exports and imports start beside
+     * the models they concern rather than wherever the OS last left a chooser.
+     *
+     * @param chooser the chooser to configure
+     * @param create  create the directory when missing; true when saving
+     */
+    private void applyStorageDirectory(FileChooser chooser, boolean create) {
+        try {
+            Path dir = ModelManager.resolveStorageDir();
+            if (create && !Files.isDirectory(dir)) {
+                Files.createDirectories(dir);
+            }
+            if (Files.isDirectory(dir)) {
+                chooser.setInitialDirectory(dir.toFile());
+            }
+        } catch (Exception e) {
+            // Wrong starting folder is a nuisance; a blocked export is not.
+            logger.debug("Could not set the chooser directory: {}", e.getMessage());
+        }
+    }
+
     private void exportDescriptorOnly() {
         ClassifierMetadata selected = classifierTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
@@ -656,6 +693,7 @@ public class ModelManagementWorkflow {
 
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Export Classifier Descriptor");
+        applyStorageDirectory(fileChooser, true);
         fileChooser.setInitialFileName(selected.getName().replaceAll("[^a-zA-Z0-9_\\-]", "_") + ".json");
         fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Descriptor", "*.json"));
 
@@ -694,6 +732,7 @@ public class ModelManagementWorkflow {
 
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Export Classifier");
+        applyStorageDirectory(fileChooser, true);
         fileChooser.setInitialFileName(selected.getName().replaceAll("[^a-zA-Z0-9_\\-]", "_") + ".zip");
         fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("ZIP Archive", "*.zip"));
 
@@ -734,6 +773,7 @@ public class ModelManagementWorkflow {
     private void importClassifier() {
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Import Classifier");
+        applyStorageDirectory(fileChooser, false);
         fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("ZIP Archive", "*.zip"));
 
         java.io.File selectedFile = fileChooser.showOpenDialog(dialogStage);

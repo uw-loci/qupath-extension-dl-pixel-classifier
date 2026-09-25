@@ -8,6 +8,7 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -7630,6 +7631,29 @@ public class TrainingDialog {
          * intentionally omitted -- a profile is meant to travel across
          * projects, where image names won't match anyway.
          */
+        /**
+         * Points a profile chooser at {@code <project>/classifiers/dl}, the
+         * directory this project already keeps its trained classifiers in.
+         *
+         * @param chooser the chooser to configure
+         * @param create  create the directory when missing; true when saving
+         */
+        private void applyProfileChooserDirectory(FileChooser chooser, boolean create) {
+            try {
+                Path dir = ModelManager.resolveStorageDir();
+                if (create && !Files.isDirectory(dir)) {
+                    Files.createDirectories(dir);
+                }
+                if (Files.isDirectory(dir)) {
+                    chooser.setInitialDirectory(dir.toFile());
+                }
+            } catch (Exception e) {
+                // A chooser that opens in the wrong place still works. Never
+                // let this stop the user saving or loading a profile.
+                logger.debug("Could not set the profile chooser directory: {}", e.getMessage());
+            }
+        }
+
         private void saveProfileToFile(Button sourceButton) {
             // Build the profile in-memory without running the full
             // buildResult() validation chain -- the user may save a partial
@@ -7685,6 +7709,12 @@ public class TrainingDialog {
             String suggested = classifierNameField.getText().trim();
             if (suggested.isEmpty()) suggested = "training-profile";
             chooser.setInitialFileName(suggested + ".json");
+            // Open where the project keeps its DL files, so a profile lands
+            // beside the classifiers it describes instead of wherever the OS
+            // last left a file chooser. Created on demand: on a project that
+            // has never trained anything the directory does not exist yet, and
+            // an initial directory that does not exist is silently ignored.
+            applyProfileChooserDirectory(chooser, true);
             File out = chooser.showSaveDialog(dialog);
             if (out == null) return;
 
@@ -7715,6 +7745,9 @@ public class TrainingDialog {
             FileChooser chooser = new FileChooser();
             chooser.setTitle("Load Training Profile");
             chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON profile", "*.json"));
+            // Same directory the save side offers. Not created here -- opening
+            // a file is no reason to make a folder.
+            applyProfileChooserDirectory(chooser, false);
             File in = chooser.showOpenDialog(dialog);
             if (in == null) return;
 
