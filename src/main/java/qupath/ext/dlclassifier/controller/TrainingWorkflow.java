@@ -1975,6 +1975,38 @@ public class TrainingWorkflow {
             String completionMessage = "Training completed successfully";
             List<String> hints = new ArrayList<>();
             boolean lowAccuracy = serverResult.bestMeanIoU() < 0.5;
+
+            // Did early stopping end the run, and did it end it too soon?
+            //
+            // A from-scratch model on a two-class problem can sit collapsed on
+            // one class for ten or more consecutive epochs before it escapes.
+            // To early stopping that stretch is indistinguishable from
+            // convergence, so a patience shorter than the collapse kills the
+            // run during it -- and the "best" epoch it keeps is whatever
+            // transient blip happened on the way in. Observed: a run that
+            // reached mIoU 0.89 at epoch 85 when left alone, versus the same
+            // configuration stopped at epoch 22 holding mIoU 0.31 from
+            // epoch 11. This hint goes first because it explains the result
+            // better than anything computed from the final metrics.
+            boolean earlyStoppingOn = trainingConfig.getEarlyStoppingMetric() != null
+                    && !"disabled".equalsIgnoreCase(trainingConfig.getEarlyStoppingMetric());
+            int ranEpochs = serverResult.lastEpoch();
+            int configuredEpochs = trainingConfig.getEpochs();
+            boolean stoppedShort = earlyStoppingOn && ranEpochs > 0 && ranEpochs < configuredEpochs;
+            if (stoppedShort) {
+                hints.add(String.format(
+                        "Early stopping ended this run at epoch %d of %d, keeping epoch %d (mIoU %.4f). "
+                                + "Patience was %d. A model training from scratch can stay collapsed on one "
+                                + "class for longer than that, and early stopping cannot tell a collapse from "
+                                + "convergence -- so if the result looks weak, raise the patience or switch "
+                                + "early stopping off and judge the run from its full curve.",
+                        ranEpochs,
+                        configuredEpochs,
+                        serverResult.bestEpoch(),
+                        serverResult.bestMeanIoU(),
+                        trainingConfig.getEarlyStoppingPatience()));
+            }
+
             if (lowAccuracy) {
                 hints.add("Low accuracy. Try: more annotations, different downsample, longer training.");
             }
@@ -1992,9 +2024,34 @@ public class TrainingWorkflow {
                 }
                 hints.add(hint);
             }
+            // A run that ended collapsed onto one class also ends with
+            // val_loss far above train_loss, so the overfitting test fires --
+            // and then tells the user to shrink the model and add augmentation
+            // while the low-accuracy hint tells them to train longer. Two
+            // opposite prescriptions for one run, neither addressing the
+            // collapse. Name the collapse instead; it is the reason for the
+            // loss gap, and "smaller model" is the wrong move for it.
+            boolean endedCollapsed = false;
+            {
+                Map<String, Double> lastIoU = lastPerClassIoU.get();
+                if (lastIoU != null && lastIoU.size() >= 2) {
+                    long atZero = lastIoU.values().stream()
+                            .filter(v -> v != null && v <= 0.0)
+                            .count();
+                    boolean someClassHeld = lastIoU.values().stream().anyMatch(v -> v != null && v > 0.0);
+                    endedCollapsed = atZero > 0 && someClassHeld;
+                }
+            }
             double tl = lastTrainLoss.get(), vl = lastValLoss.get();
             if (tl > 0 && vl > 0 && vl > tl * 2.0) {
-                hints.add("Possible overfitting. Try: more augmentation, smaller model, more data.");
+                if (endedCollapsed) {
+                    hints.add("Validation loss ended far above training loss because the run finished "
+                            + "collapsed onto one class, not because the model memorised the training set. "
+                            + "Shrinking the model or adding augmentation will not help; the run needs to "
+                            + "escape the collapse. See the collapse hint above.");
+                } else {
+                    hints.add("Possible overfitting. Try: more augmentation, smaller model, more data.");
+                }
             }
             // "Never learned" must mean never, across the whole run -- judged on
             // the best IoU each class reached, not the last epoch's. A class that
