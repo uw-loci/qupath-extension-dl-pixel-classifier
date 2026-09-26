@@ -1055,11 +1055,20 @@ public class TrainingWorkflow {
                                 sb.append(" [TARGET NOT MET]");
                             }
                         }
-                        // Append diagnostic hints from trainCore if present
+                        // Point at the hints rather than repeating them. They are
+                        // already written into the log above, in the same dialog
+                        // and visible at the same time, so printing them again
+                        // here just doubles several paragraphs of text.
                         if (result.message() != null && result.message().contains("Diagnostic hints:")) {
                             int idx = result.message().indexOf("\n\nDiagnostic hints:");
                             if (idx >= 0) {
-                                sb.append(result.message().substring(idx));
+                                long count = result.message()
+                                        .substring(idx)
+                                        .lines()
+                                        .filter(l -> l.startsWith("- "))
+                                        .count();
+                                sb.append(String.format(
+                                        "%n%n%d diagnostic hint%s in the log above.", count, count == 1 ? "" : "s"));
                             }
                         }
                         completionMsg = sb.toString();
