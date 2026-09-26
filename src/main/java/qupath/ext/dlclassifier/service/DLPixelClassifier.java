@@ -22,6 +22,7 @@ import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.service.ClassifierClient.PixelInferenceResult;
 import qupath.ext.dlclassifier.service.ood.OutOfDistributionPreflight;
 import qupath.ext.dlclassifier.ui.DialogOwner;
+import qupath.ext.dlclassifier.utilities.ImageCompat;
 import qupath.ext.dlclassifier.utilities.TileEncoder;
 import qupath.lib.classifiers.pixel.PixelClassifier;
 import qupath.lib.classifiers.pixel.PixelClassifierMetadata;
@@ -788,17 +789,7 @@ public class DLPixelClassifier implements PixelClassifier {
         }
 
         // Resize to expected dimensions if the read region was smaller than expected
-        if (contextImage.getWidth() != expectedW || contextImage.getHeight() != expectedH) {
-            BufferedImage resized = new BufferedImage(expectedW, expectedH, contextImage.getType());
-            java.awt.Graphics2D g = resized.createGraphics();
-            g.setRenderingHint(
-                    java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.drawImage(contextImage, 0, 0, expectedW, expectedH, null);
-            g.dispose();
-            contextImage = resized;
-        }
-
-        return contextImage;
+        return ImageCompat.resizeBilinear(contextImage, expectedW, expectedH);
     }
 
     /**

@@ -1528,7 +1528,7 @@ public class AnnotationExtractor {
         int offsetInPaddedX = (int) ((readX - padX) / downsample);
         int offsetInPaddedY = (int) ((readY - padY) / downsample);
 
-        return reflectionPadImage(readImage, targetSize, targetSize, offsetInPaddedX, offsetInPaddedY);
+        return ImageCompat.reflectionPad(readImage, targetSize, targetSize, offsetInPaddedX, offsetInPaddedY);
     }
 
     /**
@@ -1555,83 +1555,6 @@ public class AnnotationExtractor {
         g2d.drawImage(coreMask, contextPadding, contextPadding, null);
         g2d.dispose();
         return paddedMask;
-    }
-
-    /**
-     * Reflection-pads a source image to target dimensions.
-     * The source is placed at (offsetX, offsetY) within the target; remaining
-     * pixels are filled by reflecting the source content.
-     *
-     * @param source  the source image
-     * @param targetW target width
-     * @param targetH target height
-     * @param offsetX X offset where source is placed in the target
-     * @param offsetY Y offset where source is placed in the target
-     * @return reflection-padded image of targetW x targetH
-     */
-    private static BufferedImage reflectionPadImage(
-            BufferedImage source, int targetW, int targetH, int offsetX, int offsetY) {
-        int srcW = source.getWidth();
-        int srcH = source.getHeight();
-        BufferedImage padded = new BufferedImage(targetW, targetH, source.getType());
-        Graphics2D g = padded.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-
-        // Draw the source at its offset position
-        g.drawImage(source, offsetX, offsetY, null);
-
-        // Reflect left border
-        if (offsetX > 0) {
-            int w = Math.min(offsetX, srcW);
-            // Flip horizontally: draw the left strip of source mirrored
-            g.drawImage(
-                    source,
-                    offsetX - 1,
-                    offsetY,
-                    offsetX - w - 1,
-                    offsetY + srcH, // dest: reversed x
-                    0,
-                    0,
-                    w,
-                    srcH, // src
-                    null);
-        }
-
-        // Reflect right border
-        int rightGap = targetW - (offsetX + srcW);
-        if (rightGap > 0) {
-            int w = Math.min(rightGap, srcW);
-            g.drawImage(
-                    source,
-                    offsetX + srcW,
-                    offsetY,
-                    offsetX + srcW + w,
-                    offsetY + srcH,
-                    srcW - 1,
-                    0,
-                    srcW - 1 - w,
-                    srcH,
-                    null);
-        }
-
-        // Reflect top border (over the full width of what we have so far)
-        if (offsetY > 0) {
-            int h = Math.min(offsetY, srcH);
-            // Copy the top strip of the padded image and flip vertically
-            BufferedImage topStrip = padded.getSubimage(0, offsetY, targetW, h);
-            g.drawImage(topStrip, 0, offsetY - 1, targetW, offsetY - h - 1, 0, 0, targetW, h, null);
-        }
-
-        // Reflect bottom border
-        int bottomGap = targetH - (offsetY + srcH);
-        if (bottomGap > 0) {
-            int h = Math.min(bottomGap, srcH);
-            BufferedImage bottomStrip = padded.getSubimage(0, offsetY + srcH - h, targetW, h);
-            g.drawImage(bottomStrip, 0, offsetY + srcH, targetW, offsetY + srcH + h, 0, h - 1, targetW, -1, null);
-        }
-
-        g.dispose();
-        return padded;
     }
 
     /**
@@ -1685,16 +1608,7 @@ public class AnnotationExtractor {
         BufferedImage contextImage = server.readRegion(contextRequest);
 
         // Resize to patchSize if the read region was smaller than expected
-        if (contextImage.getWidth() != patchSize || contextImage.getHeight() != patchSize) {
-            BufferedImage resized = new BufferedImage(patchSize, patchSize, contextImage.getType());
-            java.awt.Graphics2D g = resized.createGraphics();
-            g.setRenderingHint(
-                    java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.drawImage(contextImage, 0, 0, patchSize, patchSize, null);
-            g.dispose();
-            contextImage = resized;
-        }
-        return contextImage;
+        return ImageCompat.resizeBilinear(contextImage, patchSize, patchSize);
     }
 
     /**
