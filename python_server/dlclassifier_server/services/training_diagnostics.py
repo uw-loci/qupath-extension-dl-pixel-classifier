@@ -624,8 +624,9 @@ class TrainingDiagnostics:
                     f"hardest-pixel selection tightens ('hard pixels kick in')."
                 )
             msg = (
-                f"Validation loss ({avg_val:.4f}) is lower than training loss "
-                f"({avg_train:.4f}) over the last 10 epochs. With OHEM "
+                f"Validation loss averaged {avg_val:.4f} against a training "
+                f"loss of {avg_train:.4f} across the last 10 epochs "
+                f"({mild} of {len(recent)} of them individually). With OHEM "
                 f"(hard-pixel mining) active this is EXPECTED, not a problem: "
                 f"training loss is averaged over only the hardest "
                 f"{self.ohem_hard_ratio * 100:.0f}% of pixels, while validation "
