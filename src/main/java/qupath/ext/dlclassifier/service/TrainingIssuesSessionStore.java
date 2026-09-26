@@ -252,6 +252,17 @@ public final class TrainingIssuesSessionStore {
             }
             t.add("topConfusions", confusions);
 
+            // Per-class GT pixel counts: the confusion matrix's denominator.
+            // Sessions written before this field existed have no such block, and
+            // load() reads a missing one as "fall back to pair-derived totals".
+            JsonObject gtTotals = new JsonObject();
+            if (r.gtPixelTotals() != null) {
+                for (Map.Entry<String, Long> e : r.gtPixelTotals().entrySet()) {
+                    gtTotals.addProperty(e.getKey(), e.getValue());
+                }
+            }
+            t.add("gtPixelTotals", gtTotals);
+
             t.addProperty("disagreementPixels", r.disagreementPixels());
             JsonArray hist = new JsonArray();
             if (r.disagreementConfHistogram() != null) {
@@ -356,6 +367,15 @@ public final class TrainingIssuesSessionStore {
                 }
             }
 
+            Map<String, Long> gtPixelTotals = new LinkedHashMap<>();
+            if (t.has("gtPixelTotals") && t.get("gtPixelTotals").isJsonObject()) {
+                JsonObject totals = t.getAsJsonObject("gtPixelTotals");
+                for (Map.Entry<String, JsonElement> entry : totals.entrySet()) {
+                    if (entry.getValue().isJsonNull()) continue;
+                    gtPixelTotals.put(entry.getKey(), entry.getValue().getAsLong());
+                }
+            }
+
             long disagreementPixels =
                     t.has("disagreementPixels") ? t.get("disagreementPixels").getAsLong() : 0L;
             List<Integer> disagreementHist = new ArrayList<>();
@@ -386,7 +406,8 @@ public final class TrainingIssuesSessionStore {
                     resolveAsset(sessionDir, t, "gtAsset"),
                     topConfusions,
                     disagreementPixels,
-                    disagreementHist));
+                    disagreementHist,
+                    gtPixelTotals));
         }
 
         SessionInfo info = new SessionInfo(

@@ -20,11 +20,13 @@ import javafx.collections.transformation.FilteredList;
 import javafx.collections.transformation.SortedList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Cursor;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
@@ -151,6 +153,13 @@ public class TrainingAreaIssuesDialog {
     // Confidence legend threshold marker (repositioned as the slider moves).
     private Region confidenceLegendMarker;
     private double confidenceLegendWidth = 200;
+
+    // Selectable confidence-threshold range. The legend ramp spans the full
+    // 0-1 confidence scale, but only this band can be chosen, so the legend
+    // shades the rest and clamps clicks into it.
+    private static final double CONFIDENCE_MIN = 0.50;
+    private static final double CONFIDENCE_MAX = 0.99;
+    private static final double CONFIDENCE_DEFAULT = 0.80;
     // Confidence heatmap (cropped to the core tile), computed once per live
     // session and reused each frame -- only the green changes layer is rebuilt
     // as the slider moves, so we don't re-read PNGs + recolorize every frame.
@@ -1394,7 +1403,7 @@ public class TrainingAreaIssuesDialog {
     private void buildConfidenceLegend() {
         legendBox.getChildren().clear();
 
-        Label legendTitle = new Label("Model Confidence (slider threshold marked):");
+        Label legendTitle = new Label("Model Confidence (click or drag to set threshold):");
         legendTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #888;");
         legendBox.getChildren().add(legendTitle);
 
@@ -1417,9 +1426,48 @@ public class TrainingAreaIssuesDialog {
         marker.setStyle("-fx-background-color: white; -fx-border-color: black; -fx-border-width: 0.5;");
         confidenceLegendMarker = marker;
 
-        Pane barPane = new Pane(gradientBar, marker);
+        // Shade the part of the ramp that cannot be selected, so clamping a
+        // click there reads as a limit rather than as the control ignoring you.
+        Region belowMin = new Region();
+        double unreachableW = CONFIDENCE_MIN * w;
+        belowMin.setPrefSize(unreachableW, h);
+        belowMin.setMinSize(unreachableW, h);
+        belowMin.setMaxSize(unreachableW, h);
+        belowMin.setLayoutX(0);
+        belowMin.setMouseTransparent(true);
+        belowMin.setStyle("-fx-background-color: rgba(245, 245, 245, 0.72);");
+
+        Pane barPane = new Pane(gradientBar, belowMin, marker);
         barPane.setPrefSize(w, h);
         barPane.setMaxWidth(w);
+
+        // This is a legend, but it is a colour ramp with a marker sitting on
+        // it, which is exactly what a slider track with a handle looks like --
+        // so people try to drag it, and the real slider is one collapsed pane
+        // away in "Annotation Adjustment". Rather than make the legend look
+        // inert, let it be the control it already resembles.
+        barPane.setCursor(Cursor.HAND);
+        Tooltip.install(
+                barPane,
+                TooltipHelper.create(String.format(
+                        "Click or drag to set the confidence threshold.%n"
+                                + "Pixels more confident than the marker (toward red) are the%n"
+                                + "ones an adjustment would change.%n"
+                                + "Selectable range is %.0f%%-%.0f%%; the shaded left end is below it.",
+                        CONFIDENCE_MIN * 100, CONFIDENCE_MAX * 100)));
+        javafx.event.EventHandler<MouseEvent> setThresholdFromX = e -> {
+            if (confidenceSlider == null || w <= 0) return;
+            double frac = Math.max(0.0, Math.min(1.0, e.getX() / w));
+            // The ramp is the 0-1 confidence scale; the slider only accepts
+            // CONFIDENCE_MIN..MAX, so clamp rather than rescale -- rescaling
+            // would put the marker at a different confidence than the colour
+            // under the cursor, which is the one thing the legend must not do.
+            double value = Math.max(confidenceSlider.getMin(), Math.min(confidenceSlider.getMax(), frac));
+            confidenceSlider.setValue(value);
+            e.consume();
+        };
+        barPane.setOnMousePressed(setThresholdFromX);
+        barPane.setOnMouseDragged(setThresholdFromX);
 
         Label lowLabel = new Label("Low");
         lowLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888;");
@@ -1432,7 +1480,7 @@ public class TrainingAreaIssuesDialog {
         labels.setPrefWidth(w);
 
         legendBox.getChildren().addAll(barPane, labels);
-        updateConfidenceLegendMarker(confidenceSlider != null ? confidenceSlider.getValue() : 0.80);
+        updateConfidenceLegendMarker(confidenceSlider != null ? confidenceSlider.getValue() : CONFIDENCE_DEFAULT);
     }
 
     /** Moves the confidence-legend threshold marker to {@code threshold} (0-1). */
@@ -1456,7 +1504,7 @@ public class TrainingAreaIssuesDialog {
         confLabel.setTooltip(TooltipHelper.create("Minimum model confidence to accept a prediction.\n"
                 + "Higher = more conservative (only fix obvious errors).\n"
                 + "0.80 is a good starting point."));
-        confidenceSlider = new Slider(0.50, 0.99, 0.80);
+        confidenceSlider = new Slider(CONFIDENCE_MIN, CONFIDENCE_MAX, CONFIDENCE_DEFAULT);
         confidenceSlider.setShowTickLabels(true);
         confidenceSlider.setShowTickMarks(true);
         confidenceSlider.setMajorTickUnit(0.1);
@@ -1497,12 +1545,19 @@ public class TrainingAreaIssuesDialog {
         previewCheckBox = new CheckBox("Preview changes before applying");
         previewCheckBox.setSelected(true);
         previewCheckBox.setStyle("-fx-font-size: 11px;");
-        previewCheckBox.setTooltip(TooltipHelper.create("When checked, clicking 'Adjust' will first show\n"
-                + "a preview overlay of which pixels would change.\n"
-                + "You can then confirm or cancel."));
+        previewCheckBox.setTooltip(TooltipHelper.create("When checked, the button below previews which pixels\n"
+                + "would change, and you confirm or cancel afterwards.\n"
+                + "When unchecked, it edits the annotations immediately."));
+        // Keep the button's wording honest: unchecking the box turns it from
+        // a preview into an immediate edit, and the label has to say so.
+        previewCheckBox.selectedProperty().addListener((obs, was, is) -> {
+            if (adjustButton != null && pendingPreview == null) {
+                adjustButton.setText(restingAdjustLabel());
+            }
+        });
 
         // Adjust button
-        adjustButton = new Button("Adjust annotations in current tile");
+        adjustButton = new Button(restingAdjustLabel());
         adjustButton.setMaxWidth(Double.MAX_VALUE);
         adjustButton.setDisable(true);
         adjustButton.setTooltip(TooltipHelper.create("Modify annotations within this tile so they match\n"
@@ -1599,7 +1654,7 @@ public class TrainingAreaIssuesDialog {
             transitionCheckBoxesBox.setVisible(false);
             transitionCheckBoxesBox.setManaged(false);
         }
-        adjustButton.setText("Adjust annotations in current tile");
+        adjustButton.setText(restingAdjustLabel());
         cancelPreviewButton.setVisible(false);
         cancelPreviewButton.setManaged(false);
         adjustStatusLabel.setText("Preview cancelled");
@@ -1616,6 +1671,22 @@ public class TrainingAreaIssuesDialog {
      * If preview mode is enabled, shows a preview overlay first. Otherwise
      * applies the adjustment directly after a confirmation dialog.
      */
+    /**
+     * The adjust button's resting label.
+     * <p>
+     * With preview on, the first click only shows which pixels would change --
+     * so the label must not sound like it edits anything. With preview off the
+     * same click edits the annotations, and the label has to say that instead.
+     * Once a preview is pending the caller overrides this with "Apply
+     * previewed adjustment".
+     *
+     * @return the label matching what a click will actually do
+     */
+    private String restingAdjustLabel() {
+        boolean willPreview = previewCheckBox == null || previewCheckBox.isSelected();
+        return willPreview ? "Preview annotation adjustment areas" : "Adjust annotations in current tile";
+    }
+
     private void handleAdjustAction() {
         TileRow row = table.getSelectionModel().getSelectedItem();
         if (row == null || !row.hasPredictionData()) return;
@@ -1836,7 +1907,7 @@ public class TrainingAreaIssuesDialog {
             transitionCheckBoxesBox.setVisible(false);
             transitionCheckBoxesBox.setManaged(false);
         }
-        adjustButton.setText("Adjust annotations in current tile");
+        adjustButton.setText(restingAdjustLabel());
         cancelPreviewButton.setVisible(false);
         cancelPreviewButton.setManaged(false);
 
@@ -2059,30 +2130,52 @@ public class TrainingAreaIssuesDialog {
     // ==================== Confusion Matrix ====================
 
     /**
-     * Rebuilds the Confusion Matrix tab from the current {@code allRows}.
-     * <p>
-     * Aggregates per-tile {@link ClassifierClient.ConfusionPair} entries into a
-     * session-wide GT x Pred matrix. Diagonal entries are derived as
-     * {@code (sum of GT pixels for this class across tiles) - (sum of misclassified pixels for this class)}.
-     * <p>
-     * For sessions emitted by v0.7.10 and earlier, the per-tile pair list was
-     * truncated to the top 3 entries, so the off-diagonals miss any pair that
-     * was always the 4th+ confusion. The header subtitle is labeled
-     * "(approximate, from top-3 per tile)" in that case. v0.7.11+ emits the
-     * full pair list and the subtitle reads "(full pixel-level)".
+     * Session-wide GT x Pred confusion aggregation.
+     *
+     * @param classes every class seen, sorted, forming both axes
+     * @param gtTotals class -> labeled GT pixels summed over all tiles (the denominator)
+     * @param offDiag GT class -> predicted class -> misclassified pixels summed over all tiles
+     * @param totalTiles how many tiles were aggregated
+     * @param exact whether every tile supplied per-class GT pixel totals; false
+     *     means at least one tile came from a legacy session and its
+     *     denominator had to be reconstructed from confusion pairs alone
      */
-    private void rebuildConfusionMatrix() {
-        if (matrixContent == null) return;
-        matrixContent.getChildren().clear();
+    record ConfusionMatrixData(
+            List<String> classes,
+            Map<String, Long> gtTotals,
+            Map<String, Map<String, Long>> offDiag,
+            long totalTiles,
+            boolean exact) {}
 
+    /**
+     * Aggregates per-tile confusion data into a session-wide matrix.
+     * <p>
+     * The denominator is the sum of {@link TileRow#getGtPixelTotals()} across
+     * ALL tiles, which is the whole point of this method existing: a tile that
+     * predicted a class perfectly emits no {@link ClassifierClient.ConfusionPair}
+     * for it, so a denominator built from pair {@code gtTotal}s counts only the
+     * tiles that went wrong. Thirty-six clean tiles plus one bad one used to
+     * report the bad tile's own 98% as the session figure instead of ~2.6%.
+     * <p>
+     * A tile with confusion pairs but no GT totals is from a session saved before this field existed;
+     * for those, and only those, the old pair-derived denominator is used
+     * (counted once per tile per GT class) and {@code exact} comes back false.
+     * <p>
+     * Pulled out of {@link #rebuildConfusionMatrix()} as a static method so the
+     * arithmetic is testable without a JavaFX stage.
+     *
+     * @param rows the tiles to aggregate
+     * @return the aggregated matrix
+     */
+    static ConfusionMatrixData aggregateConfusionMatrix(List<TileRow> rows) {
         Set<String> classSet = new java.util.LinkedHashSet<>();
         Map<String, Long> gtSessionTotals = new java.util.LinkedHashMap<>();
         Map<String, Map<String, Long>> offDiag = new java.util.LinkedHashMap<>();
         Set<String> seenTileGt = new HashSet<>();
-        int maxPairsPerTile = 0;
         long totalTiles = 0;
+        boolean anyLegacyRow = false;
 
-        for (TileRow row : allRows) {
+        for (TileRow row : rows) {
             totalTiles++;
             // perClassIoU brings in classes that are correctly predicted in
             // some tiles but never appear in a confusion pair -- they would
@@ -2090,21 +2183,60 @@ public class TrainingAreaIssuesDialog {
             for (String cls : row.perClassIoU.keySet()) {
                 classSet.add(cls);
             }
+            Map<String, Long> rowTotals = row.getGtPixelTotals();
+            for (Map.Entry<String, Long> e : rowTotals.entrySet()) {
+                if (e.getValue() == null) continue;
+                classSet.add(e.getKey());
+                gtSessionTotals.merge(e.getKey(), e.getValue(), Long::sum);
+            }
             List<ClassifierClient.ConfusionPair> pairs = row.getTopConfusions();
-            if (pairs.size() > maxPairsPerTile) maxPairsPerTile = pairs.size();
+            // A tile with pairs but no totals predates the field. A tile with
+            // neither (no labeled pixels at all) carries no information either
+            // way and must not drag the whole matrix down to "approximate".
+            boolean legacyRow = rowTotals.isEmpty() && !pairs.isEmpty();
+            if (legacyRow) anyLegacyRow = true;
             for (ClassifierClient.ConfusionPair cp : pairs) {
                 classSet.add(cp.gt());
                 classSet.add(cp.pred());
-                String key = row.getFilename() + "|" + cp.gt();
-                if (seenTileGt.add(key)) {
-                    gtSessionTotals.merge(cp.gt(), cp.gtTotal(), Long::sum);
+                if (legacyRow) {
+                    String key = row.getFilename() + "|" + cp.gt();
+                    if (seenTileGt.add(key)) {
+                        gtSessionTotals.merge(cp.gt(), cp.gtTotal(), Long::sum);
+                    }
                 }
                 offDiag.computeIfAbsent(cp.gt(), k -> new java.util.LinkedHashMap<>())
                         .merge(cp.pred(), cp.pixels(), Long::sum);
             }
         }
 
-        if (classSet.isEmpty()) {
+        List<String> classes = new ArrayList<>(classSet);
+        java.util.Collections.sort(classes);
+        return new ConfusionMatrixData(classes, gtSessionTotals, offDiag, totalTiles, !anyLegacyRow);
+    }
+
+    /**
+     * Rebuilds the Confusion Matrix tab from the current {@code allRows}.
+     * <p>
+     * Aggregation lives in {@link #aggregateConfusionMatrix(List)}; this method
+     * only renders it. Diagonal entries are derived as
+     * {@code (GT pixels for this class across tiles) - (misclassified pixels for this class)}.
+     * <p>
+     * The subtitle says "full pixel-level" when every tile supplied per-class
+     * GT pixel totals, and "approximate" when any tile predates them -- in
+     * which case its denominator comes from confusion pairs alone and every
+     * percentage in its rows is overstated.
+     */
+    private void rebuildConfusionMatrix() {
+        if (matrixContent == null) return;
+        matrixContent.getChildren().clear();
+
+        ConfusionMatrixData data = aggregateConfusionMatrix(allRows);
+        List<String> classes = data.classes();
+        Map<String, Long> gtSessionTotals = data.gtTotals();
+        Map<String, Map<String, Long>> offDiag = data.offDiag();
+        long totalTiles = data.totalTiles();
+
+        if (classes.isEmpty()) {
             Label empty = new Label("No confusion data available yet.\n"
                     + "Train a classifier or load a saved session to populate the matrix.");
             empty.setStyle("-fx-text-fill: #888;");
@@ -2112,14 +2244,12 @@ public class TrainingAreaIssuesDialog {
             return;
         }
 
-        List<String> classes = new ArrayList<>(classSet);
-        java.util.Collections.sort(classes);
-
-        boolean isApproximate = maxPairsPerTile > 0 && maxPairsPerTile <= 3;
-        String subtitle = isApproximate
-                ? String.format(
-                        "Confusion Matrix (approximate, from top-3 per tile) -- %,d tiles aggregated", totalTiles)
-                : String.format("Confusion Matrix (full pixel-level) -- %,d tiles aggregated", totalTiles);
+        String subtitle = data.exact()
+                ? String.format("Confusion Matrix (full pixel-level) -- %,d tiles aggregated", totalTiles)
+                : String.format(
+                        "Confusion Matrix (approximate -- session saved without per-class pixel totals) "
+                                + "-- %,d tiles aggregated",
+                        totalTiles);
         Label header = new Label(subtitle);
         header.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;");
 
@@ -2308,6 +2438,10 @@ public class TrainingAreaIssuesDialog {
         // Preserved for session round-trips; not bound to the TableView.
         private final Map<String, Double> perClassIoU;
         private final List<ClassifierClient.ConfusionPair> topConfusions;
+        // Labeled GT pixels per class in this tile, for every class present --
+        // including the ones predicted perfectly, which emit no confusion pair.
+        // Empty for tiles loaded from a legacy session.
+        private final Map<String, Long> gtPixelTotals;
         // Raw total of mispredicted labeled pixels (no confidence filter).
         private final long disagreementPixelsTotal;
         // 20-bin confidence histogram of disagree pixels (0.05 bins covering
@@ -2336,6 +2470,9 @@ public class TrainingAreaIssuesDialog {
             this.confidenceMapPath = new SimpleStringProperty(result.confidenceMapPath());
             this.groundTruthMaskPath = new SimpleStringProperty(result.groundTruthMaskPath());
             this.topConfusions = result.topConfusions() != null ? List.copyOf(result.topConfusions()) : List.of();
+            this.gtPixelTotals = result.gtPixelTotals() != null
+                    ? new LinkedHashMap<>(result.gtPixelTotals())
+                    : new LinkedHashMap<>();
             this.disagreementPixelsTotal = result.disagreementPixels();
             this.disagreementConfHistogram = result.disagreementConfHistogram() != null
                     ? List.copyOf(result.disagreementConfHistogram())
@@ -2443,6 +2580,18 @@ public class TrainingAreaIssuesDialog {
 
         public List<ClassifierClient.ConfusionPair> getTopConfusions() {
             return topConfusions;
+        }
+
+        /**
+         * Labeled ground-truth pixels per class in this tile, covering every
+         * class present -- not only the ones that were confused. Empty for a
+         * tile restored from a legacy session, which is the signal to fall
+         * back to pair-derived denominators.
+         *
+         * @return class name -> GT pixel count, possibly empty, never null
+         */
+        public Map<String, Long> getGtPixelTotals() {
+            return gtPixelTotals;
         }
 
         public long getDisagreementPixels() {
@@ -2558,7 +2707,8 @@ public class TrainingAreaIssuesDialog {
                     getGroundTruthMaskPath(),
                     topConfusions,
                     disagreementPixelsTotal,
-                    disagreementConfHistogram);
+                    disagreementConfHistogram,
+                    gtPixelTotals);
         }
 
         // TileRowData (for TrainingIssuesOverlayController)

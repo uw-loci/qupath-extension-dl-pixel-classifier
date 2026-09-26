@@ -554,6 +554,7 @@ try:
                 # the misclassifications. Reported with the source GT class's
                 # total pixel count so the dialog can show "k% of GT_class".
                 top_confusions = []
+                gt_pixel_totals = {}
                 try:
                     num_classes = len(classes)
                     gt_lab = mask_i[labeled_mask].long()
@@ -563,6 +564,20 @@ try:
                         combined, minlength=num_classes * num_classes
                     ).view(num_classes, num_classes)
                     gt_totals = conf_counts.sum(dim=1)
+                    # Ground-truth pixel count per class for EVERY class
+                    # present in this tile, whether or not it was confused.
+                    # The Confusion Matrix tab uses the session-wide sum of
+                    # these as its denominator. Deriving the denominator from
+                    # the pairs below instead undercounts it badly: a tile
+                    # that predicted a class perfectly emits no pair for it,
+                    # so its correct pixels vanish from the denominator while
+                    # every other tile's errors stay in the numerator.
+                    totals_map = {}
+                    for idx in range(num_classes):
+                        class_px = int(gt_totals[idx].item())
+                        if class_px > 0:
+                            totals_map[classes[idx]] = class_px
+                    gt_pixel_totals = totals_map
                     pairs = []
                     for gt_idx in range(num_classes):
                         for pred_idx in range(num_classes):
@@ -732,6 +747,7 @@ try:
                         "confidence_map": confidence_map_path,
                         "ground_truth_mask": gt_mask_path,
                         "top_confusions": top_confusions,
+                        "gt_pixel_totals": gt_pixel_totals,
                     }
                 )
 

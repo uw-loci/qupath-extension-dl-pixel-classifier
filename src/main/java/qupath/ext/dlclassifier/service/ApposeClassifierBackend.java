@@ -1669,6 +1669,20 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 }
             }
 
+            // Ground-truth pixel count per class, emitted for every class in the
+            // tile. Absent from payloads written before this field existed, in
+            // which case the confusion matrix falls back to pair-derived (and
+            // understated) denominators.
+            Map<String, Long> gtPixelTotals = new LinkedHashMap<>();
+            if (obj.has("gt_pixel_totals") && !obj.get("gt_pixel_totals").isJsonNull()) {
+                var totalsObj = obj.getAsJsonObject("gt_pixel_totals");
+                for (var entry : totalsObj.entrySet()) {
+                    if (!entry.getValue().isJsonNull()) {
+                        gtPixelTotals.put(entry.getKey(), entry.getValue().getAsLong());
+                    }
+                }
+            }
+
             long disagreementPixels = obj.has("disagreement_pixels")
                             && !obj.get("disagreement_pixels").isJsonNull()
                     ? obj.get("disagreement_pixels").getAsLong()
@@ -1705,7 +1719,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     groundTruthMaskPath,
                     topConfusions,
                     disagreementPixels,
-                    disagreementHist));
+                    disagreementHist,
+                    gtPixelTotals));
         }
 
         int total = results.size();

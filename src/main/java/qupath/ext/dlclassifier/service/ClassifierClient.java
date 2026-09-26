@@ -434,20 +434,31 @@ public class ClassifierClient {
             String groundTruthMaskPath,
             List<ConfusionPair> topConfusions,
             long disagreementPixels,
-            List<Integer> disagreementConfHistogram) {
+            List<Integer> disagreementConfHistogram,
+            Map<String, Long> gtPixelTotals) {
         /**
-         * Normalize {@code topConfusions} and {@code disagreementConfHistogram}
-         * to empty lists (never null) so downstream code never has to
-         * null-check. The histogram has 20 fixed bins of width 0.05 covering
-         * [0.0, 1.0]; bin i = count of disagree pixels with confidence in
-         * [i*0.05, (i+1)*0.05) (bin 19 includes confidence=1.0). When absent
-         * (legacy session, pre-feature), it's empty -- callers should fall
-         * back to {@code disagreementPixels} (raw total) or hide the column.
+         * Normalize {@code topConfusions}, {@code disagreementConfHistogram}
+         * and {@code gtPixelTotals} to empty collections (never null) so
+         * downstream code never has to null-check. The histogram has 20 fixed
+         * bins of width 0.05 covering [0.0, 1.0]; bin i = count of disagree
+         * pixels with confidence in [i*0.05, (i+1)*0.05) (bin 19 includes
+         * confidence=1.0). When absent (legacy session, pre-feature), it's
+         * empty -- callers should fall back to {@code disagreementPixels} (raw
+         * total) or hide the column.
+         * <p>
+         * {@code gtPixelTotals} maps class name -> labeled ground-truth pixel
+         * count in this tile, for every class present, whether or not it was
+         * confused with anything. It is the denominator the session-wide
+         * confusion matrix needs: {@link ConfusionPair#gtTotal()} only reaches
+         * classes that were actually misread somewhere in the tile, so summing
+         * those alone omits every perfectly-predicted tile and inflates each
+         * percentage. Empty for legacy sessions saved before this field existed.
          */
         public TileEvaluationResult {
             topConfusions = topConfusions == null ? List.of() : List.copyOf(topConfusions);
             disagreementConfHistogram =
                     disagreementConfHistogram == null ? List.of() : List.copyOf(disagreementConfHistogram);
+            gtPixelTotals = gtPixelTotals == null ? Map.of() : Map.copyOf(gtPixelTotals);
         }
 
         /**
@@ -491,7 +502,8 @@ public class ClassifierClient {
                     groundTruthMaskPath,
                     topConfusions,
                     0L,
-                    List.of());
+                    List.of(),
+                    Map.of());
         }
 
         /**
