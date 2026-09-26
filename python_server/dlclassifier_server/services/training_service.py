@@ -12,10 +12,12 @@ Includes:
 
 import json
 import logging
+import statistics
 import math
 import os
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Dict, Any, List, Callable, Optional
 
@@ -402,7 +404,36 @@ class EarlyStopping:
         restore_best_weights: Whether to restore best model weights when stopping
         mode: "min" if lower metric is better (e.g. loss),
               "max" if higher metric is better (e.g. IoU)
+
+    An epoch only counts against the model when it is BOTH meaningfully worse
+    than the best AND the validation loss has stopped improving. Two real runs
+    forced this:
+
+    - A validation metric measured on a handful of patches swings enormously.
+      One run moved 0.53 mean IoU between consecutive epochs. Whatever the
+      highest spike happens to be then becomes a bar the model must clear
+      within `patience` epochs, and if the spike was noise it often cannot --
+      however well it is still training. That run was stopped at epoch 25
+      holding 0.886; resumed, it reached 0.976 by epoch 35.
+    - Mean IoU is computed from argmax, so it cannot move at all until
+      predictions cross a decision boundary. Another run sat at exactly 0.1861
+      for eleven epochs while validation loss fell 37%, and was stopped one
+      epoch before the predictions flipped.
+
+    So the metric alone is not enough evidence to stop on. The tolerance is
+    scaled by the metric's own recent spread, and only applies when that
+    spread is actually non-zero -- a perfectly flat metric is not noisy, it is
+    stuck, and must still be able to trigger a stop.
     """
+
+    # Epochs of history used to estimate how noisy each signal is.
+    NOISE_WINDOW = 10
+    # An epoch within this many standard deviations of the best is treated as
+    # a sample from the same distribution rather than as a regression.
+    NOISE_TOLERANCE_SD = 0.5
+    # Validation loss must fall by more than this many of its own standard
+    # deviations across the window to count as "still improving".
+    LOSS_TREND_SD = 0.5
 
     def __init__(
         self,
@@ -422,22 +453,72 @@ class EarlyStopping:
         self.counter = 0
         self.should_stop = False
 
+        # Recent history, used to judge whether an epoch is genuinely worse
+        # than the best or merely a sample from a noisy metric. See __call__.
+        self._recent_metric: deque = deque(maxlen=self.NOISE_WINDOW)
+        self._recent_secondary: deque = deque(maxlen=self.NOISE_WINDOW)
+
         if mode == "min":
             self._is_better = lambda current, best: current < best - self.min_delta
         else:
             self._is_better = lambda current, best: current > best + self.min_delta
 
-    def __call__(self, epoch: int, metric_value: float, model: nn.Module) -> bool:
+    def _within_metric_noise(self, metric_value: float) -> bool:
+        """Whether this epoch sits inside the metric's own recent spread.
+
+        Only true when the spread is measurably non-zero. A metric that never
+        moves is stuck rather than noisy, and must still be able to stop a run.
+        """
+        if len(self._recent_metric) < 4:
+            return False
+        spread = statistics.pstdev(self._recent_metric)
+        if spread <= 1e-9:
+            return False
+        tol = self.NOISE_TOLERANCE_SD * spread
+        if self.mode == "max":
+            return metric_value >= self.best_score - tol
+        return metric_value <= self.best_score + tol
+
+    def _secondary_still_improving(self) -> bool:
+        """Whether validation loss is still falling by more than its own noise.
+
+        This is what distinguishes a model that is genuinely converging behind
+        a quantised metric from one that has stopped learning.
+        """
+        window = list(self._recent_secondary)
+        if len(window) < 6:
+            return False
+        spread = statistics.pstdev(window)
+        if spread <= 1e-9:
+            return False
+        half = len(window) // 2
+        drop = statistics.mean(window[:half]) - statistics.mean(window[half:])
+        return drop > self.LOSS_TREND_SD * spread
+
+    def __call__(
+        self,
+        epoch: int,
+        metric_value: float,
+        model: nn.Module,
+        secondary_value: Optional[float] = None,
+    ) -> bool:
         """Check if training should stop.
 
         Args:
             epoch: Current epoch number
             metric_value: Current value of the monitored metric
             model: The model being trained
+            secondary_value: Validation loss for this epoch, when it is not
+                already the monitored metric. Used to keep a run alive while
+                it is still converging behind a metric that cannot show it.
 
         Returns:
             True if training should stop, False otherwise
         """
+        self._recent_metric.append(metric_value)
+        if secondary_value is not None:
+            self._recent_secondary.append(secondary_value)
+
         if self._is_better(metric_value, self.best_score):
             # Improvement found
             self.best_score = metric_value
@@ -452,6 +533,29 @@ class EarlyStopping:
 
             logger.debug(
                 f"Early stopping: new best {metric_value:.4f} at epoch {epoch}"
+            )
+            return False
+        elif self._within_metric_noise(metric_value):
+            # Indistinguishable from the best given how much this metric moves
+            # on its own. Not evidence that training has stopped working.
+            logger.debug(
+                "Early stopping: %.4f is within the metric's own noise of the "
+                "best %.4f -- holding at %d/%d",
+                metric_value,
+                self.best_score,
+                self.counter,
+                self.patience,
+            )
+            return False
+        elif self._secondary_still_improving():
+            # The monitored metric is down but validation loss is still
+            # falling faster than its own noise. Mean IoU is computed from
+            # argmax and can sit flat while the model is genuinely converging.
+            logger.debug(
+                "Early stopping: validation loss still improving -- holding "
+                "at %d/%d",
+                self.counter,
+                self.patience,
             )
             return False
         else:
@@ -3961,7 +4065,12 @@ class TrainingService:
                     # Reset early stopping counter -- don't stop yet
                     early_stopping.counter = 0
 
-                if early_stopping(epoch + 1, es_value, model):
+                # Hand validation loss over as a second opinion, unless it is
+                # already the monitored metric. mean_iou comes from argmax and
+                # can sit perfectly flat while the model is still converging;
+                # val_loss is continuous and shows that movement.
+                es_secondary = None if early_stopping_metric == "val_loss" else val_loss
+                if early_stopping(epoch + 1, es_value, model, es_secondary):
                     # Banner-format so the line stands out in the (very long)
                     # training log. Java-side completion message also surfaces
                     # this via lastEpoch < totalEpochs so a user who only
