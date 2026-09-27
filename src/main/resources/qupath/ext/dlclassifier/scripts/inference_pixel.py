@@ -14,6 +14,7 @@ Outputs:
     probabilities: NDArray - shared memory probability map (C, H, W) float32
     num_classes: int
 """
+
 import numpy as np
 import logging
 
@@ -21,7 +22,9 @@ logger = logging.getLogger("dlclassifier.appose.inference")
 
 # Access persistent globals from init script
 if inference_service is None:
-    raise RuntimeError("Inference service not initialized: " + globals().get("init_error", "unknown"))
+    raise RuntimeError(
+        "Inference service not initialized: " + globals().get("init_error", "unknown")
+    )
 
 
 # --- Inline normalization for precomputed image-level stats ---
@@ -30,6 +33,7 @@ if inference_service is None:
 # dlclassifier_server package installed in the Appose pixi environment
 # may be an older version that does not support precomputed stats.
 # Scripts loaded from JAR resources are always current.
+
 
 def _apply_precomputed_stats(img, stats, strategy):
     """Normalize a single channel/image using pre-computed statistics."""
@@ -72,7 +76,8 @@ def _normalize_tile(img, input_config):
         if per_channel and img.ndim == 3 and img.shape[2] > 1:
             for c in range(min(img.shape[2], len(channel_stats))):
                 img[..., c] = _apply_precomputed_stats(
-                    img[..., c], channel_stats[c], strategy)
+                    img[..., c], channel_stats[c], strategy
+                )
         else:
             stats = channel_stats[0] if channel_stats else {}
             img = _apply_precomputed_stats(img, stats, strategy)
@@ -95,6 +100,7 @@ def _normalize_tile(img, input_config):
 # already handled by the static-shape logic inside _infer_batch_spatial, so
 # their working path is left completely untouched.
 
+
 def _onnx_pad_divisor(model_path):
     """Spatial factor the model's ONNX graph needs inputs padded to.
 
@@ -108,27 +114,27 @@ def _onnx_pad_divisor(model_path):
     try:
         import json as _json
         import os as _os
+
         with open(_os.path.join(model_path, "metadata.json")) as _f:
-            _arch = (_json.load(_f).get("architecture", {}) or {})
+            _arch = _json.load(_f).get("architecture", {}) or {}
         _mtype = str(_arch.get("type", "")).lower()
         if _mtype == "tiny-unet":
             div = 1 << int(_arch.get("depth", 4))
         elif _mtype == "muvit":
             _ps = int(_arch.get("patch_size", 16))
             _scales = str(_arch.get("level_scales", "1"))
-            _mx = max((int(s) for s in _scales.split(",") if s.strip()),
-                      default=1)
+            _mx = max((int(s) for s in _scales.split(",") if s.strip()), default=1)
             div = _ps * _mx
     except Exception as _e:
-        logger.warning("Could not read ONNX pad divisor for %s: %s",
-                       model_path, _e)
+        logger.warning("Could not read ONNX pad divisor for %s: %s", model_path, _e)
         div = 1
     cache[model_path] = div
     return div
 
 
-def _infer_with_divisor_padding(model_tuple, tile_array, reflection_padding,
-                                use_tta, pad_div):
+def _infer_with_divisor_padding(
+    model_tuple, tile_array, reflection_padding, use_tta, pad_div
+):
     """Run ONNX inference padding the tile to a divisible size, then crop back.
 
     Adds the reflection context ourselves and passes reflection_padding=0 so
@@ -149,10 +155,10 @@ def _infer_with_divisor_padding(model_tuple, tile_array, reflection_padding,
         # reflect requires pad <= dim-1; tiny edge tiles fall back to edge.
         padded = np.pad(tile_array, pad_spec, mode="edge")
     prob_maps = inference_service._infer_batch_spatial(
-        model_tuple, [padded], reflection_padding=0,
-        gpu_batch_size=1, use_tta=use_tta)
+        model_tuple, [padded], reflection_padding=0, gpu_batch_size=1, use_tta=use_tta
+    )
     full = prob_maps[0]  # (C, padded_H, padded_W)
-    cropped = full[:, rh:rh + h0, rw:rw + w0]
+    cropped = full[:, rh : rh + h0, rw : rw + w0]
     return np.ascontiguousarray(cropped)
 
 
@@ -203,8 +209,13 @@ with inference_lock:
     # _load_model call on the same session.
     if hasattr(inference_service, "set_experimental_providers"):
         inference_service.set_experimental_providers(
-            use_tensorrt=use_tensorrt, use_int8=use_int8)
+            use_tensorrt=use_tensorrt, use_int8=use_int8
+        )
     model_tuple = inference_service._load_model(model_path)
+    # Contract check: the scripts do not select channels, Java does.
+    # Catch a producer that forgot, here, where the model's real
+    # input size is known.
+    inference_service.assert_input_channels(model_tuple, num_channels, "this tile")
     # tiny-unet/muvit ONNX graphs need inputs divisible by the network's
     # downsampling factor or the skip-connection Concat fails on odd-sized
     # boundary tiles. SMP/PyTorch resolve to divisor 1 (no-op). See the
@@ -212,13 +223,15 @@ with inference_lock:
     pad_div = _onnx_pad_divisor(model_path) if model_tuple[0] == "onnx" else 1
     if pad_div > 1:
         prob_map = _infer_with_divisor_padding(
-            model_tuple, tile_array, reflection_padding, use_tta, pad_div)
+            model_tuple, tile_array, reflection_padding, use_tta, pad_div
+        )
     else:
         prob_maps = inference_service._infer_batch_spatial(
-            model_tuple, [tile_array],
+            model_tuple,
+            [tile_array],
             reflection_padding=reflection_padding,
             gpu_batch_size=1,
-            use_tta=use_tta
+            use_tta=use_tta,
         )
         prob_map = prob_maps[0]  # (C, H, W) float32
     inference_service._cleanup_after_inference()

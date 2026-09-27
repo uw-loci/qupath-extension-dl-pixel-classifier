@@ -36,6 +36,15 @@ public class ClassifierMetadata {
     private final int inputWidth;
     private final int inputHeight;
     private final int inputChannels;
+    // Which channels of the SOURCE image this model was trained on, in order.
+    // Written into metadata.json as input_config.selected_channels since the
+    // beginning, but never read back until 0.9.8 -- every site that rebuilt a
+    // ChannelConfiguration from a saved model substituted a positional range
+    // (0..inputChannels-1) instead. That is right only when the selection was
+    // a prefix; a model trained on channels 1, 5 and 6 had bands 0, 1 and 2
+    // fed to it at inference, silently. Empty means "not recorded", and
+    // callers fall back to the positional range.
+    private final List<Integer> selectedChannels;
     private final double downsample;
     private final int contextScale;
 
@@ -112,6 +121,7 @@ public class ClassifierMetadata {
         this.inputWidth = builder.inputWidth;
         this.inputHeight = builder.inputHeight;
         this.inputChannels = builder.inputChannels;
+        this.selectedChannels = builder.selectedChannels == null ? List.of() : List.copyOf(builder.selectedChannels);
         this.downsample = builder.downsample;
         this.contextScale = builder.contextScale;
         this.expectedChannelNames = Collections.unmodifiableList(new ArrayList<>(builder.expectedChannelNames));
@@ -248,6 +258,41 @@ public class ClassifierMetadata {
      */
     public int getInputChannels() {
         return inputChannels;
+    }
+
+    /**
+     * Gets the source-image channel indices this model was trained on, in
+     * training order.
+     *
+     * <p>Empty when the model predates the field or did not record it; use
+     * {@link #getSelectedChannelsOrRange()} to get a usable list either way.
+     *
+     * @return the recorded selection, possibly empty
+     */
+    public List<Integer> getSelectedChannels() {
+        return selectedChannels;
+    }
+
+    /**
+     * Gets the channel selection to feed this model, falling back to a
+     * positional range when the model did not record one.
+     *
+     * <p>The fallback reproduces pre-0.9.8 behaviour and is correct whenever
+     * the model was trained on the first N channels in order. For an older
+     * model trained on a non-prefix selection the mapping is unrecoverable --
+     * it was never written down -- and retraining is the only fix.
+     *
+     * @return channel indices to extract from the source image
+     */
+    public List<Integer> getSelectedChannelsOrRange() {
+        if (!selectedChannels.isEmpty()) {
+            return selectedChannels;
+        }
+        List<Integer> range = new ArrayList<>(inputChannels);
+        for (int i = 0; i < inputChannels; i++) {
+            range.add(i);
+        }
+        return range;
     }
 
     /**
@@ -546,6 +591,7 @@ public class ClassifierMetadata {
         private int inputWidth = 512;
         private int inputHeight = 512;
         private int inputChannels = 3;
+        private List<Integer> selectedChannels = List.of();
         private double downsample = 1.0;
         private int contextScale = 1;
         private List<String> expectedChannelNames = new ArrayList<>();
@@ -603,6 +649,17 @@ public class ClassifierMetadata {
         public Builder inputSize(int width, int height) {
             this.inputWidth = width;
             this.inputHeight = height;
+            return this;
+        }
+
+        /**
+         * Sets the source-image channel indices this model was trained on.
+         *
+         * @param channels channel indices in training order, or null/empty if unrecorded
+         * @return this builder
+         */
+        public Builder selectedChannels(List<Integer> channels) {
+            this.selectedChannels = channels == null ? List.of() : List.copyOf(channels);
             return this;
         }
 

@@ -1747,65 +1747,54 @@ public class AnnotationExtractor {
      * that contract and the two must not drift apart.
      */
     private void savePatch(BufferedImage image, Path path) throws IOException {
-        int numBands = image.getRaster().getNumBands();
-        int dataType = image.getRaster().getDataBuffer().getDataType();
-        int[] selection =
-                channelSelectionFor(channelConfig == null ? null : channelConfig.getSelectedChannels(), numBands);
-        if (selection != null) {
-            // A subset or a reordering: the raw float path is the only one
-            // that can express it, so take it even for 8-bit RGB.
-            Path rawPath = path.resolveSibling(path.getFileName().toString().replaceFirst("\\.(tiff?|png)$", ".raw"));
-            float[][][] selected = BitDepthConverter.extractChannels(BitDepthConverter.toFloatArray(image), selection);
-            writeRawFloat(selected, rawPath);
-            return;
-        }
-        if (numBands <= 4 && dataType == DataBuffer.TYPE_BYTE) {
-            ImageIO.write(image, "TIFF", path.toFile());
-        } else {
-            // N-channel or high-bit-depth: write as raw float32 with header
-            logger.debug(
-                    "Saving as .raw: bands={}, dataType={} (TYPE_BYTE={}), image={}x{}, path={}",
-                    numBands,
-                    dataType,
-                    java.awt.image.DataBuffer.TYPE_BYTE,
-                    image.getWidth(),
-                    image.getHeight(),
-                    path.getFileName());
-            Path rawPath = path.resolveSibling(path.getFileName().toString().replaceFirst("\\.(tiff?|png)$", ".raw"));
-            writeRawFloat(BitDepthConverter.toFloatArray(image), rawPath);
-        }
+        writeModelInputTile(image, path, channelConfig == null ? null : channelConfig.getSelectedChannels());
     }
 
     /**
-     * Returns the channel indices to write for an image with {@code numBands}
-     * bands, or {@code null} when the selection is every band in file order
-     * and the patch can be written untouched.
+     * Writes one tile in the form a model consumes: exactly the selected
+     * channels, in the selected order.
      *
-     * @param selected selected channel indices, or null/empty for all bands
-     * @param numBands band count of the rendered patch
-     * @return indices to extract, or null when no extraction is needed
-     * @throws IOException if a selected index does not exist in the image
+     * <p>Public and static because this is the single writer for every tile
+     * that reaches a model from disk -- training patches and AdaBN
+     * calibration tiles alike. AdaBN used to inline its own copy of this
+     * decision and, being a copy, never learned about channel selection.
+     *
+     * <p>Simple 8-bit images with an identity selection keep the TIFF path
+     * byte for byte. A subset or a reorder forces the raw float path, which
+     * is the only one that can express it; {@code resolveActualFilename}
+     * already falls back from .tiff to .raw on read.
+     *
+     * @param image            the rendered tile
+     * @param path             requested output path (extension may change to .raw)
+     * @param selectedChannels channel indices to keep, or null/empty for all
+     * @return the path actually written
+     * @throws IOException if writing fails or a selected channel does not exist
      */
-    static int[] channelSelectionFor(List<Integer> selected, int numBands) throws IOException {
-        if (selected == null || selected.isEmpty()) {
-            return null;
+    public static Path writeModelInputTile(BufferedImage image, Path path, List<Integer> selectedChannels)
+            throws IOException {
+        int numBands = image.getRaster().getNumBands();
+        int dataType = image.getRaster().getDataBuffer().getDataType();
+        int[] selection = ChannelSelection.indicesFor(selectedChannels, numBands);
+        if (selection != null) {
+            Path rawPath = path.resolveSibling(path.getFileName().toString().replaceFirst("\\.(tiff?|png)$", ".raw"));
+            writeRawFloat(BitDepthConverter.extractChannels(BitDepthConverter.toFloatArray(image), selection), rawPath);
+            return rawPath;
         }
-        int[] indices = new int[selected.size()];
-        boolean identity = selected.size() == numBands;
-        for (int i = 0; i < indices.length; i++) {
-            int band = selected.get(i);
-            if (band < 0 || band >= numBands) {
-                throw new IOException(String.format(
-                        "Channel %d was selected for training but the image has only %d channel(s) "
-                                + "(0-%d). Reopen the channel list and reselect.",
-                        band, numBands, numBands - 1));
-            }
-            indices[i] = band;
-            if (band != i) {
-                identity = false;
-            }
+        if (numBands <= 4 && dataType == DataBuffer.TYPE_BYTE) {
+            ImageIO.write(image, "TIFF", path.toFile());
+            return path;
         }
-        return identity ? null : indices;
+        logger.debug(
+                "Saving as .raw: bands={}, dataType={} (TYPE_BYTE={}), image={}x{}, path={}",
+                numBands,
+                dataType,
+                DataBuffer.TYPE_BYTE,
+                image.getWidth(),
+                image.getHeight(),
+                path.getFileName());
+        Path rawPath = path.resolveSibling(path.getFileName().toString().replaceFirst("\\.(tiff?|png)$", ".raw"));
+        writeRawFloat(BitDepthConverter.toFloatArray(image), rawPath);
+        return rawPath;
     }
 
     /**

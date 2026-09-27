@@ -20,6 +20,7 @@ Outputs:
     output_paths: dict mapping tile_id -> output file path
     num_classes: int
 """
+
 import os
 import numpy as np
 import logging
@@ -27,11 +28,14 @@ import logging
 logger = logging.getLogger("dlclassifier.appose.inference_pixel_batch")
 
 if inference_service is None:
-    raise RuntimeError("Inference service not initialized: " + globals().get("init_error", "unknown"))
+    raise RuntimeError(
+        "Inference service not initialized: " + globals().get("init_error", "unknown")
+    )
 
 
 # --- Inline normalization for precomputed image-level stats ---
 # (See inference_pixel.py for rationale on why this is inlined)
+
 
 def _apply_precomputed_stats(img, stats, strategy):
     """Normalize a single channel/image using pre-computed statistics."""
@@ -74,7 +78,8 @@ def _normalize_tile(img, input_config):
         if per_channel and img.ndim == 3 and img.shape[2] > 1:
             for c in range(min(img.shape[2], len(channel_stats))):
                 img[..., c] = _apply_precomputed_stats(
-                    img[..., c], channel_stats[c], strategy)
+                    img[..., c], channel_stats[c], strategy
+                )
         else:
             stats = channel_stats[0] if channel_stats else {}
             img = _apply_precomputed_stats(img, stats, strategy)
@@ -92,6 +97,7 @@ def _normalize_tile(img, input_config):
 # (Duplicated from inference_pixel.py because each JAR-bundled script is a
 # self-contained payload; the installed package may predate this fix.)
 
+
 def _onnx_pad_divisor(model_path):
     """Spatial factor the model's ONNX graph needs inputs padded to.
 
@@ -104,27 +110,27 @@ def _onnx_pad_divisor(model_path):
     div = 1
     try:
         import json as _json
+
         with open(os.path.join(model_path, "metadata.json")) as _f:
-            _arch = (_json.load(_f).get("architecture", {}) or {})
+            _arch = _json.load(_f).get("architecture", {}) or {}
         _mtype = str(_arch.get("type", "")).lower()
         if _mtype == "tiny-unet":
             div = 1 << int(_arch.get("depth", 4))
         elif _mtype == "muvit":
             _ps = int(_arch.get("patch_size", 16))
             _scales = str(_arch.get("level_scales", "1"))
-            _mx = max((int(s) for s in _scales.split(",") if s.strip()),
-                      default=1)
+            _mx = max((int(s) for s in _scales.split(",") if s.strip()), default=1)
             div = _ps * _mx
     except Exception as _e:
-        logger.warning("Could not read ONNX pad divisor for %s: %s",
-                       model_path, _e)
+        logger.warning("Could not read ONNX pad divisor for %s: %s", model_path, _e)
         div = 1
     cache[model_path] = div
     return div
 
 
-def _infer_batch_with_divisor_padding(model_tuple, tiles, reflection_padding,
-                                      use_tta, pad_div):
+def _infer_batch_with_divisor_padding(
+    model_tuple, tiles, reflection_padding, use_tta, pad_div
+):
     """Run a uniform-size tile batch padded to a divisible size, then crop.
 
     All tiles share one shape (the buffer reshape guarantees it), so one
@@ -146,8 +152,9 @@ def _infer_batch_with_divisor_padding(model_tuple, tiles, reflection_padding,
         except Exception:
             padded.append(np.pad(_t, pad_spec, mode="edge"))
     out = inference_service._infer_batch_spatial(
-        model_tuple, padded, reflection_padding=0, use_tta=use_tta)
-    return [np.ascontiguousarray(p[:, rh:rh + h0, rw:rw + w0]) for p in out]
+        model_tuple, padded, reflection_padding=0, use_tta=use_tta
+    )
+    return [np.ascontiguousarray(p[:, rh : rh + h0, rw : rw + w0]) for p in out]
 
 
 # Appose 0.10.0+: inputs are injected directly into script scope (task.inputs is private).
@@ -197,20 +204,27 @@ with inference_lock:
     # thread's _load_model on the same session.
     if hasattr(inference_service, "set_experimental_providers"):
         inference_service.set_experimental_providers(
-            use_tensorrt=use_tensorrt, use_int8=use_int8)
+            use_tensorrt=use_tensorrt, use_int8=use_int8
+        )
     model_tuple = inference_service._load_model(model_path)
+    # Contract check: the scripts do not select channels, Java does.
+    # Catch a producer that forgot, here, where the model's real
+    # input size is known.
+    inference_service.assert_input_channels(model_tuple, num_channels, "batch tiles")
     # tiny-unet/muvit ONNX graphs need inputs divisible by the network's
     # downsampling factor (skip-connection Concat). SMP/PyTorch -> divisor 1
     # (no-op). See _onnx_pad_divisor above.
     pad_div = _onnx_pad_divisor(model_path) if model_tuple[0] == "onnx" else 1
     if pad_div > 1:
         all_prob_maps = _infer_batch_with_divisor_padding(
-            model_tuple, preprocessed, reflection_padding, use_tta, pad_div)
+            model_tuple, preprocessed, reflection_padding, use_tta, pad_div
+        )
     else:
         all_prob_maps = inference_service._infer_batch_spatial(
-            model_tuple, preprocessed,
+            model_tuple,
+            preprocessed,
             reflection_padding=reflection_padding,
-            use_tta=use_tta
+            use_tta=use_tta,
         )
     inference_service._cleanup_after_inference()
 

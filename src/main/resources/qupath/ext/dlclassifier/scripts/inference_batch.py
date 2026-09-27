@@ -17,17 +17,21 @@ Inputs:
 Outputs:
     predictions: dict mapping tile_id -> list of per-class probabilities
 """
+
 import numpy as np
 import logging
 
 logger = logging.getLogger("dlclassifier.appose.inference_batch")
 
 if inference_service is None:
-    raise RuntimeError("Inference service not initialized: " + globals().get("init_error", "unknown"))
+    raise RuntimeError(
+        "Inference service not initialized: " + globals().get("init_error", "unknown")
+    )
 
 
 # --- Inline normalization for precomputed image-level stats ---
 # (See inference_pixel.py for rationale on why this is inlined)
+
 
 def _apply_precomputed_stats(img, stats, strategy):
     """Normalize a single channel/image using pre-computed statistics."""
@@ -70,7 +74,8 @@ def _normalize_tile(img, input_config):
         if per_channel and img.ndim == 3 and img.shape[2] > 1:
             for c in range(min(img.shape[2], len(channel_stats))):
                 img[..., c] = _apply_precomputed_stats(
-                    img[..., c], channel_stats[c], strategy)
+                    img[..., c], channel_stats[c], strategy
+                )
         else:
             stats = channel_stats[0] if channel_stats else {}
             img = _apply_precomputed_stats(img, stats, strategy)
@@ -115,8 +120,13 @@ for i in range(num_tiles):
 with inference_lock:
     if hasattr(inference_service, "set_experimental_providers"):
         inference_service.set_experimental_providers(
-            use_tensorrt=use_tensorrt, use_int8=use_int8)
+            use_tensorrt=use_tensorrt, use_int8=use_int8
+        )
     model_tuple = inference_service._load_model(model_path)
+    # Contract check: the scripts do not select channels, Java does.
+    # Catch a producer that forgot, here, where the model's real
+    # input size is known.
+    inference_service.assert_input_channels(model_tuple, num_channels, "batch tiles")
     all_prob_maps = inference_service._infer_batch_spatial(model_tuple, preprocessed)
     inference_service._cleanup_after_inference()
 

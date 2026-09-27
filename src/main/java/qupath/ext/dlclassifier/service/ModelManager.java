@@ -2,6 +2,7 @@ package qupath.ext.dlclassifier.service;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
@@ -236,6 +237,26 @@ public class ModelManager {
             int inputChannels =
                     arch.has("input_channels") ? arch.get("input_channels").getAsInt() : 3;
             double downsample = arch.has("downsample") ? arch.get("downsample").getAsDouble() : 1.0;
+            // input_config.selected_channels: which channels of the SOURCE
+            // image the model was trained on, in order. Written since the
+            // beginning; read here since 0.9.8. Absent on models that never
+            // recorded it, in which case callers fall back to a positional
+            // range via getSelectedChannelsOrRange().
+            List<Integer> selectedChannels = new ArrayList<>();
+            if (obj.has("input_config") && obj.get("input_config").isJsonObject()) {
+                JsonObject ic = obj.getAsJsonObject("input_config");
+                if (ic.has("selected_channels") && ic.get("selected_channels").isJsonArray()) {
+                    for (JsonElement el : ic.getAsJsonArray("selected_channels")) {
+                        try {
+                            selectedChannels.add(el.getAsInt());
+                        } catch (RuntimeException ex) {
+                            logger.warn("Ignoring non-integer entry in input_config.selected_channels: {}", el);
+                            selectedChannels.clear();
+                            break;
+                        }
+                    }
+                }
+            }
             int contextScale =
                     arch.has("context_scale") ? arch.get("context_scale").getAsInt() : 1;
             // effective_input_channels (v0.3.8+) is the actual model input size including
@@ -421,6 +442,7 @@ public class ModelManager {
                     .backbone(backbone)
                     .inputSize(inputWidth, inputHeight)
                     .inputChannels(inputChannels)
+                    .selectedChannels(selectedChannels)
                     .downsample(downsample)
                     .contextScale(contextScale)
                     .expectedChannelNames(channelNames)

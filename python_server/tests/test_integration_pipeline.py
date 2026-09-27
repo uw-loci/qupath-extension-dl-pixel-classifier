@@ -237,7 +237,10 @@ class TestStep1TrainingConvergence:
         logger.info(f"  Last {n} epochs avg: {late_avg:.4f}")
         logger.info(f"  Best loss: {best_loss:.4f}")
         logger.info(f"  Final loss: {result['final_loss']:.4f}")
-        logger.info(f"  Best loss (from result): {result['best_loss']:.4f}")
+        # There is no "best_loss" key. final_loss IS the loss at the best
+        # epoch -- the result dict assigns it from the internal best_loss.
+        logger.info(f"  Best epoch: {result['best_epoch']}")
+        logger.info(f"  Best mean IoU: {result['best_mean_iou']:.4f}")
 
         # The best loss should be better than the first epoch
         assert (
@@ -256,9 +259,12 @@ class TestStep1TrainingConvergence:
         ), f"Max accuracy {max_accuracy:.4f} not better than random (0.25)"
 
         # 8. Result contains expected fields
+        # The result dict has no "best_loss": final_loss IS the loss at the
+        # best epoch. Assert the keys the code actually returns.
         assert "final_loss" in result
         assert "final_accuracy" in result
-        assert "best_loss" in result
+        assert "best_epoch" in result
+        assert "best_mean_iou" in result
         assert "epochs_trained" in result
         assert isinstance(result["early_stopped"], bool)
 
@@ -410,7 +416,16 @@ class TestStep2ModelPredictions:
         img.save(buffer, format="TIFF")
         b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-        tiles = [{"id": "spatial_test", "data": b64_data, "x": 0, "y": 0}]
+        # _load_tile_data requires a data URL or a path; bare base64 has not
+        # been accepted for some time.
+        tiles = [
+            {
+                "id": "spatial_test",
+                "data": "data:image/tiff;base64," + b64_data,
+                "x": 0,
+                "y": 0,
+            }
+        ]
 
         input_config = {
             "num_channels": 3,
@@ -797,7 +812,7 @@ class TestSummary:
             result = _shared_state["training_result"]
             logger.info(
                 f"Training: {result['epochs_trained']} epochs, "
-                f"best_loss={result['best_loss']:.4f}, "
+                f"best_mean_iou={result['best_mean_iou']:.4f}, "
                 f"final_acc={result['final_accuracy']:.4f}"
             )
 

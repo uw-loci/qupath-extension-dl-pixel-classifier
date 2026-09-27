@@ -2412,9 +2412,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         // Reconstruct ChannelConfiguration from metadata (mirrors DLClassifierScripts).
         ChannelConfiguration channelConfig = ChannelConfiguration.builder()
-                .selectedChannels(java.util.stream.IntStream.range(0, classifier.getInputChannels())
-                        .boxed()
-                        .toList())
+                // The channels the model was actually trained on, not a
+                // positional range. See ClassifierMetadata.selectedChannels.
+                .selectedChannels(classifier.getSelectedChannelsOrRange())
                 .channelNames(
                         classifier.getExpectedChannelNames().isEmpty()
                                 ? List.of("Red", "Green", "Blue")
@@ -2485,17 +2485,14 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             String fname = String.format("tile_%05d.tif", written);
                             Path tilePath = tempTileDir.resolve(fname);
                             try {
-                                int numBands = tile.getRaster().getNumBands();
-                                int dataType = tile.getRaster().getDataBuffer().getDataType();
-                                if (numBands <= 4 && dataType == java.awt.image.DataBuffer.TYPE_BYTE) {
-                                    javax.imageio.ImageIO.write(tile, "TIFF", tilePath.toFile());
-                                } else {
-                                    Path rawPath = tempTileDir.resolve(String.format("tile_%05d.raw", written));
-                                    qupath.ext.dlclassifier.utilities.AnnotationExtractor.writeRawFloat(
-                                            qupath.ext.dlclassifier.utilities.BitDepthConverter.toFloatArray(tile),
-                                            rawPath);
-                                    tilePath = rawPath;
-                                }
+                                // Shared writer, not a local copy of it. This
+                                // block used to re-derive the TIFF-vs-raw
+                                // decision inline, and being a copy it never
+                                // learned about channel selection: calibrating
+                                // a subset model fed it every band of the
+                                // image and it died in the first convolution.
+                                tilePath = qupath.ext.dlclassifier.utilities.AnnotationExtractor.writeModelInputTile(
+                                        tile, tilePath, channelConfig.getSelectedChannels());
                             } catch (IOException ioe) {
                                 logger.warn("Failed to write tile {}: {}", written, ioe.toString());
                                 continue;
@@ -2658,10 +2655,10 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         // Build channel config from metadata
         List<String> expectedChannels = metadata.getExpectedChannelNames();
-        List<Integer> selectedChannels = new java.util.ArrayList<>();
-        for (int i = 0; i < Math.max(expectedChannels.size(), metadata.getInputChannels()); i++) {
-            selectedChannels.add(i);
-        }
+        // The channels the model was actually trained on. Before 0.9.8 this
+        // was a positional range, which fed bands 0..N-1 to a model trained
+        // on some other set -- silently wrong for any non-prefix selection.
+        List<Integer> selectedChannels = metadata.getSelectedChannelsOrRange();
         ChannelConfiguration channelConfig = ChannelConfiguration.builder()
                 .selectedChannels(selectedChannels)
                 .channelNames(expectedChannels)

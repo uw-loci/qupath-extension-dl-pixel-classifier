@@ -291,9 +291,14 @@ class InferenceService:
         for tile in tiles:
             tile_ids.append(tile["id"])
             img_array = self._load_tile_data(tile["data"])
-            img_array = self._normalize(img_array, input_config)
+            # Select BEFORE normalizing. Per-channel statistics are stored in
+            # selected order (training normalizes patches that are already
+            # subset), so normalizing the full image applies stats[0..n] to
+            # source bands 0..n -- right only when the selection happens to be
+            # a prefix, and silently wrong for anything else.
             if selected:
                 img_array = img_array[:, :, selected]
+            img_array = self._normalize(img_array, input_config)
             preprocessed.append(img_array)
 
         # Batched inference -> list of per-tile probability maps (C, H, W)
@@ -353,9 +358,14 @@ class InferenceService:
         for tile in tiles:
             tile_ids.append(tile["id"])
             img_array = self._load_tile_data(tile["data"])
-            img_array = self._normalize(img_array, input_config)
+            # Select BEFORE normalizing. Per-channel statistics are stored in
+            # selected order (training normalizes patches that are already
+            # subset), so normalizing the full image applies stats[0..n] to
+            # source bands 0..n -- right only when the selection happens to be
+            # a prefix, and silently wrong for anything else.
             if selected:
                 img_array = img_array[:, :, selected]
+            img_array = self._normalize(img_array, input_config)
             preprocessed.append(img_array)
 
         # Batched inference with reflection padding
@@ -453,9 +463,11 @@ class InferenceService:
         preprocessed = []
         selected = input_config.get("selected_channels")
         for i in range(num_tiles):
-            img_array = self._normalize(all_tiles[i], input_config)
+            # Select before normalizing; see the note above.
+            img_array = all_tiles[i]
             if selected:
                 img_array = img_array[:, :, selected]
+            img_array = self._normalize(img_array, input_config)
             preprocessed.append(img_array)
 
         # Batched inference
@@ -532,9 +544,11 @@ class InferenceService:
         preprocessed = []
         selected = input_config.get("selected_channels")
         for i in range(num_tiles):
-            img_array = self._normalize(all_tiles[i], input_config)
+            # Select before normalizing; see the note above.
+            img_array = all_tiles[i]
             if selected:
                 img_array = img_array[:, :, selected]
+            img_array = self._normalize(img_array, input_config)
             preprocessed.append(img_array)
 
         all_prob_maps = self._infer_batch_spatial(
@@ -1106,6 +1120,54 @@ class InferenceService:
     def _cleanup_after_inference(self) -> None:
         """Clear GPU cache after inference batch."""
         self.gpu_manager.clear_cache()
+
+    @staticmethod
+    def expected_input_channels(model_tuple):
+        """How many channels the loaded model accepts, or None if undetectable.
+
+        Works for both backends: a torch model exposes its stem convolution's
+        weight, an ONNX session exposes its input spec.
+        """
+        kind, model = model_tuple
+        try:
+            if kind == "onnx":
+                shape = model.get_inputs()[0].shape
+                # NCHW; a dynamic axis is a string, which is not a channel count
+                return (
+                    shape[1] if len(shape) == 4 and isinstance(shape[1], int) else None
+                )
+            for module in model.modules():
+                if isinstance(module, torch.nn.Conv2d):
+                    return int(module.in_channels)
+        except Exception:
+            return None
+        return None
+
+    @classmethod
+    def assert_input_channels(cls, model_tuple, actual_channels, source="tiles"):
+        """Fail loudly when the pixels handed over do not fit the model.
+
+        The Appose inference scripts do not select channels; they trust Java
+        to have done it during encoding. Four separate Java call sites produce
+        model input, and two of them got it wrong at different times -- each
+        failing as a conv2d shape error a dozen frames deep that never
+        mentioned channels. This is the one place that can catch every
+        producer, including one that does not exist yet, so the check lives
+        here rather than in any single caller.
+        """
+        expected = cls.expected_input_channels(model_tuple)
+        if expected is None or actual_channels is None:
+            return
+        if int(actual_channels) != int(expected):
+            raise ValueError(
+                "Channel mismatch: %s have %d channel(s) but this model was "
+                "built for %d. The image's channel selection was not applied "
+                "before the pixels were sent. If the model was trained on a "
+                "subset of channels, re-run with an extension new enough to "
+                "apply the selection on every path (0.9.8+); otherwise the "
+                "image does not match the one the model was trained on."
+                % (source, int(actual_channels), int(expected))
+            )
 
     def _load_model(
         self,

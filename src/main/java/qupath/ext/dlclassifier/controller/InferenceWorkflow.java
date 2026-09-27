@@ -39,6 +39,7 @@ import qupath.ext.dlclassifier.service.ood.OutOfDistributionPreflight;
 import qupath.ext.dlclassifier.ui.DialogOwner;
 import qupath.ext.dlclassifier.ui.InferenceDialog;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
+import qupath.ext.dlclassifier.utilities.ChannelSelection;
 import qupath.ext.dlclassifier.utilities.ImageCompat;
 import qupath.ext.dlclassifier.utilities.OutputGenerator;
 import qupath.ext.dlclassifier.utilities.TileEncoder;
@@ -955,7 +956,7 @@ public class InferenceWorkflow {
                     nextPrepared = null;
                 } else {
                     List<TileProcessor.TileSpec> batch = tileSpecs.subList(i, end);
-                    currentBatch = prepareBatch(batch, tileProcessor, server, tilePool, contextScale);
+                    currentBatch = prepareBatch(batch, tileProcessor, server, tilePool, contextScale, channelConfig);
                 }
 
                 // Start preparing NEXT batch in parallel while we send current to server
@@ -964,8 +965,8 @@ public class InferenceWorkflow {
                 if (nextStart < tileSpecs.size()) {
                     int nextEnd = Math.min(nextStart + batchSize, tileSpecs.size());
                     List<TileProcessor.TileSpec> nextBatchSpecs = tileSpecs.subList(nextStart, nextEnd);
-                    nextBatchFuture = tilePool.submit(
-                            () -> prepareBatch(nextBatchSpecs, tileProcessor, server, tilePool, contextScale));
+                    nextBatchFuture = tilePool.submit(() ->
+                            prepareBatch(nextBatchSpecs, tileProcessor, server, tilePool, contextScale, channelConfig));
                 }
 
                 // Send current batch to server for inference
@@ -1173,7 +1174,7 @@ public class InferenceWorkflow {
                     nextPrepared = null;
                 } else {
                     List<TileProcessor.TileSpec> batch = tileSpecs.subList(i, end);
-                    currentBatch = prepareBatch(batch, tileProcessor, server, tilePool, contextScale);
+                    currentBatch = prepareBatch(batch, tileProcessor, server, tilePool, contextScale, channelConfig);
                 }
 
                 // Pre-prepare next batch
@@ -1182,8 +1183,8 @@ public class InferenceWorkflow {
                 if (nextStart < tileSpecs.size()) {
                     int nextEnd = Math.min(nextStart + batchSize, tileSpecs.size());
                     List<TileProcessor.TileSpec> nextBatchSpecs = tileSpecs.subList(nextStart, nextEnd);
-                    nextBatchFuture = tilePool.submit(
-                            () -> prepareBatch(nextBatchSpecs, tileProcessor, server, tilePool, contextScale));
+                    nextBatchFuture = tilePool.submit(() ->
+                            prepareBatch(nextBatchSpecs, tileProcessor, server, tilePool, contextScale, channelConfig));
                 }
 
                 // Run pixel inference (same as processRegionCore)
@@ -1434,6 +1435,7 @@ public class InferenceWorkflow {
      * @param server        image server
      * @param tilePool      thread pool for parallel reading
      * @param contextScale  context scale factor (1 = no context, >1 = multi-scale)
+     * @param channelConfig channel configuration; its selection is applied here
      * @return prepared batch data
      * @throws IOException if tile reading fails
      */
@@ -1442,7 +1444,8 @@ public class InferenceWorkflow {
             TileProcessor tileProcessor,
             ImageServer<BufferedImage> server,
             ExecutorService tilePool,
-            int contextScale)
+            int contextScale,
+            ChannelConfiguration channelConfig)
             throws IOException {
 
         // Read all detail tiles in parallel
@@ -1477,14 +1480,27 @@ public class InferenceWorkflow {
                 throw new IOException("Failed to read tile " + tileId, e);
             }
 
+            // CHANNEL CONTRACT: the Appose inference scripts do not select
+            // channels -- inference_pixel_batch.py says so in as many words
+            // ("channel selection already handled by Java during encoding").
+            // This path used to send every band regardless, so a model built
+            // for a subset was handed the full image and died in the first
+            // convolution. The single-tile overlay path got it right, which
+            // is why Apply failed while the overlay looked fine.
+            List<Integer> selected = channelConfig == null ? null : channelConfig.getSelectedChannels();
+
             // Decide encoding on first tile
             if (dtype == null) {
-                if (TileEncoder.isSimpleRgb(tileImage)) {
+                int bands = tileImage.getRaster().getNumBands();
+                // The uint8 fast path copies bands verbatim and cannot express
+                // a subset or a reorder, so it is only safe for an identity
+                // selection.
+                if (TileEncoder.isSimpleRgb(tileImage) && ChannelSelection.canUseByteFastPath(selected, bands)) {
                     dtype = "uint8";
                     detailChannels = 3;
                 } else {
                     dtype = "float32";
-                    detailChannels = tileImage.getRaster().getNumBands();
+                    detailChannels = ChannelSelection.channelCount(selected, bands);
                 }
             }
 
@@ -1493,7 +1509,7 @@ public class InferenceWorkflow {
             if ("uint8".equals(dtype)) {
                 detailBytes = TileEncoder.encodeTileRaw(tileImage);
             } else {
-                detailBytes = TileEncoder.encodeTileRawFloat(tileImage, null);
+                detailBytes = TileEncoder.encodeTileRawFloat(tileImage, selected);
             }
 
             if (contextScale > 1) {
@@ -1508,7 +1524,7 @@ public class InferenceWorkflow {
                 if ("uint8".equals(dtype)) {
                     contextBytes = TileEncoder.encodeTileRaw(contextImage);
                 } else {
-                    contextBytes = TileEncoder.encodeTileRawFloat(contextImage, null);
+                    contextBytes = TileEncoder.encodeTileRawFloat(contextImage, selected);
                 }
                 int numPixels = tileImage.getWidth() * tileImage.getHeight();
                 int bytesPerChannel = "uint8".equals(dtype) ? 1 : Float.BYTES;
