@@ -3116,6 +3116,9 @@ public class TrainingWorkflow {
         settings.put("in_memory_dataset", config.getInMemoryDataset());
         settings.put("early_stopping_metric", config.getEarlyStoppingMetric());
         settings.put("early_stopping_patience", config.getEarlyStoppingPatience());
+        settings.put("marginal_stop_enabled", config.isMarginalStopEnabled());
+        settings.put("marginal_stop_min_improvement", config.getMarginalStopMinImprovement());
+        settings.put("marginal_stop_window", config.getMarginalStopWindow());
         settings.put("mixed_precision", config.isMixedPrecision());
         settings.put("augmentation_config", config.getAugmentationConfig());
         if (config.getIntensityAugMode() != null) {

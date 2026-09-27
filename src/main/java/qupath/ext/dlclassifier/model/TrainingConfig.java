@@ -103,6 +103,15 @@ public class TrainingConfig {
     private final String inMemoryDataset; // "auto", "on", or "off"
     private final String earlyStoppingMetric;
     private final int earlyStoppingPatience;
+    // Marginal-improvement exit. Separate from early stopping above: that
+    // one fires when the model stops setting records, this one fires when
+    // the records it still sets are too small to pay for more epochs. A
+    // converged run keeps improving in the fourth decimal, which resets the
+    // patience counter forever. Off by default -- what counts as a
+    // worthwhile improvement depends on what an epoch costs.
+    private final boolean marginalStopEnabled;
+    private final double marginalStopMinImprovement;
+    private final int marginalStopWindow;
     private final boolean mixedPrecision;
     // Fused AdamW: single-kernel param update on CUDA, ~2-5 ms/step saved for tiny models.
     private final boolean fusedOptimizer;
@@ -212,6 +221,9 @@ public class TrainingConfig {
         this.inMemoryDataset = builder.inMemoryDataset;
         this.earlyStoppingMetric = builder.earlyStoppingMetric;
         this.earlyStoppingPatience = builder.earlyStoppingPatience;
+        this.marginalStopEnabled = builder.marginalStopEnabled;
+        this.marginalStopMinImprovement = builder.marginalStopMinImprovement;
+        this.marginalStopWindow = builder.marginalStopWindow;
         this.mixedPrecision = builder.mixedPrecision;
         this.fusedOptimizer = builder.fusedOptimizer;
         this.useLrFinder = builder.useLrFinder;
@@ -540,6 +552,34 @@ public class TrainingConfig {
      */
     public int getEarlyStoppingPatience() {
         return earlyStoppingPatience;
+    }
+
+    /**
+     * Checks whether the marginal-improvement exit is enabled.
+     *
+     * @return true when a run should stop once improvement goes marginal
+     */
+    public boolean isMarginalStopEnabled() {
+        return marginalStopEnabled;
+    }
+
+    /**
+     * Gets the improvement the monitored metric must gain across the window
+     * for training to continue.
+     *
+     * @return minimum improvement over the window
+     */
+    public double getMarginalStopMinImprovement() {
+        return marginalStopMinImprovement;
+    }
+
+    /**
+     * Gets the number of epochs the improvement is measured across.
+     *
+     * @return marginal-improvement window in epochs
+     */
+    public int getMarginalStopWindow() {
+        return marginalStopWindow;
     }
 
     /**
@@ -883,6 +923,9 @@ public class TrainingConfig {
                 && Double.compare(that.minTileLabelFraction, minTileLabelFraction) == 0
                 && contextScale == that.contextScale
                 && earlyStoppingPatience == that.earlyStoppingPatience
+                && marginalStopEnabled == that.marginalStopEnabled
+                && Double.compare(that.marginalStopMinImprovement, marginalStopMinImprovement) == 0
+                && marginalStopWindow == that.marginalStopWindow
                 && mixedPrecision == that.mixedPrecision
                 && Double.compare(that.focusClassMinIoU, focusClassMinIoU) == 0
                 && Objects.equals(modelType, that.modelType)
@@ -948,6 +991,9 @@ public class TrainingConfig {
                 inMemoryDataset,
                 earlyStoppingMetric,
                 earlyStoppingPatience,
+                marginalStopEnabled,
+                marginalStopMinImprovement,
+                marginalStopWindow,
                 mixedPrecision,
                 focusClass,
                 focusClassMinIoU,
@@ -1094,6 +1140,9 @@ public class TrainingConfig {
         private String inMemoryDataset = "auto";
         private String earlyStoppingMetric = "mean_iou";
         private int earlyStoppingPatience = 15;
+        private boolean marginalStopEnabled = false;
+        private double marginalStopMinImprovement = 0.01;
+        private int marginalStopWindow = 20;
         private boolean mixedPrecision = true;
         private boolean fusedOptimizer = true;
         private boolean useLrFinder = true;
@@ -1174,6 +1223,10 @@ public class TrainingConfig {
                         case "in_memory_dataset" -> b.inMemoryDataset(String.valueOf(v));
                         case "early_stopping_metric" -> b.earlyStoppingMetric(String.valueOf(v));
                         case "early_stopping_patience" -> b.earlyStoppingPatience(((Number) v).intValue());
+                        case "marginal_stop_enabled" -> b.marginalStopEnabled(Boolean.TRUE.equals(v));
+                        case "marginal_stop_min_improvement" ->
+                            b.marginalStopMinImprovement(((Number) v).doubleValue());
+                        case "marginal_stop_window" -> b.marginalStopWindow(((Number) v).intValue());
                         case "mixed_precision" -> b.mixedPrecision(Boolean.TRUE.equals(v));
                         case "augmentation_config" -> {
                             if (v instanceof Map<?, ?> raw) {
@@ -1258,6 +1311,9 @@ public class TrainingConfig {
             this.inMemoryDataset = config.inMemoryDataset;
             this.earlyStoppingMetric = config.earlyStoppingMetric;
             this.earlyStoppingPatience = config.earlyStoppingPatience;
+            this.marginalStopEnabled = config.marginalStopEnabled;
+            this.marginalStopMinImprovement = config.marginalStopMinImprovement;
+            this.marginalStopWindow = config.marginalStopWindow;
             this.mixedPrecision = config.mixedPrecision;
             this.fusedOptimizer = config.fusedOptimizer;
             this.useLrFinder = config.useLrFinder;
@@ -1673,6 +1729,44 @@ public class TrainingConfig {
          */
         public Builder earlyStoppingPatience(int earlyStoppingPatience) {
             this.earlyStoppingPatience = earlyStoppingPatience;
+            return this;
+        }
+
+        /**
+         * Enables the marginal-improvement exit, which ends a run whose
+         * monitored metric is still improving but only by a trivial amount.
+         *
+         * <p>Independent of early stopping: either, both, or neither may be
+         * on. Both watch {@code earlyStoppingMetric}. Off by default.
+         *
+         * @param marginalStopEnabled true to stop once improvement goes marginal
+         * @return this builder
+         */
+        public Builder marginalStopEnabled(boolean marginalStopEnabled) {
+            this.marginalStopEnabled = marginalStopEnabled;
+            return this;
+        }
+
+        /**
+         * Sets the improvement the monitored metric must gain across the
+         * window for training to continue.
+         *
+         * @param marginalStopMinImprovement minimum improvement (0.0001-0.5)
+         * @return this builder
+         */
+        public Builder marginalStopMinImprovement(double marginalStopMinImprovement) {
+            this.marginalStopMinImprovement = marginalStopMinImprovement;
+            return this;
+        }
+
+        /**
+         * Sets how many epochs the improvement is measured across.
+         *
+         * @param marginalStopWindow window in epochs (2-100)
+         * @return this builder
+         */
+        public Builder marginalStopWindow(int marginalStopWindow) {
+            this.marginalStopWindow = marginalStopWindow;
             return this;
         }
 

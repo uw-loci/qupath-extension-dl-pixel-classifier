@@ -159,6 +159,20 @@ def trainingConfig = TrainingConfig.builder()
 // Training follows the same builder pattern
 ```
 
+To end a run once it is only improving marginally, add the opt-in exit (off by
+default, so it is absent from the example above):
+
+```groovy
+        .marginalStopEnabled(true)
+        .marginalStopMinImprovement(0.01)   // in the early-stop metric's own units
+        .marginalStopWindow(20)             // epochs the improvement is measured across
+```
+
+It watches whichever metric `.earlyStoppingMetric(...)` names, and is independent
+of `.earlyStoppingPatience(...)` -- patience asks whether the model has stopped
+setting records, this asks whether the records are worth more epochs. See
+[PARAMETERS.md](PARAMETERS.md) for the full description.
+
 ## Builder API Parameters
 
 ### InferenceConfig.builder()

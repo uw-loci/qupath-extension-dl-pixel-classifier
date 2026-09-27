@@ -475,7 +475,8 @@ public class ScriptGenerator {
 
     /**
      * Emits {@code epochs}, {@code earlyStoppingMetric},
-     * {@code earlyStoppingPatience}, {@code progressiveResize} (only when
+     * {@code earlyStoppingPatience}, the three {@code marginalStop*} fields
+     * (only when the exit is enabled), {@code progressiveResize} (only when
      * true), and {@code pretrainedModelPath} (only when set).
      */
     private static void appendDurationFields(StringBuilder sb, TrainingConfig config, EmissionStats stats) {
@@ -491,6 +492,26 @@ public class ScriptGenerator {
                 stats,
                 "earlyStoppingPatience",
                 builderCall("earlyStoppingPatience", String.valueOf(config.getEarlyStoppingPatience())));
+        // Marginal-improvement exit. Default off; emitting the window and
+        // threshold only when it is on keeps a default script from carrying
+        // three lines that restate defaults.
+        if (config.isMarginalStopEnabled()) {
+            emit(sb, stats, "marginalStopEnabled", builderCall("marginalStopEnabled", "true"));
+            emit(
+                    sb,
+                    stats,
+                    "marginalStopMinImprovement",
+                    builderCall("marginalStopMinImprovement", String.valueOf(config.getMarginalStopMinImprovement())));
+            emit(
+                    sb,
+                    stats,
+                    "marginalStopWindow",
+                    builderCall("marginalStopWindow", String.valueOf(config.getMarginalStopWindow())));
+        } else {
+            skip(stats, "marginalStopEnabled");
+            skip(stats, "marginalStopMinImprovement");
+            skip(stats, "marginalStopWindow");
+        }
 
         // Default false; emit only when the user opted in.
         if (config.isProgressiveResize()) {

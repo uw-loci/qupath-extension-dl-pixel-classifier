@@ -372,6 +372,9 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         boolean earlyStoppingEnabled = !"disabled".equalsIgnoreCase(trainingConfig.getEarlyStoppingMetric());
         trainingParams.put("early_stopping", earlyStoppingEnabled);
         trainingParams.put("early_stopping_patience", trainingConfig.getEarlyStoppingPatience());
+        trainingParams.put("marginal_stop_enabled", trainingConfig.isMarginalStopEnabled());
+        trainingParams.put("marginal_stop_min_improvement", trainingConfig.getMarginalStopMinImprovement());
+        trainingParams.put("marginal_stop_window", trainingConfig.getMarginalStopWindow());
         trainingParams.put(
                 "early_stopping_metric", earlyStoppingEnabled ? trainingConfig.getEarlyStoppingMetric() : "mean_iou");
         trainingParams.put("mixed_precision", trainingConfig.isMixedPrecision());

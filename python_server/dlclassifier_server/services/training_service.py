@@ -582,6 +582,74 @@ class EarlyStopping:
             logger.info(f"Restored best model weights from epoch {self.best_epoch}")
 
 
+class MarginalImprovementStop:
+    """Stop a run whose score is still climbing, but only barely.
+
+    EarlyStopping answers "has the model stopped setting records?". That is
+    the wrong question for a converged run: a record broken by 0.0004 resets
+    the patience counter just as thoroughly as one broken by 0.4, so a run
+    that has plainly arrived can keep going indefinitely on fourth-decimal
+    gains. One real 100-epoch run reached 0.9876 mean IoU at epoch 43 and
+    0.9913 at epoch 93 -- 50 more epochs for 0.0037.
+
+    This asks the other question: over the last ``window`` epochs, did the
+    BEST score improve by at least ``min_improvement``? If not, the run has
+    converged as far as the user cares to pay for, and it stops.
+
+    Opt-in, and deliberately so. What counts as a worthwhile improvement
+    depends on the metric, the task and what an epoch costs, and there is no
+    default that is right for a two-second epoch and a two-hour one alike.
+
+    ``mode`` mirrors EarlyStopping: "max" for a metric like mean IoU, "min"
+    for a loss.
+    """
+
+    def __init__(self, window: int, min_improvement: float, mode: str = "max"):
+        self.window = max(1, int(window))
+        self.min_improvement = max(0.0, float(min_improvement))
+        self.mode = mode
+        # best-so-far after each completed epoch, oldest first
+        self._best_history: List[float] = []
+        self.best_score = float("-inf") if mode == "max" else float("inf")
+        self.triggered_epoch: Optional[int] = None
+        self.observed_improvement: Optional[float] = None
+
+    def __call__(self, epoch: int, metric_value: float) -> bool:
+        """Record an epoch and report whether the run should stop.
+
+        Args:
+            epoch: 1-based epoch number that just finished
+            metric_value: this epoch's monitored metric
+
+        Returns:
+            True when the best score has improved by less than
+            ``min_improvement`` across the last ``window`` epochs.
+        """
+        if metric_value is None:
+            return False
+        if self.mode == "max":
+            self.best_score = max(self.best_score, metric_value)
+        else:
+            self.best_score = min(self.best_score, metric_value)
+        self._best_history.append(self.best_score)
+
+        # Need a full window behind us before the comparison means anything.
+        if len(self._best_history) <= self.window:
+            return False
+
+        earlier = self._best_history[-(self.window + 1)]
+        if self.mode == "max":
+            improvement = self.best_score - earlier
+        else:
+            improvement = earlier - self.best_score
+
+        if improvement < self.min_improvement:
+            self.triggered_epoch = epoch
+            self.observed_improvement = improvement
+            return True
+        return False
+
+
 def _compute_boundary_weight_map(
     targets: torch.Tensor,
     sigma: float,
@@ -2540,6 +2608,29 @@ class TrainingService:
                 f"mode={es_mode}, patience={early_stopping.patience}"
             )
 
+        # Marginal-improvement exit. Independent of early stopping above:
+        # that one fires when the model stops setting records, this one fires
+        # when the records it still sets are too small to be worth more
+        # epochs. Either, both, or neither may be enabled. Both watch
+        # early_stopping_metric.
+        marginal_stop = None
+        if training_params.get("marginal_stop_enabled", False):
+            _ms_mode = "max" if early_stopping_metric == "mean_iou" else "min"
+            marginal_stop = MarginalImprovementStop(
+                window=training_params.get("marginal_stop_window", 20),
+                min_improvement=training_params.get(
+                    "marginal_stop_min_improvement", 0.01
+                ),
+                mode=_ms_mode,
+            )
+            logger.info(
+                "Marginal-improvement stop enabled: stop when %s improves by "
+                "less than %.4f over %d epochs",
+                early_stopping_metric,
+                marginal_stop.min_improvement,
+                marginal_stop.window,
+            )
+
         # Load class weights and unlabeled index from exported config
         unlabeled_index = 255
         class_weights = None
@@ -4117,6 +4208,50 @@ class TrainingService:
                     logger.info(
                         "To run the full %d epochs, raise Early Stopping patience "
                         "or set it to Disabled in the training dialog.",
+                        epochs,
+                    )
+                    logger.info("=" * 70)
+                    break
+
+            # Marginal-improvement exit. Evaluated after early stopping so a
+            # patience stop still reports as a patience stop, and skipped
+            # entirely when early stopping already broke out of the loop.
+            if marginal_stop is not None:
+                ms_value = (
+                    selection_mean_iou
+                    if early_stopping_metric == "mean_iou"
+                    else val_loss
+                )
+                # Same focus-class gate early stopping uses. The monitored
+                # metric can look converged while the class the user actually
+                # cares about is still climbing, and an exit that ignored the
+                # gate would quietly defeat it.
+                _ms_suppressed = (
+                    focus_class
+                    and focus_class_min_iou > 0
+                    and focus_class in per_class_iou
+                    and per_class_iou[focus_class] < focus_class_min_iou
+                )
+                # Always record the epoch, even when suppressed, so the
+                # window stays aligned with real epochs rather than skipping
+                # the suppressed ones.
+                _ms_hit = marginal_stop(epoch + 1, ms_value)
+                if _ms_hit and not _ms_suppressed:
+                    logger.info("=" * 70)
+                    logger.info(
+                        "CONVERGED at epoch %d: %s improved by only %.4f over "
+                        "the last %d epochs (threshold %.4f).",
+                        epoch + 1,
+                        early_stopping_metric,
+                        marginal_stop.observed_improvement,
+                        marginal_stop.window,
+                        marginal_stop.min_improvement,
+                    )
+                    logger.info(
+                        "This is the marginal-improvement stop, not early "
+                        "stopping: the model was still improving, just not by "
+                        "enough to pay for more epochs. Lower the threshold, "
+                        "raise the window, or turn it off to run all %d.",
                         epochs,
                     )
                     logger.info("=" * 70)

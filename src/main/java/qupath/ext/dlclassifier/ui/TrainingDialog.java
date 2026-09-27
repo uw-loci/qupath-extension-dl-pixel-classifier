@@ -257,6 +257,9 @@ public class TrainingDialog {
         private Label epochsHintLabel;
         private ComboBox<String> earlyStoppingMetricCombo;
         private Spinner<Integer> earlyStoppingPatienceSpinner;
+        private CheckBox marginalStopCheckBox;
+        private Spinner<Double> marginalStopMinImprovementSpinner;
+        private Spinner<Integer> marginalStopWindowSpinner;
         private Button autoDistributeBtn;
         private Label basicSplitStatusLabel;
         private boolean inAutoDistribute = false;
@@ -1994,6 +1997,19 @@ public class TrainingDialog {
                         suppressEsPatienceListener = false;
                     }
                 }
+                // Marginal-improvement exit. A profile or model saved before
+                // this setting existed carries none of these keys, and each
+                // control keeps whatever it already had.
+                if (ts.containsKey("marginal_stop_enabled") && marginalStopCheckBox != null) {
+                    marginalStopCheckBox.setSelected(Boolean.TRUE.equals(ts.get("marginal_stop_enabled")));
+                }
+                if (ts.get("marginal_stop_min_improvement") instanceof Number msMin
+                        && marginalStopMinImprovementSpinner != null) {
+                    marginalStopMinImprovementSpinner.getValueFactory().setValue(msMin.doubleValue());
+                }
+                if (ts.get("marginal_stop_window") instanceof Number msWin && marginalStopWindowSpinner != null) {
+                    marginalStopWindowSpinner.getValueFactory().setValue(msWin.intValue());
+                }
 
                 // Mixed precision
                 if (ts.containsKey("mixed_precision")) {
@@ -3337,6 +3353,12 @@ public class TrainingDialog {
                                     : DLClassifierPreferences.getDefaultDataLoaderWorkers())
                     .earlyStoppingMetric(currentEarlyStoppingMetricValue())
                     .earlyStoppingPatience(effectivePatience)
+                    .marginalStopEnabled(marginalStopCheckBox != null && marginalStopCheckBox.isSelected())
+                    .marginalStopMinImprovement(
+                            marginalStopMinImprovementSpinner != null
+                                    ? marginalStopMinImprovementSpinner.getValue()
+                                    : 0.01)
+                    .marginalStopWindow(marginalStopWindowSpinner != null ? marginalStopWindowSpinner.getValue() : 20)
                     .mixedPrecision(mixedPrecisionCheck.isSelected())
                     .fusedOptimizer(fusedOptimizerCheck != null ? fusedOptimizerCheck.isSelected() : true)
                     .useLrFinder(useLrFinderCheck != null ? useLrFinderCheck.isSelected() : true)
@@ -3826,6 +3848,78 @@ public class TrainingDialog {
 
             grid.add(esPatienceLabel, 0, row);
             grid.add(earlyStoppingPatienceSpinner, 1, row);
+            row++;
+
+            // Marginal-improvement exit. Early Stop Patience above fires when
+            // the model stops setting records; this fires when the records it
+            // still sets are too small to pay for more epochs. A converged run
+            // keeps improving in the fourth decimal, which resets patience
+            // forever -- one real run spent 50 epochs gaining 0.0037 mean IoU.
+            marginalStopCheckBox = new CheckBox("Stop on marginal improvement");
+            marginalStopCheckBox.setSelected(false);
+            TooltipHelper.install(
+                    "Ends a run that is still improving, but only barely.\n\n"
+                            + "After each epoch, if the Early Stop Metric's BEST score has\n"
+                            + "improved by less than the threshold across the window below,\n"
+                            + "training stops and the best model is saved.\n\n"
+                            + "This is a different question from Early Stop Patience, which\n"
+                            + "asks whether the model has stopped setting records at all. A\n"
+                            + "converged run keeps setting them by tiny amounts, so patience\n"
+                            + "never fires; this does.\n\n"
+                            + "Off by default: whether a 0.004 gain is worth fifty more\n"
+                            + "epochs depends on what an epoch costs you.",
+                    marginalStopCheckBox);
+            marginalStopCheckBox.visibleProperty().bind(advancedMode);
+            marginalStopCheckBox.managedProperty().bind(advancedMode);
+            grid.add(marginalStopCheckBox, 0, row, 2, 1);
+            row++;
+
+            marginalStopMinImprovementSpinner =
+                    new Spinner<>(new SpinnerValueFactory.DoubleSpinnerValueFactory(0.0001, 0.5, 0.01, 0.005));
+            marginalStopMinImprovementSpinner.setEditable(true);
+            marginalStopMinImprovementSpinner.setPrefWidth(100);
+            Label marginalMinLabel = new Label("Min Improvement:");
+            TooltipHelper.install(
+                    "How much the Early Stop Metric's best score must gain across\n"
+                            + "the window for training to continue.\n\n"
+                            + "0.01 (default): stop once the run is only gaining a point\n"
+                            + "  of mean IoU per window. Good when epochs are expensive.\n"
+                            + "0.005: keep going for smaller gains.\n"
+                            + "0.001: nearly always runs to the epoch limit.\n\n"
+                            + "The units are the metric's own, so this means mean IoU\n"
+                            + "when the Early Stop Metric is Mean IoU, and loss when it\n"
+                            + "is Validation Loss.",
+                    marginalMinLabel,
+                    marginalStopMinImprovementSpinner);
+            marginalMinLabel.visibleProperty().bind(advancedMode.and(marginalStopCheckBox.selectedProperty()));
+            marginalMinLabel.managedProperty().bind(marginalMinLabel.visibleProperty());
+            marginalStopMinImprovementSpinner.visibleProperty().bind(marginalMinLabel.visibleProperty());
+            marginalStopMinImprovementSpinner.managedProperty().bind(marginalMinLabel.visibleProperty());
+            grid.add(marginalMinLabel, 0, row);
+            grid.add(marginalStopMinImprovementSpinner, 1, row);
+            row++;
+
+            marginalStopWindowSpinner = new Spinner<>(2, 100, 20, 5);
+            marginalStopWindowSpinner.setEditable(true);
+            marginalStopWindowSpinner.setPrefWidth(100);
+            Label marginalWindowLabel = new Label("Over Epochs:");
+            TooltipHelper.install(
+                    "How many epochs the improvement is measured across.\n\n"
+                            + "Training stops when the best score gained less than the\n"
+                            + "Min Improvement over this many epochs.\n\n"
+                            + "20 (default): a reasonable read on whether a run has\n"
+                            + "  arrived, without reacting to a few noisy epochs.\n"
+                            + "10: stops sooner, more sensitive to noise.\n"
+                            + "30-50: for runs whose metric moves in long slow steps.\n\n"
+                            + "No decision is made until this many epochs have elapsed.",
+                    marginalWindowLabel,
+                    marginalStopWindowSpinner);
+            marginalWindowLabel.visibleProperty().bind(marginalMinLabel.visibleProperty());
+            marginalWindowLabel.managedProperty().bind(marginalMinLabel.visibleProperty());
+            marginalStopWindowSpinner.visibleProperty().bind(marginalMinLabel.visibleProperty());
+            marginalStopWindowSpinner.managedProperty().bind(marginalMinLabel.visibleProperty());
+            grid.add(marginalWindowLabel, 0, row);
+            grid.add(marginalStopWindowSpinner, 1, row);
             row++;
 
             // Focus class
@@ -6432,6 +6526,13 @@ public class TrainingDialog {
                         .getValueFactory()
                         .setValue(DLClassifierPreferences.getDefaultEarlyStoppingPatience());
             }
+            if (marginalStopCheckBox != null) marginalStopCheckBox.setSelected(false);
+            if (marginalStopMinImprovementSpinner != null) {
+                marginalStopMinImprovementSpinner.getValueFactory().setValue(0.01);
+            }
+            if (marginalStopWindowSpinner != null) {
+                marginalStopWindowSpinner.getValueFactory().setValue(20);
+            }
             if (seedSpinner != null) {
                 seedSpinner.getValueFactory().setValue(DLClassifierPreferences.getLastSeed());
             }
@@ -6522,6 +6623,7 @@ public class TrainingDialog {
             if (schedulerCombo != null && !"One Cycle".equals(schedulerCombo.getValue())) return true;
             if (lossFunctionCombo != null && !"Cross Entropy + Dice".equals(lossFunctionCombo.getValue())) return true;
             if (earlyStoppingPatienceSpinner != null && earlyStoppingPatienceSpinner.getValue() != 15) return true;
+            if (marginalStopCheckBox != null && marginalStopCheckBox.isSelected()) return true;
             if (earlyStoppingEnabledCheck != null && !earlyStoppingEnabledCheck.isSelected()) return true;
             if (mixedPrecisionCheck != null && !mixedPrecisionCheck.isSelected()) return true;
             if (gradientAccumulationSpinner != null && gradientAccumulationSpinner.getValue() != 1) return true;
