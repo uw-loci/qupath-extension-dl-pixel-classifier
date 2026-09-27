@@ -455,20 +455,26 @@ This was fixed in v0.5.1+, uncalibrated images now default to 1.0 um/px for cont
 
 ### Rectangular blocks of the wrong class, aligned to a grid
 
-This is the most common tiling complaint and it has one usual cause: **Blend Mode is set to CENTER_CROP**. Set it to GAUSSIAN or LINEAR.
+A U-Net with a ResNet encoder sees a receptive field wider than a 256-pixel tile, so what the model predicts for a pixel depends on the whole tile that pixel landed in. Two tiles that share a piece of tissue can therefore disagree about it.
 
-A U-Net with a ResNet encoder at depth 5 has a receptive field wider than a 256-pixel tile, so what the model predicts for a pixel depends on the whole tile that pixel landed in. Two tiles that share a piece of tissue can therefore disagree about it. CENTER_CROP settles that by giving the pixel to whichever tile it sits nearest the centre of, which removes the visible *seam* but keeps one tile's wrong answer for the whole region -- and that is what you see as a block with straight edges on the tile grid.
+**CENTER_CROP** settles that disagreement by giving the pixel to whichever tile it sits nearest the centre of. That removes the visible *seam* but keeps one tile's answer for the whole region it owns, which is what you see as a block with straight edges on the tile grid. **Blending** averages the tiles that cover each pixel instead, so a contested pixel lands between the two predictions.
 
-Blending averages the tiles that cover each pixel, so a contested pixel lands between the two predictions instead. Measured on a 6-channel U-Net at tile size 256, against a single whole-image forward pass over the same slide:
+The measurement below shifts the tile grid by half a stride and counts pixels whose class changed. It needs no reference image, and the pixels it counts are the blocks. Measured on a 6-channel U-Net at tile size 256:
 
 | Overlap | CENTER_CROP | LINEAR | GAUSSIAN |
 |---|---|---|---|
-| 20% | 11.95% of pixels differ | 5.60% | 5.71% |
-| 25% | 11.81% | 3.95% | 3.98% |
+| 20% | 10.65% | 7.59% | 7.58% |
+| 25% | 7.08% | 4.55% | 4.62% |
+| 37.5% | 3.42% | 2.14% | 2.12% |
+| 43.8% | 3.39% | 2.57% | 2.69% |
 
-Note what the table says about overlap: raising it barely moves CENTER_CROP, because the receptive field is much wider than any halo worth paying for. Changing the blend mode roughly halves the disagreement at every geometry. **Blend, do not widen.**
+Two things follow.
 
-Keep CENTER_CROP only when a downstream step needs every pixel to come from exactly one inference pass.
+**The halo is what fixes center-crop.** At 37.5% overlap it reaches 3.42%, better than blending at 20%. Past 37.5% it stops paying: the next step buys 0.03 points for double the tiles. Because of that the extension now **raises the overlap to 37.5% automatically whenever Blend Mode is CENTER_CROP**, and says so in the log and in the dialog. That is the only place it overrides your tiling geometry, and it costs real time -- at tile 256 the stride falls from 154 pixels to 64, which is 5.8 times the tiles.
+
+**Blending gets there with less compute.** At matched settings LINEAR and GAUSSIAN sit 2 to 3 points below CENTER_CROP, so if the forced overlap makes a run too slow, switch to GAUSSIAN or LINEAR and keep your own overlap. Choose CENTER_CROP when a later step needs every pixel to come from exactly one inference pass.
+
+Neither mode goes below roughly 2%. That floor is the model itself being uncertain near boundaries; no tiling scheme removes it. If the blocks persist at 37.5% overlap, the model needs more or better annotation, not different tiling.
 
 ### Tile seams visible in output
 

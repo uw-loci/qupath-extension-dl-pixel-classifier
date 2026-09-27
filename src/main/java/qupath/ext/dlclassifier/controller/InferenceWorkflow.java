@@ -263,8 +263,7 @@ public class InferenceWorkflow {
                         OutOfDistributionPreflight.SurfaceMode.LOG);
 
                 // Use same effective overlap as the overlay path
-                int effectivePadding =
-                        InferenceConfig.computeEffectivePadding(config.getTileSize(), config.getOverlap());
+                int effectivePadding = config.effectivePadding();
                 TileProcessor tileProcessor = new TileProcessor(
                         config.getTileSize(),
                         2 * effectivePadding,
@@ -500,10 +499,21 @@ public class InferenceWorkflow {
                         OutOfDistributionPreflight.SurfaceMode.DIALOG);
 
                 // Create tile processor with effective overlap matching the overlay.
-                // Both paths use InferenceConfig.computeEffectivePadding() so the
-                // same user-configured overlap produces the same tile boundaries.
-                int effectivePadding = InferenceConfig.computeEffectivePadding(
-                        inferenceConfig.getTileSize(), inferenceConfig.getOverlap());
+                // Both paths use InferenceConfig.effectivePadding() so the same
+                // user-configured overlap produces the same tile boundaries --
+                // including the CENTER_CROP floor, which must not apply to one
+                // path and not the other.
+                int effectivePadding = inferenceConfig.effectivePadding();
+                if (inferenceConfig.centerCropPaddingWasRaised()) {
+                    progress.log(String.format(
+                            "Tile overlap raised to %d%% (%dpx per side) because Blend Mode is CENTER_CROP. "
+                                    + "Center-crop gives each pixel to one tile instead of averaging the tiles "
+                                    + "that cover it, so below this halo the tiles disagree and leave "
+                                    + "rectangular blocks on the tile grid. This is slower: stride drops to %dpx.",
+                            Math.round(100 * InferenceConfig.CENTER_CROP_MIN_OVERLAP_FRACTION),
+                            effectivePadding,
+                            inferenceConfig.getTileSize() - 2 * effectivePadding));
+                }
                 int effectiveOverlap = 2 * effectivePadding;
                 TileProcessor tileProcessor = new TileProcessor(
                         inferenceConfig.getTileSize(),
@@ -564,7 +574,7 @@ public class InferenceWorkflow {
                         !isRenderedOverlay && inferenceConfig.getOutputType() == InferenceConfig.OutputType.OBJECTS;
                 if (unifiedObjects) {
                     int tileSize = inferenceConfig.getTileSize();
-                    int padding = InferenceConfig.computeEffectivePadding(tileSize, inferenceConfig.getOverlap());
+                    int padding = inferenceConfig.effectivePadding();
                     int strideClass = Math.max(1, tileSize - 2 * padding);
                     int strideFull = Math.max(1, (int) (strideClass * metadata.getDownsample()));
                     for (PathObject obj : targetObjects) {

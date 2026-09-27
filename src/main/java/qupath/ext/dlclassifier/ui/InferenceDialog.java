@@ -635,20 +635,30 @@ public class InferenceDialog {
 
         private void updateOverlapWarning(double overlapPercent) {
             // CENTER_CROP overrides the overlap advice, because with it the
-            // overlap is very nearly beside the point. This model family's
-            // receptive field is wider than a tile, so neighbouring tiles
-            // disagree about the tissue they share; CENTER_CROP settles that
-            // by handing the pixel to one tile, and the disagreement surfaces
-            // as rectangular blocks on the tile grid. Measured at tile 256:
-            // 11.95% of pixels differ from a whole-image pass at 20% overlap
-            // and 11.81% at 25%, against 5.60% and 3.95% for LINEAR. Widening
-            // the halo does not help; blending does.
+            // overlap is the only lever. This model family's receptive field
+            // is wider than a tile, so neighbouring tiles disagree about the
+            // tissue they share; CENTER_CROP settles that by handing the
+            // pixel to one tile, and the disagreement surfaces as
+            // rectangular blocks on the tile grid. Shifting the tile grid
+            // half a stride at tile 256 moves 10.65% of pixels at 20%
+            // overlap, 7.08% at 25% and 3.42% at 37.5%, so the config raises
+            // the halo to 37.5% and this label says so before the run starts.
             if (blendModeCombo != null && blendModeCombo.getValue() == InferenceConfig.BlendMode.CENTER_CROP) {
-                overlapWarningLabel.setText("CENTER_CROP gives each pixel to one tile instead of averaging "
-                        + "the tiles that cover it, so tiles that disagree leave rectangular blocks on the "
-                        + "tile grid. More overlap will not fix that -- GAUSSIAN or LINEAR will. Keep "
-                        + "CENTER_CROP only if every pixel must come from exactly one inference pass.");
-                overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #F57C00;");
+                int floorPercent = (int) Math.round(100 * InferenceConfig.CENTER_CROP_MIN_OVERLAP_FRACTION);
+                if (overlapPercent < floorPercent) {
+                    overlapWarningLabel.setText(String.format(
+                            "CENTER_CROP will run at %d%% overlap, not %.1f%%. It gives each pixel to one "
+                                    + "tile instead of averaging the tiles that cover it, so below that halo "
+                                    + "the tiles disagree and leave rectangular blocks on the tile grid. The "
+                                    + "wider halo costs time. GAUSSIAN or LINEAR reach a similar result at "
+                                    + "your own overlap.",
+                            floorPercent, overlapPercent));
+                    overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #F57C00;");
+                } else {
+                    overlapWarningLabel.setText("Enough halo for CENTER_CROP -- each pixel comes from one "
+                            + "tile, far from that tile's edge.");
+                    overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #388E3C;");
+                }
                 syncOverlapPixels(overlapPercent);
                 return;
             }

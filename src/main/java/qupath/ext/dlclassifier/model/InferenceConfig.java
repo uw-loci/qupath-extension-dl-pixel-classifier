@@ -370,6 +370,71 @@ public class InferenceConfig {
     }
 
     /**
+     * Smallest halo CENTER_CROP is allowed to run with, as a fraction of the
+     * tile. Raising a configured overlap up to this is the one place the
+     * extension overrides the user's tiling geometry, and it does so loudly.
+     *
+     * @see #effectivePadding()
+     */
+    public static final double CENTER_CROP_MIN_OVERLAP_FRACTION = 0.375;
+
+    /**
+     * The per-side padding this configuration will actually run with.
+     * <p>
+     * Identical to {@link #computeEffectivePadding(int, int)} except under
+     * CENTER_CROP, where the halo is raised to
+     * {@link #CENTER_CROP_MIN_OVERLAP_FRACTION} of the tile if the user set
+     * it lower.
+     * <p>
+     * Center-crop gives each pixel to a single tile instead of averaging the
+     * tiles that cover it, so whatever that one tile predicted stands. A
+     * U-Net with a ResNet-18 encoder has a receptive field wider than a
+     * 256px tile, so two tiles sharing a piece of tissue can predict
+     * differently for it, and center-crop turns that disagreement into a
+     * rectangular block of the wrong class on the tile grid. The halo is the
+     * only lever that helps, and below roughly 37.5% it does not help
+     * enough.
+     * <p>
+     * Measured on a 6-channel U-Net at tileSize 256, shifting the tile grid
+     * by half a stride and counting pixels whose class changed -- the
+     * cleanest statement of the artifact, since it needs no reference:
+     *
+     * <pre>
+     *   overlap 20.0%  (pad 51)   CENTER_CROP 10.65%   LINEAR 7.59%
+     *   overlap 25.0%  (pad 64)   CENTER_CROP  7.08%   LINEAR 4.55%
+     *   overlap 37.5%  (pad 96)   CENTER_CROP  3.42%   LINEAR 2.14%
+     *   overlap 43.8%  (pad 112)  CENTER_CROP  3.39%   LINEAR 2.57%
+     * </pre>
+     *
+     * 37.5% is where center-crop stops improving: the next step buys 0.03
+     * points for double the tiles. It costs real time -- stride falls from
+     * 154 to 64, which is 5.8x the tiles -- so callers should say when they
+     * raise it rather than leaving the user to wonder why a run got slower.
+     * {@link #centerCropPaddingWasRaised()} reports exactly that.
+     *
+     * @return per-side padding in pixels
+     */
+    public int effectivePadding() {
+        int base = computeEffectivePadding(tileSize, overlap);
+        if (blendMode != BlendMode.CENTER_CROP || tileSize <= 0) {
+            return base;
+        }
+        int floor = (int) Math.round(tileSize * CENTER_CROP_MIN_OVERLAP_FRACTION);
+        return Math.max(base, computeEffectivePadding(tileSize, floor));
+    }
+
+    /**
+     * Whether {@link #effectivePadding()} raised the user's overlap to the
+     * center-crop floor. Callers use this to explain the change once, at the
+     * point where the slower geometry takes effect.
+     *
+     * @return true when CENTER_CROP forced a larger halo than configured
+     */
+    public boolean centerCropPaddingWasRaised() {
+        return effectivePadding() > computeEffectivePadding(tileSize, overlap);
+    }
+
+    /**
      * Inference-time tileSize / overlap advisory.
      *
      * <p>Inference overlap is a halo around each tile that gets blended

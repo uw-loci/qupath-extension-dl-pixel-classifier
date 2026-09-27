@@ -9,23 +9,19 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import qupath.ext.dlclassifier.model.InferenceConfig;
 
 /**
- * Manages a bounded cache of probability maps for tile boundary blending.
+ * A bounded cache of the overlay's probability maps, keyed by tile request
+ * coordinates, so a repaint does not re-run inference.
  * <p>
- * The cache stores raw probability maps from inference results keyed by
- * tile request coordinates. When blending is requested, it looks up
- * neighboring tiles (left, right, top, bottom) and applies a configurable
- * cross-fade at boundaries to eliminate visible seams in the overlay.
- * Supports LINEAR (ramp), GAUSSIAN (cosine bell), and CENTER_CROP modes.
+ * The name is historical: it once carried a cross-fade between neighbouring
+ * tiles, which nothing ever called. See the note where that method used to
+ * be. The overlay center-crops, and this class now only caches.
  * <p>
- * Also tracks observed tile positions to compute the empirical step
- * between tiles, which is used to locate neighbor tiles in the cache.
- * <p>
- * After the initial batch of tiles is cached, a debounced one-shot
- * overlay refresh is scheduled so that all tiles get re-rendered with
- * proper bidirectional blending.
+ * It also tracks observed tile positions to compute the empirical step
+ * between tiles, and schedules a debounced one-shot overlay refresh after
+ * the first batch so tiles that arrived before their neighbours get
+ * repainted.
  *
  * @author UW-LOCI
  * @since 0.1.0
@@ -42,9 +38,6 @@ public class TileBlendCache {
 
     /** Maximum cached probability maps. */
     private final int maxSize;
-
-    /** QuPath's inputPadding: extra pixels on each side of the visible tile. */
-    private final int inputPadding;
 
     /** Observed tile request X positions for empirical step computation. */
     private final ConcurrentSkipListSet<Integer> seenTileX = new ConcurrentSkipListSet<>();
@@ -73,31 +66,14 @@ public class TileBlendCache {
     /** Callback invoked when a deferred overlay refresh fires. */
     private final Runnable refreshCallback;
 
-    /** Blend mode for weight computation (LINEAR, GAUSSIAN/cosine, CENTER_CROP). */
-    private final InferenceConfig.BlendMode blendMode;
-
-    /** Maximum blend distance in pixels. -1 = use full inputPadding. */
-    private final int maxBlendDist;
-
     /**
      * Creates a new tile blend cache.
      *
      * @param maxSize         maximum number of probability maps to cache
-     * @param inputPadding    QuPath's inputPadding (extra pixels on each side of visible tile)
-     * @param blendMode       blend mode for weight computation
-     * @param maxBlendDist    maximum blend distance (-1 = use full inputPadding)
      * @param refreshCallback called when a deferred overlay refresh fires
      */
-    public TileBlendCache(
-            int maxSize,
-            int inputPadding,
-            InferenceConfig.BlendMode blendMode,
-            int maxBlendDist,
-            Runnable refreshCallback) {
+    public TileBlendCache(int maxSize, Runnable refreshCallback) {
         this.maxSize = maxSize;
-        this.inputPadding = inputPadding;
-        this.blendMode = blendMode;
-        this.maxBlendDist = maxBlendDist;
         this.refreshCallback = refreshCallback;
     }
 
@@ -161,152 +137,26 @@ public class TileBlendCache {
         return empiricalStepY;
     }
 
-    /**
-     * Blends this tile's probability map with cached neighbor probability maps
-     * at the visible tile boundaries using overlapping predictions.
-     * <p>
-     * QuPath tiles with {@code inputPadding} have overlapping coverage: tile A's
-     * right padding and tile B's left padding predict the same image region.
-     * This method blends at the <b>visible</b> boundary (where QuPath crops the
-     * padding) using those overlapping predictions:
-     * <ul>
-     *   <li>At the visible boundary (d=0): ~50% self + ~50% neighbor</li>
-     *   <li>Deeper inside visible region (d=blendDist): 100% self</li>
-     * </ul>
-     * <p>
-     * The blend distance is capped at {@code inputPadding} (or a configured max)
-     * since we cannot blend beyond the overlap region.
-     * <p>
-     * Horizontal blending (left/right) is applied first, then vertical (top/bottom).
-     * This sequential approach handles corners naturally.
+    /*
+     * blendWithNeighbors() lived here and was never called -- verified by a
+     * repo-wide search on 2026-09-27, with no caller in main, test or
+     * resources. The overlay caches the center-cropped probability map and
+     * returns it as-is, so the live overlay has only ever center-cropped,
+     * whatever Blend Mode said. That is why center-crop was the only setting
+     * that ever looked right in the overlay: blending was not on offer there.
      *
-     * @param probMap   this tile's raw probability map [height][width][numClasses]
-     * @param requestX  tile request X coordinate (full-resolution image coords)
-     * @param requestY  tile request Y coordinate (full-resolution image coords)
-     * @param width     prob map width (= tileSize, the inputShape given to QuPath)
-     * @param height    prob map height (= tileSize, the inputShape given to QuPath)
-     * @return blended probability map (new array, original not modified)
+     * It is deleted rather than wired up, because wiring it as written would
+     * not have worked: it needs neighbouring tiles to already be in the
+     * cache, QuPath requests overlay tiles on demand in viewport order, and
+     * the cache holds 100 entries against the ~1000 tiles of a whole-slide
+     * overlay. Tiles would have blended against whatever happened to survive
+     * eviction, so the result would have depended on pan and zoom history.
+     *
+     * Giving the overlay real blending is a design job, not a re-wiring job;
+     * it is on TODO_LIST.md. Until then DLPixelClassifier enforces the
+     * center-crop halo floor unconditionally, because center-crop is what it
+     * does. Apply Classifier blends through TileProcessor and is unaffected.
      */
-    public float[][][] blendWithNeighbors(float[][][] probMap, int requestX, int requestY, int width, int height) {
-        // CENTER_CROP: every visible pixel is at the center of its tile, no blending needed.
-        // NONE: the user asked for raw tile predictions; blending them would be
-        // the opposite. This became reachable when the overlay started honouring
-        // the configured blend mode instead of pinning it to CENTER_CROP.
-        if (blendMode == InferenceConfig.BlendMode.CENTER_CROP || blendMode == InferenceConfig.BlendMode.NONE) {
-            return probMap;
-        }
-
-        // Need empirical step to locate neighbors
-        int stepX = empiricalStepX;
-        int stepY = empiricalStepY;
-        if (stepX <= 0 && stepY <= 0) {
-            return probMap; // Step not yet computed, skip blending
-        }
-
-        if (inputPadding <= 0) {
-            return probMap; // No padding = no overlap = can't blend
-        }
-
-        int numClasses = probMap[0][0].length;
-
-        // Look up cached neighbors using empirical step
-        float[][][] left = (stepX > 0) ? probCache.get(cacheKey(requestX - stepX, requestY)) : null;
-        float[][][] right = (stepX > 0) ? probCache.get(cacheKey(requestX + stepX, requestY)) : null;
-        float[][][] top = (stepY > 0) ? probCache.get(cacheKey(requestX, requestY - stepY)) : null;
-        float[][][] bottom = (stepY > 0) ? probCache.get(cacheKey(requestX, requestY + stepY)) : null;
-
-        if (left == null && right == null && top == null && bottom == null) {
-            return probMap; // No neighbors available
-        }
-
-        // Blend distance: configurable max or full inputPadding
-        int blendDist = (maxBlendDist > 0) ? Math.min(inputPadding, maxBlendDist) : inputPadding;
-
-        // Create a copy for blending (don't modify cached original)
-        float[][][] blended = deepCopyProbMap(probMap);
-
-        // --- Horizontal blending (uses probMap as self source) ---
-
-        // Right visible boundary: self's right edge of visible region overlaps
-        // with right neighbor's left padding region (same image location)
-        if (right != null) {
-            int rh = Math.min(height, right.length);
-            for (int y = 0; y < rh; y++) {
-                for (int d = 0; d < blendDist; d++) {
-                    int xSelf = width - inputPadding - 1 - d; // visible col near right edge
-                    int xRight = inputPadding - 1 - d; // same image loc in right neighbor
-                    if (xSelf < 0 || xRight < 0 || xRight >= right[y].length) break;
-                    float wSelf = blendWeight(d, blendDist);
-                    float wNeighbor = 1.0f - wSelf;
-                    int nc = Math.min(numClasses, right[y][xRight].length);
-                    for (int c = 0; c < nc; c++) {
-                        blended[y][xSelf][c] = wSelf * probMap[y][xSelf][c] + wNeighbor * right[y][xRight][c];
-                    }
-                }
-            }
-        }
-
-        // Left visible boundary: self's left edge of visible region overlaps
-        // with left neighbor's right padding region (same image location)
-        if (left != null) {
-            int lh = Math.min(height, left.length);
-            for (int y = 0; y < lh; y++) {
-                for (int d = 0; d < blendDist; d++) {
-                    int xSelf = inputPadding + d; // visible col near left edge
-                    int xLeft = width - inputPadding + d; // same image loc in left neighbor
-                    if (xSelf >= width || xLeft >= left[y].length) break;
-                    float wSelf = blendWeight(d, blendDist);
-                    float wNeighbor = 1.0f - wSelf;
-                    int nc = Math.min(numClasses, left[y][xLeft].length);
-                    for (int c = 0; c < nc; c++) {
-                        blended[y][xSelf][c] = wSelf * probMap[y][xSelf][c] + wNeighbor * left[y][xLeft][c];
-                    }
-                }
-            }
-        }
-
-        // --- Vertical blending (uses blended as self source for corner handling) ---
-
-        // Bottom visible boundary: self's bottom edge of visible region overlaps
-        // with bottom neighbor's top padding region
-        if (bottom != null) {
-            for (int d = 0; d < blendDist; d++) {
-                int ySelf = height - inputPadding - 1 - d; // visible row near bottom edge
-                int yBottom = inputPadding - 1 - d; // same image loc in bottom neighbor
-                if (ySelf < 0 || yBottom < 0 || yBottom >= bottom.length) break;
-                float wSelf = blendWeight(d, blendDist);
-                float wNeighbor = 1.0f - wSelf;
-                int bw = Math.min(width, bottom[yBottom].length);
-                for (int x = 0; x < bw; x++) {
-                    int nc = Math.min(numClasses, bottom[yBottom][x].length);
-                    for (int c = 0; c < nc; c++) {
-                        blended[ySelf][x][c] = wSelf * blended[ySelf][x][c] + wNeighbor * bottom[yBottom][x][c];
-                    }
-                }
-            }
-        }
-
-        // Top visible boundary: self's top edge of visible region overlaps
-        // with top neighbor's bottom padding region
-        if (top != null) {
-            for (int d = 0; d < blendDist; d++) {
-                int ySelf = inputPadding + d; // visible row near top edge
-                int yTop = height - inputPadding + d; // same image loc in top neighbor
-                if (ySelf >= height || yTop >= top.length) break;
-                float wSelf = blendWeight(d, blendDist);
-                float wNeighbor = 1.0f - wSelf;
-                int tw = Math.min(width, top[yTop].length);
-                for (int x = 0; x < tw; x++) {
-                    int nc = Math.min(numClasses, top[yTop][x].length);
-                    for (int c = 0; c < nc; c++) {
-                        blended[ySelf][x][c] = wSelf * blended[ySelf][x][c] + wNeighbor * top[yTop][x][c];
-                    }
-                }
-            }
-        }
-
-        return blended;
-    }
 
     /**
      * Schedules a debounced, one-shot overlay refresh after the initial tile batch.
@@ -372,27 +222,6 @@ public class TileBlendCache {
     // ==================== Internal Methods ====================
 
     /**
-     * Computes the self-weight for a pixel at distance {@code d} from a tile boundary.
-     * <p>
-     * For GAUSSIAN mode, uses a cosine bell (smooth S-curve) that transitions
-     * more gradually than linear -- better suited to ViT models where prediction
-     * gradients are smooth due to global self-attention.
-     *
-     * @param d         distance from the boundary (0 = at boundary, blendDist-1 = interior)
-     * @param blendDist total blend zone width in pixels
-     * @return self-weight in [0.5, 1.0]
-     */
-    private float blendWeight(int d, int blendDist) {
-        float t = (d + 0.5f) / blendDist; // 0 at boundary, 1 at interior
-        if (blendMode == InferenceConfig.BlendMode.GAUSSIAN) {
-            // Cosine bell: smooth S-curve transition
-            return (float) (0.5 * (1.0 + Math.cos(Math.PI * (1.0 - t))));
-        }
-        // LINEAR (default): current behavior
-        return 0.5f + 0.5f * t;
-    }
-
-    /**
      * Computes the empirical step between tile requests by finding the minimum
      * non-zero gap between observed tile positions.
      */
@@ -409,7 +238,7 @@ public class TileBlendCache {
             }
             if (minGap != Integer.MAX_VALUE) {
                 empiricalStepX = minGap;
-                logger.info("BLEND empirical stepX = {} (from {} positions)", minGap, seenTileX.size());
+                logger.debug("Overlay empirical stepX = {} (from {} positions)", minGap, seenTileX.size());
             }
         }
         if (seenTileY.size() >= 2 && empiricalStepY < 0) {
@@ -424,24 +253,8 @@ public class TileBlendCache {
             }
             if (minGap != Integer.MAX_VALUE) {
                 empiricalStepY = minGap;
-                logger.info("BLEND empirical stepY = {} (from {} positions)", minGap, seenTileY.size());
+                logger.debug("Overlay empirical stepY = {} (from {} positions)", minGap, seenTileY.size());
             }
         }
-    }
-
-    /**
-     * Creates a deep copy of a probability map so blending doesn't modify cached data.
-     */
-    private static float[][][] deepCopyProbMap(float[][][] src) {
-        int h = src.length;
-        float[][][] copy = new float[h][][];
-        for (int y = 0; y < h; y++) {
-            int w = src[y].length;
-            copy[y] = new float[w][];
-            for (int x = 0; x < w; x++) {
-                copy[y][x] = src[y][x].clone();
-            }
-        }
-        return copy;
     }
 }

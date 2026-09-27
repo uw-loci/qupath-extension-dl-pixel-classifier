@@ -121,8 +121,7 @@ public class DLPixelClassifier implements PixelClassifier {
         this.inferenceConfig = inferenceConfig;
         this.downsample = metadata.getDownsample();
         this.contextScale = metadata.getContextScale();
-        this.inputPadding =
-                InferenceConfig.computeEffectivePadding(inferenceConfig.getTileSize(), inferenceConfig.getOverlap());
+        this.inputPadding = inferenceConfig.effectivePadding();
 
         // For context-scale models the inference model input must match the
         // geometry the model was TRAINED on. Training tiles are exported at
@@ -145,28 +144,21 @@ public class DLPixelClassifier implements PixelClassifier {
             this.contextInferencePad = 0;
         }
 
-        // Use the blend mode the user actually chose. This was pinned to
-        // CENTER_CROP on the theory that taking each pixel from the tile it
-        // sits nearest the centre of avoids blending artifacts entirely. It
-        // does avoid the seam, but not the disagreement: measured on a
-        // 6-channel model at tileSize 256 with 51px of padding, center-crop
-        // put 11.95% of pixels somewhere other than where a single
-        // whole-image pass put them, against 5.60% for linear blending and
-        // 5.71% for Gaussian. Center-crop takes one tile's answer wholesale;
-        // blending averages the tiles that cover the pixel, so where two
-        // tiles disagree the result lands between them instead of on
-        // whichever tile happened to own that pixel. Pinning it here also
-        // meant the overlay and Apply could use different modes and disagree
-        // about the same slide.
-        InferenceConfig.BlendMode overlayBlendMode = inferenceConfig.getBlendMode();
-        int overlayMaxBlendDist = -1;
-
-        this.blendCache = new TileBlendCache(
-                100,
-                inputPadding,
-                overlayBlendMode,
-                overlayMaxBlendDist,
-                () -> OverlayService.getInstance().refreshOverlayForBlending());
+        // The cache holds probability maps so a repaint does not re-run
+        // inference. It does not blend -- see the note in TileBlendCache --
+        // and Blend Mode reaches Apply Classifier through TileProcessor
+        // instead. For the overlay the halo floor above is what controls the
+        // artifact. Measured on a 6-channel model at tileSize 256, shifting
+        // the tile grid by half a stride and counting pixels whose class
+        // changed: 10.65% at 20% overlap, 7.08% at 25%, 3.42% at 37.5%.
+        //
+        // An earlier revision of this comment quoted 11.95% against 5.60%
+        // for blending, measured against a whole-image forward pass. That
+        // reference was itself out of distribution (the model trained at
+        // 256x256) and the center-crop column had uncovered pixels in it.
+        // The numbers above replace it.
+        this.blendCache =
+                new TileBlendCache(100, () -> OverlayService.getInstance().refreshOverlayForBlending());
         this.pixelMetadata = buildPixelMetadata(imageData);
         this.colorModel = buildColorModel();
         this.backend = BackendFactory.getBackend();
@@ -1002,7 +994,7 @@ public class DLPixelClassifier implements PixelClassifier {
         }
 
         int tileSize = inferenceConfig.getTileSize();
-        int padding = InferenceConfig.computeEffectivePadding(tileSize, inferenceConfig.getOverlap());
+        int padding = inferenceConfig.effectivePadding();
 
         return new PixelClassifierMetadata.Builder()
                 .inputResolution(cal)

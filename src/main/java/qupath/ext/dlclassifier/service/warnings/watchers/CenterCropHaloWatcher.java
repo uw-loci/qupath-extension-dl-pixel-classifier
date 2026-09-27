@@ -19,37 +19,30 @@ import qupath.ext.dlclassifier.service.warnings.InferenceWarning;
  * Blending averages the tiles covering each pixel instead, so a contested
  * pixel lands between the two predictions.
  * <p>
- * Measured on a 6-channel U-Net (ResNet-18, depth 5) at tileSize 256,
- * against a single whole-image pass over the same slide:
+ * Measured on a 6-channel U-Net (ResNet-18, depth 5) at tileSize 256, by
+ * shifting the tile grid half a stride and counting pixels whose class
+ * changed. That needs no reference image, and the pixels it counts are the
+ * ones a user sees as blocks:
  *
  * <pre>
- *   padding 51 (20%)   CENTER_CROP 11.95%   LINEAR 5.60%   GAUSSIAN 5.71%
- *   padding 64 (25%)   CENTER_CROP 11.81%   LINEAR 3.95%   GAUSSIAN 3.98%
+ *   overlap 20.0%  (pad 51)   CENTER_CROP 10.65%   LINEAR 7.59%
+ *   overlap 25.0%  (pad 64)   CENTER_CROP  7.08%   LINEAR 4.55%
+ *   overlap 37.5%  (pad 96)   CENTER_CROP  3.42%   LINEAR 2.14%
+ *   overlap 43.8%  (pad 112)  CENTER_CROP  3.39%   LINEAR 2.57%
  * </pre>
  *
- * Raising the overlap barely moves CENTER_CROP because the receptive field
- * is much wider than any halo worth paying for; changing the blend mode
- * halves the disagreement at every geometry. So the advice is to blend,
- * not to widen.
+ * The halo is what fixes center-crop, and 37.5% is where it stops paying:
+ * the next step buys 0.03 points for double the tiles.
+ * {@code InferenceConfig.effectivePadding()} therefore raises the halo to
+ * that floor rather than banning the mode, and this watcher explains the
+ * change.
  * <p>
- * Severity is WARN rather than BLOCKING: CENTER_CROP is the right
- * choice when tiles must not be averaged (a downstream step that needs
- * each pixel to come from exactly one inference pass), and the user is
- * allowed to make that trade knowingly.
+ * Severity is WARN rather than BLOCKING: with the floor applied the geometry
+ * is sound, and the user only needs to know why their run got slower.
  */
 public final class CenterCropHaloWatcher implements InferenceWarning {
 
     public static final String ID = "center-crop-halo";
-
-    /**
-     * Halo below which CENTER_CROP is reported, as a fraction of the tile.
-     * Set at 50%, i.e. always: the measurements show CENTER_CROP losing to
-     * blending across the whole usable range, and a halo of half the tile
-     * leaves a stride of zero. The fraction is kept as a named constant so
-     * a future model family with a small receptive field can relax it
-     * rather than having the rule rewritten.
-     */
-    private static final double HALO_FRACTION_NEEDED = 0.5;
 
     @Override
     public String getId() {
@@ -58,25 +51,26 @@ public final class CenterCropHaloWatcher implements InferenceWarning {
 
     @Override
     public String getTitle() {
-        return "CENTER_CROP can leave rectangular blocks at tile boundaries";
+        return "Tile overlap raised to 37.5% for CENTER_CROP";
     }
 
     @Override
     public String getDescription() {
-        return "Blend Mode is CENTER_CROP, which gives each pixel to a "
-                + "single tile rather than averaging the tiles that cover "
-                + "it. This model's receptive field is wider than one "
-                + "tile, so neighbouring tiles genuinely disagree about "
-                + "the tissue they share, and CENTER_CROP resolves that by "
-                + "picking one of them -- which shows up as rectangular "
-                + "blocks of the wrong class, aligned to the tile grid. "
-                + "On a 6-channel U-Net at tile 256 with 20% overlap, "
-                + "CENTER_CROP placed 11.95% of pixels differently from a "
-                + "single whole-image pass, against 5.60% for LINEAR and "
-                + "5.71% for GAUSSIAN. Raising the overlap does not fix "
-                + "this; changing Blend Mode to GAUSSIAN or LINEAR does. "
-                + "Keep CENTER_CROP only if a later step needs every pixel "
-                + "to come from exactly one inference pass.";
+        return "Blend Mode is CENTER_CROP, so the tile overlap has been "
+                + "raised to 37.5% for this run. Center-crop gives each "
+                + "pixel to a single tile rather than averaging the tiles "
+                + "that cover it. This model's receptive field is wider "
+                + "than one tile, so neighbouring tiles genuinely disagree "
+                + "about the tissue they share, and center-crop settles "
+                + "that by picking one of them -- which appears as "
+                + "rectangular blocks of the wrong class, aligned to the "
+                + "tile grid. A wider halo is what fixes it: shifting the "
+                + "tile grid half a stride moves 10.65% of pixels at 20% "
+                + "overlap, 7.08% at 25%, and 3.42% at 37.5%. "
+                + "This costs time -- the stride falls from 154px to 64px "
+                + "at tile 256, which is 5.8x the tiles. Choose GAUSSIAN "
+                + "or LINEAR to keep your own overlap; they reach a "
+                + "similar result with less compute.";
     }
 
     @Override
@@ -94,11 +88,6 @@ public final class CenterCropHaloWatcher implements InferenceWarning {
         if (config == null || config.getBlendMode() != InferenceConfig.BlendMode.CENTER_CROP) {
             return false;
         }
-        int tileSize = config.getTileSize();
-        if (tileSize <= 0) {
-            return false;
-        }
-        int padding = InferenceConfig.computeEffectivePadding(tileSize, config.getOverlap());
-        return padding < tileSize * HALO_FRACTION_NEEDED;
+        return config.centerCropPaddingWasRaised();
     }
 }
