@@ -197,7 +197,7 @@ public class OverlayService {
         InferenceConfig config = InferenceConfig.builder()
                 .tileSize(tileSize)
                 .overlapPercent(overlapPercent)
-                .blendMode(InferenceConfig.BlendMode.GAUSSIAN)
+                .blendMode(preferredBlendMode())
                 .overlaySmoothingSigma(smoothingSigma)
                 .multiPassAveraging(multiPass)
                 .useCompactArgmaxOutput(compactArgmax)
@@ -210,6 +210,28 @@ public class OverlayService {
                 new DLPixelClassifier(selectedMetadata, selectedChannelConfig, config, imageData);
         applyClassifierOverlay(imageData, pixelClassifier, selectedMetadata, selectedChannelConfig);
         return true;
+    }
+
+    /**
+     * The blend mode the user last chose in the inference dialog.
+     * <p>
+     * The overlay used to pin this to GAUSSIAN and then {@code
+     * DLPixelClassifier} pinned it again to CENTER_CROP, so the dialog's
+     * Blend Mode control could not reach the overlay at all while Apply
+     * honoured it -- the two could render the same slide differently, and
+     * the log reported a mode that was not the one running.
+     *
+     * @return the stored mode, or GAUSSIAN when the stored value is missing
+     *         or no longer a valid mode
+     */
+    private static InferenceConfig.BlendMode preferredBlendMode() {
+        String stored = DLClassifierPreferences.getLastBlendMode();
+        try {
+            return InferenceConfig.BlendMode.valueOf(stored);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            logger.warn("Unrecognized blend mode preference '{}'; using GAUSSIAN", stored);
+            return InferenceConfig.BlendMode.GAUSSIAN;
+        }
     }
 
     /**
@@ -238,9 +260,9 @@ public class OverlayService {
      * Recreates the overlay with current preference settings.
      * <p>
      * Requires that the overlay was originally created via the overload that
-     * stores metadata and channel config. Always uses GAUSSIAN blending
-     * for artifact-free tile boundaries, and reads overlay smoothing from
-     * preferences.
+     * stores metadata and channel config. Blend mode, overlap and overlay
+     * smoothing all come from preferences, so the overlay and Apply agree
+     * about how neighbouring tiles are combined.
      *
      * @return true if the overlay was successfully recreated
      */
@@ -258,7 +280,7 @@ public class OverlayService {
         InferenceConfig newConfig = InferenceConfig.builder()
                 .tileSize(tileSize)
                 .overlapPercent(overlapPercent)
-                .blendMode(InferenceConfig.BlendMode.GAUSSIAN)
+                .blendMode(preferredBlendMode())
                 .overlaySmoothingSigma(smoothingSigma)
                 .multiPassAveraging(multiPass)
                 .useCompactArgmaxOutput(compactArgmax)

@@ -587,6 +587,12 @@ public class InferenceDialog {
                             + "NONE: No blending; raw tile predictions.\n"
                             + "  Fastest but will show visible tile seams.");
 
+            // The overlap advisory reads differently under CENTER_CROP, so it
+            // has to be refreshed when the mode changes, not only the overlap.
+            blendModeCombo
+                    .valueProperty()
+                    .addListener((obs, old, newVal) -> updateOverlapWarning(overlapPercentSpinner.getValue()));
+
             grid.add(new Label("Blend Mode:"), 0, row);
             grid.add(blendModeCombo, 1, row);
             row++;
@@ -628,6 +634,24 @@ public class InferenceDialog {
         }
 
         private void updateOverlapWarning(double overlapPercent) {
+            // CENTER_CROP overrides the overlap advice, because with it the
+            // overlap is very nearly beside the point. This model family's
+            // receptive field is wider than a tile, so neighbouring tiles
+            // disagree about the tissue they share; CENTER_CROP settles that
+            // by handing the pixel to one tile, and the disagreement surfaces
+            // as rectangular blocks on the tile grid. Measured at tile 256:
+            // 11.95% of pixels differ from a whole-image pass at 20% overlap
+            // and 11.81% at 25%, against 5.60% and 3.95% for LINEAR. Widening
+            // the halo does not help; blending does.
+            if (blendModeCombo != null && blendModeCombo.getValue() == InferenceConfig.BlendMode.CENTER_CROP) {
+                overlapWarningLabel.setText("CENTER_CROP gives each pixel to one tile instead of averaging "
+                        + "the tiles that cover it, so tiles that disagree leave rectangular blocks on the "
+                        + "tile grid. More overlap will not fix that -- GAUSSIAN or LINEAR will. Keep "
+                        + "CENTER_CROP only if every pixel must come from exactly one inference pass.");
+                overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #F57C00;");
+                syncOverlapPixels(overlapPercent);
+                return;
+            }
             if (overlapPercent == 0.0) {
                 overlapWarningLabel.setText("WARNING: Objects will NOT be merged across tile boundaries");
                 overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #D32F2F;");
@@ -642,7 +666,11 @@ public class InferenceDialog {
                 overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #388E3C;");
             }
 
-            // Update the pixel-based overlap value
+            syncOverlapPixels(overlapPercent);
+        }
+
+        /** Keeps the hidden pixel overlap in step with the percentage the user sets. */
+        private void syncOverlapPixels(double overlapPercent) {
             int tileSize = tileSizeSpinner != null ? tileSizeSpinner.getValue() : 512;
             int overlapPixels = (int) Math.round(tileSize * overlapPercent / 100.0);
             if (overlapSpinner != null) {

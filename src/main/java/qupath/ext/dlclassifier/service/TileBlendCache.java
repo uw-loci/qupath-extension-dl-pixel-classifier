@@ -188,8 +188,11 @@ public class TileBlendCache {
      * @return blended probability map (new array, original not modified)
      */
     public float[][][] blendWithNeighbors(float[][][] probMap, int requestX, int requestY, int width, int height) {
-        // CENTER_CROP: every visible pixel is at the center of its tile, no blending needed
-        if (blendMode == InferenceConfig.BlendMode.CENTER_CROP) {
+        // CENTER_CROP: every visible pixel is at the center of its tile, no blending needed.
+        // NONE: the user asked for raw tile predictions; blending them would be
+        // the opposite. This became reachable when the overlay started honouring
+        // the configured blend mode instead of pinning it to CENTER_CROP.
+        if (blendMode == InferenceConfig.BlendMode.CENTER_CROP || blendMode == InferenceConfig.BlendMode.NONE) {
             return probMap;
         }
 

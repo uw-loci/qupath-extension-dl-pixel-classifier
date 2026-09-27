@@ -453,15 +453,34 @@ This was fixed in v0.5.1+, uncalibrated images now default to 1.0 um/px for cont
 - Channel configuration may not match training, verify channel order and count
 - Resolution (downsample) may differ from training
 
+### Rectangular blocks of the wrong class, aligned to a grid
+
+This is the most common tiling complaint and it has one usual cause: **Blend Mode is set to CENTER_CROP**. Set it to GAUSSIAN or LINEAR.
+
+A U-Net with a ResNet encoder at depth 5 has a receptive field wider than a 256-pixel tile, so what the model predicts for a pixel depends on the whole tile that pixel landed in. Two tiles that share a piece of tissue can therefore disagree about it. CENTER_CROP settles that by giving the pixel to whichever tile it sits nearest the centre of, which removes the visible *seam* but keeps one tile's wrong answer for the whole region -- and that is what you see as a block with straight edges on the tile grid.
+
+Blending averages the tiles that cover each pixel, so a contested pixel lands between the two predictions instead. Measured on a 6-channel U-Net at tile size 256, against a single whole-image forward pass over the same slide:
+
+| Overlap | CENTER_CROP | LINEAR | GAUSSIAN |
+|---|---|---|---|
+| 20% | 11.95% of pixels differ | 5.60% | 5.71% |
+| 25% | 11.81% | 3.95% | 3.98% |
+
+Note what the table says about overlap: raising it barely moves CENTER_CROP, because the receptive field is much wider than any halo worth paying for. Changing the blend mode roughly halves the disagreement at every geometry. **Blend, do not widen.**
+
+Keep CENTER_CROP only when a downstream step needs every pixel to come from exactly one inference pass.
+
 ### Tile seams visible in output
 
-Both the overlay and Apply Classifier (OBJECTS) use the same unified inference pipeline, so they should produce identical results. The pipeline reads expanded tile regions from the actual image (real context, not reflection padding), center-crops to the stride region, and applies Gaussian smoothing. This eliminates most tile boundary artifacts.
+Distinct from the blocks above: a *seam* is a thin line at a tile boundary, not a filled rectangle.
 
-If seams are still visible:
+The overlay and Apply Classifier (OBJECTS) use the same inference pipeline. It reads expanded tile regions from the actual image (real context, not reflection padding), crops or blends back to the stride region according to Blend Mode, and applies Gaussian smoothing.
+
+If seams are visible:
 
 - **Re-train the model**: new models use BatchRenorm and save dataset normalization statistics, giving the best cross-tile consistency. Older models trained with standard BatchNorm are more susceptible to tiling artifacts.
-- Increase the **Overlay Prediction Smoothing** sigma in Edit > Preferences > DL Pixel Classifier, higher values smooth noisy per-pixel predictions
-- The tile overlap is enforced automatically (minimum 25% per side), manually increasing it beyond the default has diminishing returns
+- Increase the **Overlay Prediction Smoothing** sigma in Edit > Preferences > DL Pixel Classifier; higher values smooth noisy per-pixel predictions.
+- Raise **Tile Overlap (%)**. Overlap is not clamped to any minimum, so a low value really does mean a small halo. 20-25% is a reasonable range; past that you pay compute for little gain.
 
 ### Objects don't match the overlay
 

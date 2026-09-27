@@ -1,6 +1,7 @@
 package qupath.ext.dlclassifier.service.warnings;
 
 import qupath.ext.dlclassifier.service.warnings.watchers.BrnFoldConvergenceWatcher;
+import qupath.ext.dlclassifier.service.warnings.watchers.CenterCropHaloWatcher;
 import qupath.ext.dlclassifier.service.warnings.watchers.ChannelsLastBrnWatcher;
 import qupath.ext.dlclassifier.service.warnings.watchers.ExperimentalProvidersToggleWatcher;
 import qupath.ext.dlclassifier.service.warnings.watchers.InMemoryCacheWorkersWatcher;
@@ -35,6 +36,7 @@ public final class InteractionWarningRegistration {
 
         // Inference-scope watchers.
         InteractionWarningService.register(new ChannelsLastBrnWatcher());
+        InteractionWarningService.register(new CenterCropHaloWatcher());
 
         // Preference-toggle watchers.
         InteractionWarningService.register(new BrnFoldConvergenceWatcher());
