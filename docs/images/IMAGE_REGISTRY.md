@@ -22,7 +22,7 @@ This file tracks the relationship between documentation screenshots and the Java
 | `training-progress-charts.png` | `ui/ProgressMonitorController.java` | 2026-07-22 | OK |
 | `training-loss-ohem-crossover.png` | `ui/ProgressMonitorController.java` | 2026-07-22 | OK |
 | `training-area-issues-confusion-matrix.png` | `ui/TrainingAreaIssuesDialog.java` | 2026-07-22 | OK |
-| `training-area-issues-loss-heatmap.png` | `ui/TrainingAreaIssuesDialog.java` | 2026-07-22 | OK |
+| `training-area-issues-loss-heatmap.png` | `ui/TrainingAreaIssuesDialog.java` | 2026-07-22 | STALE -- shows the adjust button labelled "Adjust annotations in current tile"; since 0.9.6 it reads "Preview annotation adjustment areas" while Preview changes before applying is ticked. Needs re-capture on the Windows workstation. |
 | `manage-classifiers.png` | `controller/ModelManagementWorkflow.java` | 2026-07-22 | OK |
 | `inference-tissue-prediction.png` | Inference result composite (before/after tissue predictions; not a single UI class) | 2026-07-22 | OK |
 | `annotated-tissue-sparse-annotations.png` | QuPath annotation view (sparse line annotations; not a single UI class) | 2026-07-22 | OK |

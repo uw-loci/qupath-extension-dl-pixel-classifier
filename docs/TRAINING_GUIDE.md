@@ -376,9 +376,11 @@ The dialog has two tabs: the tile list described above, and a **Confusion Matrix
 
 **Click any cell** to filter the tile list to only the tiles that contain that specific ground-truth-to-prediction confusion. A banner at the top of the tile list shows the active confusion filter with a **Clear** link to remove it. This makes it easy to jump from a systematic error in the matrix to the exact tiles where it occurs.
 
-### Apply Annotation Adjustment
+### Annotation Adjustment
 
-The **Apply Annotation Adjustment** panel proposes corrections to your annotations based on where the model disagrees with them. It presents a list of **per-transition checkboxes**: each checkbox is a single class-to-class transition (e.g., "Stroma -> Tumor") with the pixel count that would be reassigned. All transitions are checked by default. Toggling any checkbox updates the preview overlay live so you can see exactly which pixels each transition affects before committing the adjustment.
+The **Annotation Adjustment** panel proposes corrections to your annotations based on where the model disagrees with them. It presents a list of **per-transition checkboxes**: each checkbox is a single class-to-class transition (e.g., "Stroma -> Tumor") with the pixel count that would be reassigned. All transitions are checked by default. Toggling any checkbox updates the preview overlay live so you can see exactly which pixels each transition affects before committing the adjustment.
+
+The action button's label tells you which it will do. With **Preview changes before applying** ticked it reads **Preview annotation adjustment areas** and only shows you what would change; untick it and the button reads **Adjust annotations in current tile** and edits directly. Either way, committing raises a confirmation dialog titled **Apply Annotation Adjustment** that reports the pixel count and reminds you the change is limited to the current tile. **Undo last adjustment** reverses it.
 
 ### Filtering and navigation
 
