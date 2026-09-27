@@ -30,8 +30,7 @@ from PIL import Image
 
 # Configure logging for detailed output during tests
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -40,7 +39,9 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 # Path to the real exported training data
-DATA_DIR = Path(__file__).parent.parent.parent / "dl_training" / "-CTRL_PknRNAi_108870_0001"
+DATA_DIR = (
+    Path(__file__).parent.parent.parent / "dl_training" / "-CTRL_PknRNAi_108870_0001"
+)
 
 # Classes from config.json
 CLASSES = ["Ignore*", "hair", "intervein", "vein"]
@@ -63,14 +64,14 @@ def _data_available():
 
 
 skip_no_data = pytest.mark.skipif(
-    not _data_available(),
-    reason=f"Training data not found at {DATA_DIR}"
+    not _data_available(), reason=f"Training data not found at {DATA_DIR}"
 )
 
 
 # ============================================================================
 # Step 1: Extended Training Convergence Test
 # ============================================================================
+
 
 @skip_no_data
 class TestStep1TrainingConvergence:
@@ -111,19 +112,29 @@ class TestStep1TrainingConvergence:
         # Track progress
         progress_log = []
 
-        def progress_callback(epoch, loss, accuracy):
-            progress_log.append({
-                "epoch": epoch,
-                "val_loss": loss,
-                "accuracy": accuracy
-            })
-            logger.info(f"  Epoch {epoch}/20: val_loss={loss:.4f}, acc={accuracy:.4f}")
+        # Seven positional arguments, matching the real call site in
+        # TrainingService._run_training. "loss" here is validation loss.
+        def progress_callback(
+            epoch,
+            train_loss,
+            val_loss,
+            accuracy,
+            per_class_iou,
+            per_class_loss,
+            mean_iou,
+        ):
+            progress_log.append(
+                {"epoch": epoch, "val_loss": val_loss, "accuracy": accuracy}
+            )
+            logger.info(
+                f"  Epoch {epoch}/20: val_loss={val_loss:.4f}, acc={accuracy:.4f}"
+            )
 
         # Training parameters - designed for convergence on small dataset
         architecture = {
             "backbone": "mobilenet_v2",  # Lightweight for CPU
             "input_size": [512, 512],
-            "use_pretrained": True  # ImageNet pretrained for better convergence
+            "use_pretrained": True,  # ImageNet pretrained for better convergence
         }
 
         input_config = {
@@ -131,8 +142,8 @@ class TestStep1TrainingConvergence:
             "normalization": {
                 "strategy": "percentile_99",
                 "per_channel": False,
-                "clip_percentile": 99.0
-            }
+                "clip_percentile": 99.0,
+            },
         }
 
         training_params = {
@@ -143,13 +154,13 @@ class TestStep1TrainingConvergence:
             "augmentation": True,
             "scheduler": "cosine",
             "scheduler_config": {
-                "T_0": 7,       # First restart at epoch 7
-                "T_mult": 2,    # Double period after restart
-                "eta_min": 1e-6
+                "T_0": 7,  # First restart at epoch 7
+                "T_mult": 2,  # Double period after restart
+                "eta_min": 1e-6,
             },
             "early_stopping": True,
             "early_stopping_patience": 10,
-            "early_stopping_min_delta": 0.001
+            "early_stopping_min_delta": 0.001,
         }
 
         start_time = time.time()
@@ -160,7 +171,7 @@ class TestStep1TrainingConvergence:
             training_params=training_params,
             classes=CLASSES,
             data_path=str(DATA_DIR),
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
         )
         elapsed = time.time() - start_time
 
@@ -182,7 +193,9 @@ class TestStep1TrainingConvergence:
         model_dir = Path(result["model_path"])
         assert (model_dir / "model.pt").exists(), "PyTorch model not saved"
         assert (model_dir / "metadata.json").exists(), "Metadata not saved"
-        assert (model_dir / "training_history.json").exists(), "Training history not saved"
+        assert (
+            model_dir / "training_history.json"
+        ).exists(), "Training history not saved"
 
         # 3. Metadata is correct
         with open(model_dir / "metadata.json") as f:
@@ -201,12 +214,15 @@ class TestStep1TrainingConvergence:
 
         # 5. All loss values are finite (no NaN or Inf)
         for entry in history:
-            assert np.isfinite(entry["train_loss"]), \
-                f"NaN/Inf train_loss at epoch {entry['epoch']}"
-            assert np.isfinite(entry["val_loss"]), \
-                f"NaN/Inf val_loss at epoch {entry['epoch']}"
-            assert np.isfinite(entry["accuracy"]), \
-                f"NaN/Inf accuracy at epoch {entry['epoch']}"
+            assert np.isfinite(
+                entry["train_loss"]
+            ), f"NaN/Inf train_loss at epoch {entry['epoch']}"
+            assert np.isfinite(
+                entry["val_loss"]
+            ), f"NaN/Inf val_loss at epoch {entry['epoch']}"
+            assert np.isfinite(
+                entry["accuracy"]
+            ), f"NaN/Inf accuracy at epoch {entry['epoch']}"
 
         # 6. Loss shows improvement trend
         # Compare first 3 epochs average vs last 3 epochs average
@@ -224,8 +240,9 @@ class TestStep1TrainingConvergence:
         logger.info(f"  Best loss (from result): {result['best_loss']:.4f}")
 
         # The best loss should be better than the first epoch
-        assert best_loss < losses[0], \
-            f"No improvement: best loss {best_loss:.4f} >= first epoch {losses[0]:.4f}"
+        assert (
+            best_loss < losses[0]
+        ), f"No improvement: best loss {best_loss:.4f} >= first epoch {losses[0]:.4f}"
 
         # 7. Accuracy should be positive and non-trivial
         accuracies = [e["accuracy"] for e in history]
@@ -234,8 +251,9 @@ class TestStep1TrainingConvergence:
         logger.info(f"  Final accuracy: {result['final_accuracy']:.4f}")
 
         # With 4 classes, random would be ~25%. We expect better than random.
-        assert max_accuracy > 0.25, \
-            f"Max accuracy {max_accuracy:.4f} not better than random (0.25)"
+        assert (
+            max_accuracy > 0.25
+        ), f"Max accuracy {max_accuracy:.4f} not better than random (0.25)"
 
         # 8. Result contains expected fields
         assert "final_loss" in result
@@ -250,6 +268,7 @@ class TestStep1TrainingConvergence:
 # ============================================================================
 # Step 2: Model Prediction Verification
 # ============================================================================
+
 
 @skip_no_data
 class TestStep2ModelPredictions:
@@ -289,8 +308,8 @@ class TestStep2ModelPredictions:
             "normalization": {
                 "strategy": "percentile_99",
                 "per_channel": False,
-                "clip_percentile": 99.0
-            }
+                "clip_percentile": 99.0,
+            },
         }
 
         # Prepare tiles for batch inference
@@ -300,24 +319,20 @@ class TestStep2ModelPredictions:
             img = Image.open(img_path)
             buffer = io.BytesIO()
             img.save(buffer, format="TIFF")
-            b64_data = "data:image/tiff;base64," + base64.b64encode(buffer.getvalue()).decode("utf-8")
+            b64_data = "data:image/tiff;base64," + base64.b64encode(
+                buffer.getvalue()
+            ).decode("utf-8")
 
-            tiles.append({
-                "id": f"val_{i:04d}",
-                "data": b64_data,
-                "x": 0,
-                "y": 0
-            })
+            tiles.append({"id": f"val_{i:04d}", "data": b64_data, "x": 0, "y": 0})
 
         # Run batch inference
         predictions = service.run_batch(
-            model_path=model_path,
-            tiles=tiles,
-            input_config=input_config
+            model_path=model_path, tiles=tiles, input_config=input_config
         )
 
-        assert len(predictions) == len(val_images), \
-            f"Expected {len(val_images)} predictions, got {len(predictions)}"
+        assert len(predictions) == len(
+            val_images
+        ), f"Expected {len(val_images)} predictions, got {len(predictions)}"
 
         # Analyze predictions
         all_probs = []
@@ -328,35 +343,40 @@ class TestStep2ModelPredictions:
             all_probs.append(probs)
 
             # Check shape: should be [NUM_CLASSES]
-            assert probs.shape == (NUM_CLASSES,), \
-                f"Tile {tile_id}: expected shape ({NUM_CLASSES},), got {probs.shape}"
+            assert probs.shape == (
+                NUM_CLASSES,
+            ), f"Tile {tile_id}: expected shape ({NUM_CLASSES},), got {probs.shape}"
 
             # Check softmax: probabilities should sum to ~1.0
             prob_sum = probs.sum()
-            assert abs(prob_sum - 1.0) < 0.01, \
-                f"Tile {tile_id}: probs sum to {prob_sum:.4f}, expected ~1.0"
+            assert (
+                abs(prob_sum - 1.0) < 0.01
+            ), f"Tile {tile_id}: probs sum to {prob_sum:.4f}, expected ~1.0"
 
             # Check all probabilities are valid
-            assert np.all(probs >= 0), \
-                f"Tile {tile_id}: negative probabilities found"
-            assert np.all(probs <= 1), \
-                f"Tile {tile_id}: probabilities > 1 found"
-            assert np.all(np.isfinite(probs)), \
-                f"Tile {tile_id}: NaN/Inf probabilities found"
+            assert np.all(probs >= 0), f"Tile {tile_id}: negative probabilities found"
+            assert np.all(probs <= 1), f"Tile {tile_id}: probabilities > 1 found"
+            assert np.all(
+                np.isfinite(probs)
+            ), f"Tile {tile_id}: NaN/Inf probabilities found"
 
             argmax_class = int(np.argmax(probs))
             argmax_classes.append(argmax_class)
 
-            logger.info(f"  {tile_id}: probs={probs.round(4).tolist()}, "
-                       f"predicted={CLASSES[argmax_class]}")
+            logger.info(
+                f"  {tile_id}: probs={probs.round(4).tolist()}, "
+                f"predicted={CLASSES[argmax_class]}"
+            )
 
         # Store for later tests
         _shared_state["predictions"] = predictions
 
         # Check class diversity - model should not predict ALL the same class
         unique_classes = set(argmax_classes)
-        logger.info(f"\nPredicted classes across {len(val_images)} tiles: "
-                    f"{[CLASSES[c] for c in unique_classes]}")
+        logger.info(
+            f"\nPredicted classes across {len(val_images)} tiles: "
+            f"{[CLASSES[c] for c in unique_classes]}"
+        )
         logger.info(f"Class diversity: {len(unique_classes)} unique classes")
 
         # With 7 validation tiles and 4 classes, at least 1 unique class
@@ -390,20 +410,15 @@ class TestStep2ModelPredictions:
         img.save(buffer, format="TIFF")
         b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-        tiles = [{
-            "id": "spatial_test",
-            "data": b64_data,
-            "x": 0,
-            "y": 0
-        }]
+        tiles = [{"id": "spatial_test", "data": b64_data, "x": 0, "y": 0}]
 
         input_config = {
             "num_channels": 3,
             "normalization": {
                 "strategy": "percentile_99",
                 "per_channel": False,
-                "clip_percentile": 99.0
-            }
+                "clip_percentile": 99.0,
+            },
         }
 
         output_dir = str(tmp_path / "pixel_output")
@@ -411,7 +426,7 @@ class TestStep2ModelPredictions:
             model_path=model_path,
             tiles=tiles,
             input_config=input_config,
-            output_dir=output_dir
+            output_dir=output_dir,
         )
 
         assert "spatial_test" in output_paths
@@ -423,22 +438,26 @@ class TestStep2ModelPredictions:
 
         # Expected shape: (C, H, W) = (4, 512, 512)
         expected_size = NUM_CLASSES * 512 * 512
-        assert prob_map.size == expected_size, \
-            f"Expected {expected_size} elements, got {prob_map.size}"
+        assert (
+            prob_map.size == expected_size
+        ), f"Expected {expected_size} elements, got {prob_map.size}"
 
         prob_map = prob_map.reshape(NUM_CLASSES, 512, 512)
         logger.info(f"  Spatial output shape: {prob_map.shape}")
 
         # Check probabilities sum to ~1 at each pixel
         pixel_sums = prob_map.sum(axis=0)
-        assert np.allclose(pixel_sums, 1.0, atol=0.01), \
-            f"Pixel probability sums not ~1.0: range [{pixel_sums.min():.4f}, {pixel_sums.max():.4f}]"
+        assert np.allclose(
+            pixel_sums, 1.0, atol=0.01
+        ), f"Pixel probability sums not ~1.0: range [{pixel_sums.min():.4f}, {pixel_sums.max():.4f}]"
 
         # Check for spatial variation (not all same prediction)
         argmax_map = np.argmax(prob_map, axis=0)
         unique_pixel_classes = np.unique(argmax_map)
-        logger.info(f"  Unique classes in spatial prediction: "
-                    f"{[CLASSES[c] for c in unique_pixel_classes]}")
+        logger.info(
+            f"  Unique classes in spatial prediction: "
+            f"{[CLASSES[c] for c in unique_pixel_classes]}"
+        )
 
         # All values should be valid
         assert np.all(np.isfinite(prob_map)), "NaN/Inf in spatial predictions"
@@ -450,6 +469,7 @@ class TestStep2ModelPredictions:
 # ============================================================================
 # Step 3: FastAPI Server Training Endpoint Test
 # ============================================================================
+
 
 @skip_no_data
 class TestStep3ServerTraining:
@@ -488,7 +508,7 @@ class TestStep3ServerTraining:
             "architecture": {
                 "backbone": "mobilenet_v2",
                 "input_size": [512, 512],
-                "use_pretrained": False  # Faster, no download needed
+                "use_pretrained": False,  # Faster, no download needed
             },
             "input_config": {
                 "num_channels": 3,
@@ -497,8 +517,8 @@ class TestStep3ServerTraining:
                 "normalization": {
                     "strategy": "percentile_99",
                     "per_channel": False,
-                    "clip_percentile": 99.0
-                }
+                    "clip_percentile": 99.0,
+                },
             },
             "training": {
                 "epochs": 3,  # Minimal for API test
@@ -506,16 +526,17 @@ class TestStep3ServerTraining:
                 "learning_rate": 0.001,
                 "weight_decay": 1e-4,
                 "validation_split": 0.2,
-                "augmentation": False  # Faster
+                "augmentation": False,  # Faster
             },
             "classes": CLASSES,
-            "data_path": str(DATA_DIR)
+            "data_path": str(DATA_DIR),
         }
 
         logger.info("  Submitting training job...")
         response = client.post("/api/v1/train", json=train_request)
-        assert response.status_code == 200, \
-            f"Train POST failed: {response.status_code} {response.text}"
+        assert (
+            response.status_code == 200
+        ), f"Train POST failed: {response.status_code} {response.text}"
 
         data = response.json()
         assert "job_id" in data
@@ -541,8 +562,10 @@ class TestStep3ServerTraining:
                 epoch = status.get("epoch", "?")
                 loss = status.get("loss", "?")
                 acc = status.get("accuracy", "?")
-                logger.info(f"  [{elapsed}s] Training: epoch={epoch}, "
-                           f"loss={loss}, acc={acc}")
+                logger.info(
+                    f"  [{elapsed}s] Training: epoch={epoch}, "
+                    f"loss={loss}, acc={acc}"
+                )
             elif status["status"] == "completed":
                 final_status = status
                 logger.info(f"  [{elapsed}s] Training completed!")
@@ -552,8 +575,7 @@ class TestStep3ServerTraining:
             elif status["status"] == "pending":
                 logger.info(f"  [{elapsed}s] Pending...")
 
-        assert final_status is not None, \
-            f"Training did not complete within {max_wait}s"
+        assert final_status is not None, f"Training did not complete within {max_wait}s"
         assert final_status["status"] == "completed"
         assert "model_path" in final_status
         assert final_status["model_path"] is not None
@@ -577,6 +599,7 @@ class TestStep3ServerTraining:
 # ============================================================================
 # Step 4: FastAPI Server Inference Endpoint Test
 # ============================================================================
+
 
 @skip_no_data
 class TestStep4ServerInference:
@@ -620,12 +643,14 @@ class TestStep4ServerInference:
 
         tiles = []
         for i, img_path in enumerate(val_images):
-            tiles.append({
-                "id": f"tile_{i}",
-                "data": self._encode_tile(img_path),
-                "x": i * 512,
-                "y": 0
-            })
+            tiles.append(
+                {
+                    "id": f"tile_{i}",
+                    "data": self._encode_tile(img_path),
+                    "x": i * 512,
+                    "y": 0,
+                }
+            )
 
         inference_request = {
             "model_path": model_path,
@@ -635,49 +660,52 @@ class TestStep4ServerInference:
                 "normalization": {
                     "strategy": "percentile_99",
                     "per_channel": False,
-                    "clip_percentile": 99.0
-                }
+                    "clip_percentile": 99.0,
+                },
             },
             "tiles": tiles,
-            "options": {
-                "use_gpu": False,
-                "blend_mode": "linear"
-            }
+            "options": {"use_gpu": False, "blend_mode": "linear"},
         }
 
         logger.info(f"  Sending {len(tiles)} tiles for inference...")
         response = client.post("/api/v1/inference", json=inference_request)
-        assert response.status_code == 200, \
-            f"Inference failed: {response.status_code} {response.text}"
+        assert (
+            response.status_code == 200
+        ), f"Inference failed: {response.status_code} {response.text}"
 
         data = response.json()
         assert "predictions" in data
         predictions = data["predictions"]
 
-        assert len(predictions) == len(tiles), \
-            f"Expected {len(tiles)} predictions, got {len(predictions)}"
+        assert len(predictions) == len(
+            tiles
+        ), f"Expected {len(tiles)} predictions, got {len(predictions)}"
 
         for tile_id, probs in predictions.items():
             probs = np.array(probs)
 
             # Shape check
-            assert probs.shape == (NUM_CLASSES,), \
-                f"Tile {tile_id}: expected ({NUM_CLASSES},), got {probs.shape}"
+            assert probs.shape == (
+                NUM_CLASSES,
+            ), f"Tile {tile_id}: expected ({NUM_CLASSES},), got {probs.shape}"
 
             # Softmax check
             prob_sum = probs.sum()
-            assert abs(prob_sum - 1.0) < 0.01, \
-                f"Tile {tile_id}: probs sum to {prob_sum:.4f}"
+            assert (
+                abs(prob_sum - 1.0) < 0.01
+            ), f"Tile {tile_id}: probs sum to {prob_sum:.4f}"
 
             # Valid range
-            assert np.all(probs >= 0) and np.all(probs <= 1), \
-                f"Tile {tile_id}: probs out of [0,1] range"
+            assert np.all(probs >= 0) and np.all(
+                probs <= 1
+            ), f"Tile {tile_id}: probs out of [0,1] range"
 
-            assert np.all(np.isfinite(probs)), \
-                f"Tile {tile_id}: NaN/Inf in predictions"
+            assert np.all(np.isfinite(probs)), f"Tile {tile_id}: NaN/Inf in predictions"
 
-            logger.info(f"  {tile_id}: {probs.round(4).tolist()} "
-                       f"-> {CLASSES[int(np.argmax(probs))]}")
+            logger.info(
+                f"  {tile_id}: {probs.round(4).tolist()} "
+                f"-> {CLASSES[int(np.argmax(probs))]}"
+            )
 
         logger.info("\n[OK] Step 4 PASSED: Server inference endpoint works correctly")
 
@@ -706,25 +734,18 @@ class TestStep4ServerInference:
                 "normalization": {
                     "strategy": "percentile_99",
                     "per_channel": False,
-                    "clip_percentile": 99.0
-                }
+                    "clip_percentile": 99.0,
+                },
             },
-            "tiles": [{
-                "id": "pixel_tile_0",
-                "data": tile_data,
-                "x": 0,
-                "y": 0
-            }],
+            "tiles": [{"id": "pixel_tile_0", "data": tile_data, "x": 0, "y": 0}],
             "output_dir": output_dir,
-            "options": {
-                "use_gpu": False,
-                "blend_mode": "linear"
-            }
+            "options": {"use_gpu": False, "blend_mode": "linear"},
         }
 
         response = client.post("/api/v1/inference/pixel", json=pixel_request)
-        assert response.status_code == 200, \
-            f"Pixel inference failed: {response.status_code} {response.text}"
+        assert (
+            response.status_code == 200
+        ), f"Pixel inference failed: {response.status_code} {response.text}"
 
         data = response.json()
         assert "output_paths" in data
@@ -740,22 +761,27 @@ class TestStep4ServerInference:
 
         prob_map = np.fromfile(output_file, dtype=np.float32)
         expected_elements = NUM_CLASSES * 512 * 512
-        assert prob_map.size == expected_elements, \
-            f"Expected {expected_elements} elements, got {prob_map.size}"
+        assert (
+            prob_map.size == expected_elements
+        ), f"Expected {expected_elements} elements, got {prob_map.size}"
 
         prob_map = prob_map.reshape(NUM_CLASSES, 512, 512)
         pixel_sums = prob_map.sum(axis=0)
-        assert np.allclose(pixel_sums, 1.0, atol=0.01), \
-            f"Pixel sums not ~1.0: [{pixel_sums.min():.4f}, {pixel_sums.max():.4f}]"
+        assert np.allclose(
+            pixel_sums, 1.0, atol=0.01
+        ), f"Pixel sums not ~1.0: [{pixel_sums.min():.4f}, {pixel_sums.max():.4f}]"
 
         logger.info(f"  Pixel output shape: {prob_map.shape}")
-        logger.info(f"  Pixel sum range: [{pixel_sums.min():.4f}, {pixel_sums.max():.4f}]")
+        logger.info(
+            f"  Pixel sum range: [{pixel_sums.min():.4f}, {pixel_sums.max():.4f}]"
+        )
         logger.info("[OK] Step 4b PASSED: Pixel inference endpoint works correctly")
 
 
 # ============================================================================
 # Summary Test - prints overall results
 # ============================================================================
+
 
 @skip_no_data
 class TestSummary:
@@ -769,18 +795,24 @@ class TestSummary:
 
         if "training_result" in _shared_state:
             result = _shared_state["training_result"]
-            logger.info(f"Training: {result['epochs_trained']} epochs, "
-                       f"best_loss={result['best_loss']:.4f}, "
-                       f"final_acc={result['final_accuracy']:.4f}")
+            logger.info(
+                f"Training: {result['epochs_trained']} epochs, "
+                f"best_loss={result['best_loss']:.4f}, "
+                f"final_acc={result['final_accuracy']:.4f}"
+            )
 
         if "training_history" in _shared_state:
             history = _shared_state["training_history"]
             losses = [e["val_loss"] for e in history]
             accs = [e["accuracy"] for e in history]
-            logger.info(f"Loss trend: {losses[0]:.4f} -> {losses[-1]:.4f} "
-                       f"(best: {min(losses):.4f})")
-            logger.info(f"Accuracy trend: {accs[0]:.4f} -> {accs[-1]:.4f} "
-                       f"(best: {max(accs):.4f})")
+            logger.info(
+                f"Loss trend: {losses[0]:.4f} -> {losses[-1]:.4f} "
+                f"(best: {min(losses):.4f})"
+            )
+            logger.info(
+                f"Accuracy trend: {accs[0]:.4f} -> {accs[-1]:.4f} "
+                f"(best: {max(accs):.4f})"
+            )
 
         if "predictions" in _shared_state:
             preds = _shared_state["predictions"]

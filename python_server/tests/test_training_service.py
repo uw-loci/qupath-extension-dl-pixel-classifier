@@ -28,13 +28,14 @@ class TestModelCreation:
             model_type="unet",
             architecture={"backbone": "mobilenet_v2", "use_pretrained": False},
             num_channels=3,
-            num_classes=2
+            num_classes=2,
         )
 
         assert model is not None
 
         # Test forward pass
         import torch
+
         x = torch.randn(1, 3, 256, 256)
         out = model(x)
         assert out.shape == (1, 2, 256, 256)
@@ -48,10 +49,11 @@ class TestModelCreation:
             model_type="unetplusplus",
             architecture={"backbone": "mobilenet_v2", "use_pretrained": False},
             num_channels=3,
-            num_classes=3
+            num_classes=3,
         )
 
         import torch
+
         x = torch.randn(1, 3, 256, 256)
         out = model(x)
         assert out.shape == (1, 3, 256, 256)
@@ -65,10 +67,11 @@ class TestModelCreation:
             model_type="fpn",
             architecture={"backbone": "mobilenet_v2", "use_pretrained": False},
             num_channels=3,
-            num_classes=2
+            num_classes=2,
         )
 
         import torch
+
         x = torch.randn(1, 3, 256, 256)
         out = model(x)
         assert out.shape == (1, 2, 256, 256)
@@ -82,7 +85,7 @@ class TestModelCreation:
             model_type="unet",
             architecture={"backbone": "mobilenet_v2", "use_pretrained": True},
             num_channels=3,
-            num_classes=2
+            num_classes=2,
         )
 
         assert model is not None
@@ -98,10 +101,11 @@ class TestModelCreation:
             model_type="unet",
             architecture={"backbone": "mobilenet_v2", "use_pretrained": False},
             num_channels=1,
-            num_classes=2
+            num_classes=2,
         )
 
         import torch
+
         x = torch.randn(1, 1, 256, 256)
         out = model_1ch(x)
         assert out.shape == (1, 2, 256, 256)
@@ -111,7 +115,7 @@ class TestModelCreation:
             model_type="unet",
             architecture={"backbone": "mobilenet_v2", "use_pretrained": False},
             num_channels=4,
-            num_classes=2
+            num_classes=2,
         )
 
         x = torch.randn(1, 4, 256, 256)
@@ -129,7 +133,7 @@ class TestModelCreation:
                 model_type="invalid_model",
                 architecture={"backbone": "mobilenet_v2"},
                 num_channels=3,
-                num_classes=2
+                num_classes=2,
             )
 
 
@@ -144,7 +148,7 @@ class TestDataset:
             images_dir=str(sample_training_data / "train" / "images"),
             masks_dir=str(sample_training_data / "train" / "masks"),
             input_config={"num_channels": 3},
-            augment=False
+            augment=False,
         )
 
         assert len(dataset) == 4  # 4 training images
@@ -157,7 +161,7 @@ class TestDataset:
             images_dir=str(sample_training_data / "train" / "images"),
             masks_dir=str(sample_training_data / "train" / "masks"),
             input_config={"num_channels": 3},
-            augment=False
+            augment=False,
         )
 
         img, mask = dataset[0]
@@ -172,14 +176,15 @@ class TestDataset:
     def test_dataset_with_augmentation(self, sample_training_data):
         """Test dataset with augmentation enabled."""
         from dlclassifier_server.services.training_service import (
-            SegmentationDataset, ALBUMENTATIONS_AVAILABLE
+            SegmentationDataset,
+            ALBUMENTATIONS_AVAILABLE,
         )
 
         dataset = SegmentationDataset(
             images_dir=str(sample_training_data / "train" / "images"),
             masks_dir=str(sample_training_data / "train" / "masks"),
             input_config={"num_channels": 3},
-            augment=True
+            augment=True,
         )
 
         # Should still work
@@ -197,11 +202,8 @@ class TestDataset:
         dataset = SegmentationDataset(
             images_dir=str(sample_training_data / "train" / "images"),
             masks_dir=str(sample_training_data / "train" / "masks"),
-            input_config={
-                "num_channels": 3,
-                "normalization": {"strategy": "min_max"}
-            },
-            augment=False
+            input_config={"num_channels": 3, "normalization": {"strategy": "min_max"}},
+            augment=False,
         )
 
         img, _ = dataset[0]
@@ -219,9 +221,9 @@ class TestDataset:
             masks_dir=str(sample_training_data / "train" / "masks"),
             input_config={
                 "num_channels": 3,
-                "normalization": {"strategy": "percentile_99", "clip_percentile": 99.0}
+                "normalization": {"strategy": "percentile_99", "clip_percentile": 99.0},
             },
-            augment=False
+            augment=False,
         )
 
         img, _ = dataset[0]
@@ -237,7 +239,8 @@ class TestAugmentation:
     def test_get_training_augmentation(self):
         """Test augmentation pipeline creation."""
         from dlclassifier_server.services.training_service import (
-            get_training_augmentation, ALBUMENTATIONS_AVAILABLE
+            get_training_augmentation,
+            ALBUMENTATIONS_AVAILABLE,
         )
 
         transform = get_training_augmentation()
@@ -250,7 +253,8 @@ class TestAugmentation:
     def test_augmentation_custom_params(self):
         """Test augmentation with custom parameters."""
         from dlclassifier_server.services.training_service import (
-            get_training_augmentation, ALBUMENTATIONS_AVAILABLE
+            get_training_augmentation,
+            ALBUMENTATIONS_AVAILABLE,
         )
 
         if not ALBUMENTATIONS_AVAILABLE:
@@ -262,7 +266,7 @@ class TestAugmentation:
             p_rotate=0.8,
             p_elastic=0.5,
             p_color=0.5,
-            p_noise=0.3
+            p_noise=0.3,
         )
 
         assert transform is not None
@@ -283,7 +287,7 @@ class TestEarlyStopping:
         assert not es(1, 0.9, None)
         assert not es(2, 0.8, None)
 
-        assert es.best_loss == 0.8
+        assert es.best_score == 0.8
         assert es.counter == 0
 
     def test_early_stopping_triggers(self):
@@ -298,7 +302,7 @@ class TestEarlyStopping:
 
         # Stagnant loss
         assert not es(1, 1.0, None)  # counter = 1
-        assert es(2, 1.0, None)       # counter = 2, triggers
+        assert es(2, 1.0, None)  # counter = 2, triggers
 
         assert es.should_stop is True
 
@@ -312,7 +316,7 @@ class TestEarlyStopping:
 
         # First call establishes baseline at 1.0
         assert not es(0, 1.0, None)
-        assert es.best_loss == 1.0
+        assert es.best_score == 1.0
 
         # Small improvements less than min_delta (0.1) should not count
         # Need loss < 1.0 - 0.1 = 0.9 to be considered improvement
@@ -325,7 +329,7 @@ class TestEarlyStopping:
         # Now a real improvement (0.85 < 0.9)
         assert not es(3, 0.85, None)
         assert es.counter == 0  # Counter reset
-        assert es.best_loss == 0.85
+        assert es.best_score == 0.85
 
     def test_early_stopping_restore_weights(self):
         """Test early stopping restores best weights."""
@@ -378,11 +382,12 @@ class TestLRScheduler:
             scheduler_type="cosine",
             scheduler_config={"T_0": 10},
             epochs=30,
-            steps_per_epoch=10
+            steps_per_epoch=10,
         )
 
         assert scheduler is not None
         from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+
         assert isinstance(scheduler, CosineAnnealingWarmRestarts)
 
     def test_create_step_scheduler(self):
@@ -400,11 +405,12 @@ class TestLRScheduler:
             scheduler_type="step",
             scheduler_config={"step_size": 5, "gamma": 0.1},
             epochs=20,
-            steps_per_epoch=10
+            steps_per_epoch=10,
         )
 
         assert scheduler is not None
         from torch.optim.lr_scheduler import StepLR
+
         assert isinstance(scheduler, StepLR)
 
     def test_create_onecycle_scheduler(self):
@@ -422,11 +428,12 @@ class TestLRScheduler:
             scheduler_type="onecycle",
             scheduler_config={"max_lr": 0.01},
             epochs=10,
-            steps_per_epoch=10
+            steps_per_epoch=10,
         )
 
         assert scheduler is not None
         from torch.optim.lr_scheduler import OneCycleLR
+
         assert isinstance(scheduler, OneCycleLR)
 
     def test_create_no_scheduler(self):
@@ -444,7 +451,7 @@ class TestLRScheduler:
             scheduler_type="none",
             scheduler_config={},
             epochs=10,
-            steps_per_epoch=10
+            steps_per_epoch=10,
         )
 
         assert scheduler is None
@@ -465,7 +472,7 @@ class TestTrainingLoop:
             input_config=training_config["input_config"],
             training_params=training_config["training_params"],
             classes=training_config["classes"],
-            data_path=training_config["data_path"]
+            data_path=training_config["data_path"],
         )
 
         assert result["status"] if "status" in result else True
@@ -484,7 +491,7 @@ class TestTrainingLoop:
             input_config=training_config["input_config"],
             training_params=training_config["training_params"],
             classes=training_config["classes"],
-            data_path=training_config["data_path"]
+            data_path=training_config["data_path"],
         )
 
         model_path = Path(result["model_path"])
@@ -501,8 +508,18 @@ class TestTrainingLoop:
 
         progress_calls = []
 
-        def callback(epoch, loss, accuracy):
-            progress_calls.append((epoch, loss, accuracy))
+        # Signature must track the real call site in
+        # TrainingService._run_training: seven positional arguments.
+        def callback(
+            epoch,
+            train_loss,
+            val_loss,
+            accuracy,
+            per_class_iou,
+            per_class_loss,
+            mean_iou,
+        ):
+            progress_calls.append((epoch, train_loss, accuracy))
 
         result = ts.train(
             model_type=training_config["model_type"],
@@ -511,7 +528,7 @@ class TestTrainingLoop:
             training_params=training_config["training_params"],
             classes=training_config["classes"],
             data_path=training_config["data_path"],
-            progress_callback=callback
+            progress_callback=callback,
         )
 
         # Should have 2 calls for 2 epochs
@@ -535,7 +552,7 @@ class TestTrainingLoop:
             training_params={**training_config["training_params"], "epochs": 100},
             classes=training_config["classes"],
             data_path=training_config["data_path"],
-            cancel_flag=cancel_flag
+            cancel_flag=cancel_flag,
         )
 
         # Training should have stopped early
@@ -557,7 +574,7 @@ class TestONNXExport:
             input_config=training_config["input_config"],
             training_params=training_config["training_params"],
             classes=training_config["classes"],
-            data_path=training_config["data_path"]
+            data_path=training_config["data_path"],
         )
 
         model_path = Path(result["model_path"])
@@ -587,9 +604,9 @@ class TestFocalLoss:
         focal_val = focal(logits, targets)
         ce_val = ce(logits, targets)
 
-        assert torch.allclose(focal_val, ce_val, atol=1e-5), (
-            f"Focal(gamma=0) = {focal_val.item():.6f}, CE = {ce_val.item():.6f}"
-        )
+        assert torch.allclose(
+            focal_val, ce_val, atol=1e-5
+        ), f"Focal(gamma=0) = {focal_val.item():.6f}, CE = {ce_val.item():.6f}"
 
     def test_ignore_index(self):
         """Focal loss should ignore pixels with ignore_index."""
@@ -645,16 +662,15 @@ class TestFocalLoss:
 
         focal_unweighted = FocalLoss(gamma=2.0)
         focal_weighted = FocalLoss(
-            gamma=2.0,
-            class_weights=torch.tensor([1.0, 2.0, 0.5])
+            gamma=2.0, class_weights=torch.tensor([1.0, 2.0, 0.5])
         )
 
         loss_uw = focal_unweighted(logits, targets)
         loss_w = focal_weighted(logits, targets)
 
-        assert not torch.allclose(loss_uw, loss_w), (
-            "Weighted and unweighted focal loss should differ"
-        )
+        assert not torch.allclose(
+            loss_uw, loss_w
+        ), "Weighted and unweighted focal loss should differ"
 
     def test_higher_gamma_lower_easy_loss(self):
         """Higher gamma should reduce contribution from easy (confident) pixels."""
@@ -697,9 +713,9 @@ class TestOHEMCrossEntropyLoss:
         ohem_val = ohem(logits, targets)
         ce_val = ce(logits, targets)
 
-        assert torch.allclose(ohem_val, ce_val, atol=1e-5), (
-            f"OHEM(ratio=1.0) = {ohem_val.item():.6f}, CE = {ce_val.item():.6f}"
-        )
+        assert torch.allclose(
+            ohem_val, ce_val, atol=1e-5
+        ), f"OHEM(ratio=1.0) = {ohem_val.item():.6f}, CE = {ce_val.item():.6f}"
 
     def test_keeps_subset(self):
         """OHEM with ratio<1.0 should yield loss >= CE (keeps harder pixels)."""
@@ -759,7 +775,9 @@ class TestCombinedPixelDiceLoss:
         """Combined loss should be average of pixel and dice components."""
         import torch
         from dlclassifier_server.services.training_service import (
-            FocalLoss, DiceLoss, _CombinedPixelDiceLoss
+            FocalLoss,
+            DiceLoss,
+            _CombinedPixelDiceLoss,
         )
 
         torch.manual_seed(42)
@@ -784,15 +802,15 @@ class TestCombinedPixelDiceLoss:
         """Combined loss should produce gradients."""
         import torch
         from dlclassifier_server.services.training_service import (
-            FocalLoss, DiceLoss, _CombinedPixelDiceLoss
+            FocalLoss,
+            DiceLoss,
+            _CombinedPixelDiceLoss,
         )
 
         logits = torch.randn(1, 3, 8, 8, requires_grad=True)
         targets = torch.randint(0, 3, (1, 8, 8))
 
-        combined = _CombinedPixelDiceLoss(
-            FocalLoss(gamma=2.0), DiceLoss()
-        )
+        combined = _CombinedPixelDiceLoss(FocalLoss(gamma=2.0), DiceLoss())
         loss = combined(logits, targets)
         loss.backward()
 
@@ -806,18 +824,21 @@ class TestFormatLossDesc:
     def test_plain_ce_dice(self):
         """Plain ce_dice should just show the name."""
         from dlclassifier_server.services.training_service import TrainingService
+
         desc = TrainingService._format_loss_desc("ce_dice", 2.0, 1.0)
         assert desc == "ce_dice"
 
     def test_focal_dice_shows_gamma(self):
         """Focal dice should include gamma."""
         from dlclassifier_server.services.training_service import TrainingService
+
         desc = TrainingService._format_loss_desc("focal_dice", 2.0, 1.0)
         assert "gamma=2.0" in desc
 
     def test_ohem_appended(self):
         """OHEM should be appended when ratio < 1.0."""
         from dlclassifier_server.services.training_service import TrainingService
+
         desc = TrainingService._format_loss_desc("ce_dice", 2.0, 0.25)
         assert "OHEM" in desc
         assert "25%" in desc
@@ -825,6 +846,7 @@ class TestFormatLossDesc:
     def test_focal_with_ohem(self):
         """Focal + OHEM should show both."""
         from dlclassifier_server.services.training_service import TrainingService
+
         desc = TrainingService._format_loss_desc("focal_dice", 3.0, 0.5)
         assert "gamma=3.0" in desc
         assert "OHEM" in desc
