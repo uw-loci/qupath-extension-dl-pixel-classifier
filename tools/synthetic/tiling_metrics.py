@@ -269,8 +269,12 @@ def main():
     # deliberately tile-spanning regions sat outside the default top-left
     # square, so the one structure they existed to exercise was never
     # measured, and nothing said so.
-    ch = min(args.max_size, fh)
-    cw = min(args.max_size, fw)
+    # A SQUARE, clipped to the shorter side, not each axis independently.
+    # The generators place their tile-spanning structures inside the region
+    # this computes, so the two must agree exactly; clipping per axis made
+    # them diverge on any image smaller than max_size in one dimension --
+    # which is every quick test run.
+    ch = cw = min(args.max_size, fh, fw)
     if args.crop == "center":
         y0, x0 = (fh - ch) // 2, (fw - cw) // 2
     else:

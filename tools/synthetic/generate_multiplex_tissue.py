@@ -252,12 +252,20 @@ TRACT_WIDTH_PX = (90.0, 210.0)
 N_GIANT_NESTS = 2
 GIANT_NEST_RADIUS_PX = (430.0, 560.0)
 
-# tiling_metrics.py measures on the top-left square of the image (its --max-size,
-# default 2048), so the FIRST giant nest is required to fit inside that square. Without
-# this both landed in the right half on the default seed, the crop's largest inscribed
-# tumor region was 481 px -- under two tiles -- and the one structure those nests exist
-# for was not being measured at all.
+# tiling_metrics.py measures one square of the image rather than all of it (its
+# --max-size, default 2048, taken from the CENTRE by default), so the FIRST giant nest
+# is required to fit inside that square. Without the constraint both landed in the right
+# half on the default seed, the measured square's largest inscribed tumor region was
+# 481 px -- under two tiles -- and the one structure those nests exist for was not being
+# measured at all. Keep this in step with that tool's --max-size and --crop defaults.
 METRICS_CROP_PX = 2048
+
+
+def metrics_crop_box(height, width, size=METRICS_CROP_PX):
+    """The square tiling_metrics.py measures by default: centred, clipped to fit."""
+    side = min(size, height, width)
+    return (height - side) // 2, (width - side) // 2, side
+
 
 # How far the CK falloff reaches OUTSIDE the true nest boundary, as a fraction of
 # transition_px -- nonzero so the boundary itself is still strongly CK-positive and the
@@ -405,7 +413,7 @@ def build_tumor_mask(rng, tissue, target_frac):
     giant_lo = min(GIANT_NEST_RADIUS_PX[0], min(height, width) / 7.0)
     giant_hi = min(GIANT_NEST_RADIUS_PX[1], min(height, width) / 5.0)
     n_giant = 0
-    crop = min(METRICS_CROP_PX, height, width)
+    crop_y, crop_x, crop_side = metrics_crop_box(height, width)
     for index in range(N_GIANT_NESTS):
         # The first one has to fit inside the measurement crop; the rest go anywhere.
         # Two passes so that an unsatisfiable constraint costs a nest's placement
@@ -417,7 +425,12 @@ def build_tumor_mask(rng, tissue, target_frac):
                 r0 = float(
                     rng.uniform(min(giant_lo, giant_hi), max(giant_lo, giant_hi))
                 )
-                if require_in_crop and (cy + r0 > crop or cx + r0 > crop or cy < r0):
+                if require_in_crop and not (
+                    cy - r0 >= crop_y
+                    and cy + r0 <= crop_y + crop_side
+                    and cx - r0 >= crop_x
+                    and cx + r0 <= crop_x + crop_side
+                ):
                     continue
                 if float(edge_dist[cy, cx]) < r0 * 1.15:
                     continue
@@ -434,8 +447,8 @@ def build_tumor_mask(rng, tissue, target_frac):
                 break
             if require_in_crop:
                 log(
-                    "WARNING: no giant nest fits inside the %d px measurement crop; "
-                    "placing it anywhere instead" % crop
+                    "WARNING: no giant nest fits inside the %d px measurement crop at "
+                    "(%d,%d); placing it anywhere instead" % (crop_side, crop_x, crop_y)
                 )
 
     attempts = 0
