@@ -1733,10 +1733,32 @@ public class AnnotationExtractor {
     /**
      * Saves a patch image. Uses TIFF for simple 8-bit images (<=4 bands)
      * and a raw float32 format for multi-channel or high-bit-depth images.
+     * <p>
+     * CHANNEL CONTRACT: the patch is written with exactly the channels named
+     * by {@link ChannelConfiguration#getSelectedChannels()}, in that order.
+     * The server reads the channel count out of the patch itself but builds
+     * the model from {@code num_channels} in the config, so writing all the
+     * image's bands here desynchronizes the two: selecting 6 of 8 channels
+     * used to export 8-channel patches against a 6-channel model and die
+     * inside the first conv, and merely REORDERING channels used to train on
+     * file order while inference fed the user's order -- same count, no
+     * error, silently wrong. Inference subsets and reorders in
+     * {@link TileEncoder#encodeTileRawFloat}; this is the training half of
+     * that contract and the two must not drift apart.
      */
     private void savePatch(BufferedImage image, Path path) throws IOException {
         int numBands = image.getRaster().getNumBands();
         int dataType = image.getRaster().getDataBuffer().getDataType();
+        int[] selection =
+                channelSelectionFor(channelConfig == null ? null : channelConfig.getSelectedChannels(), numBands);
+        if (selection != null) {
+            // A subset or a reordering: the raw float path is the only one
+            // that can express it, so take it even for 8-bit RGB.
+            Path rawPath = path.resolveSibling(path.getFileName().toString().replaceFirst("\\.(tiff?|png)$", ".raw"));
+            float[][][] selected = BitDepthConverter.extractChannels(BitDepthConverter.toFloatArray(image), selection);
+            writeRawFloat(selected, rawPath);
+            return;
+        }
         if (numBands <= 4 && dataType == DataBuffer.TYPE_BYTE) {
             ImageIO.write(image, "TIFF", path.toFile());
         } else {
@@ -1752,6 +1774,38 @@ public class AnnotationExtractor {
             Path rawPath = path.resolveSibling(path.getFileName().toString().replaceFirst("\\.(tiff?|png)$", ".raw"));
             writeRawFloat(BitDepthConverter.toFloatArray(image), rawPath);
         }
+    }
+
+    /**
+     * Returns the channel indices to write for an image with {@code numBands}
+     * bands, or {@code null} when the selection is every band in file order
+     * and the patch can be written untouched.
+     *
+     * @param selected selected channel indices, or null/empty for all bands
+     * @param numBands band count of the rendered patch
+     * @return indices to extract, or null when no extraction is needed
+     * @throws IOException if a selected index does not exist in the image
+     */
+    static int[] channelSelectionFor(List<Integer> selected, int numBands) throws IOException {
+        if (selected == null || selected.isEmpty()) {
+            return null;
+        }
+        int[] indices = new int[selected.size()];
+        boolean identity = selected.size() == numBands;
+        for (int i = 0; i < indices.length; i++) {
+            int band = selected.get(i);
+            if (band < 0 || band >= numBands) {
+                throw new IOException(String.format(
+                        "Channel %d was selected for training but the image has only %d channel(s) "
+                                + "(0-%d). Reopen the channel list and reselect.",
+                        band, numBands, numBands - 1));
+            }
+            indices[i] = band;
+            if (band != i) {
+                identity = false;
+            }
+        }
+        return identity ? null : indices;
     }
 
     /**

@@ -2345,6 +2345,36 @@ class TrainingService:
             logger.warning("TRAINING DIAGNOSTIC: %s", _budget["val_message"])
         _report_setup("step_budget", _budget)
 
+        # Channel-shape gate. The model was built from input_config
+        # num_channels while the patches carry whatever channel count the
+        # exporter wrote, and nothing downstream compares the two -- a
+        # mismatch surfaced as a conv2d error a dozen frames deep with no
+        # mention of channel selection. Check it here, where both numbers
+        # are in hand and the message can name the cause.
+        try:
+            _probe = SegmentationDataset._load_patch(train_dataset.image_files[0])
+            _patch_channels = int(_probe.shape[2]) if _probe.ndim == 3 else 1
+        except Exception:
+            _patch_channels = None
+        # base_channels, not effective_channels: with context_scale > 1 the
+        # detail and context tiles are separate files and __getitem__
+        # concatenates them, so each file on disk still holds base_channels.
+        if _patch_channels is not None and _patch_channels != base_channels:
+            raise ValueError(
+                "Training patches have %d channel(s) but the model was built "
+                "for %d. The exported patches and the channel configuration "
+                "disagree, so no amount of training can proceed. If you "
+                "selected a subset of the image's channels, or reordered "
+                "them, re-export the training data with this version of the "
+                "extension -- patches exported before 0.9.7 always carried "
+                "every channel of the source image in file order. Patch: %s"
+                % (
+                    _patch_channels,
+                    base_channels,
+                    train_dataset.image_files[0].name,
+                )
+            )
+
         # Compute class distribution from training masks for diagnostic logging.
         # This helps diagnose class imbalance issues when reviewing training logs.
         try:
