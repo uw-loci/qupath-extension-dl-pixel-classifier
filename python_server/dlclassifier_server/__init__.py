@@ -5,4 +5,4 @@ try:
 
     __version__ = _get_version("dlclassifier-server")
 except Exception:
-    __version__ = "0.9.7"  # fallback when running from JAR-bundled scripts
+    __version__ = "0.9.8"  # fallback when running from JAR-bundled scripts
