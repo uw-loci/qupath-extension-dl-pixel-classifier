@@ -87,11 +87,7 @@ class InferenceService:
     - Multiple normalization strategies
     """
 
-    def __init__(
-        self,
-        device: str = "auto",
-        gpu_manager: Optional[GPUManager] = None
-    ):
+    def __init__(self, device: str = "auto", gpu_manager: Optional[GPUManager] = None):
         """Initialize inference service.
 
         Args:
@@ -141,8 +137,7 @@ class InferenceService:
         ORT, and rebuilding a PyTorch session is unnecessary (and
         would trigger a deepcopy of weights to GPU).
         """
-        changed = (use_tensorrt != self._use_tensorrt
-                   or use_int8 != self._use_int8)
+        changed = use_tensorrt != self._use_tensorrt or use_int8 != self._use_int8
         self._use_tensorrt = bool(use_tensorrt)
         self._use_int8 = bool(use_int8)
         if changed:
@@ -158,7 +153,10 @@ class InferenceService:
                 "Experimental ORT providers updated: trt=%s int8=%s, "
                 "evicted %d cached ONNX session(s). Next inference "
                 "will reload with the new provider chain.",
-                self._use_tensorrt, self._use_int8, evicted)
+                self._use_tensorrt,
+                self._use_int8,
+                evicted,
+            )
 
     def _get_onnx_providers(self, model_path: Optional[str] = None) -> List[Any]:
         """Get available ONNX execution providers based on device and flags.
@@ -177,6 +175,7 @@ class InferenceService:
         """
         try:
             import onnxruntime as ort
+
             available = ort.get_available_providers()
         except ImportError:
             logger.warning("ONNX Runtime not available")
@@ -187,8 +186,7 @@ class InferenceService:
             # to a minute); caching the engine next to the model avoids
             # paying that cost on every session start.
             if self._use_tensorrt and "TensorrtExecutionProvider" in available:
-                cache_dir = os.path.expanduser(
-                    "~/.dlclassifier/tensorrt_cache")
+                cache_dir = os.path.expanduser("~/.dlclassifier/tensorrt_cache")
                 os.makedirs(cache_dir, exist_ok=True)
                 trt_opts = {
                     "trt_engine_cache_enable": True,
@@ -210,20 +208,19 @@ class InferenceService:
                 # `ort.__version__` to log a warning on old builds.
                 if model_path:
                     import hashlib
+
                     _h = hashlib.sha1()
                     _h.update(model_path.encode("utf-8"))
                     try:
                         _meta = os.path.join(model_path, "metadata.json")
                         if os.path.exists(_meta):
-                            _h.update(str(int(
-                                os.path.getmtime(_meta))).encode("utf-8"))
+                            _h.update(str(int(os.path.getmtime(_meta))).encode("utf-8"))
                     except OSError:
                         pass
                     _digest = _h.hexdigest()[:12]
                     trt_opts["trt_engine_cache_prefix"] = _digest
                     try:
-                        _ort_ver = tuple(int(x) for x in
-                                         ort.__version__.split(".")[:2])
+                        _ort_ver = tuple(int(x) for x in ort.__version__.split(".")[:2])
                         if _ort_ver < (1, 17):
                             logger.warning(
                                 "onnxruntime %s < 1.17 silently ignores "
@@ -231,7 +228,8 @@ class InferenceService:
                                 "different models may collide under one "
                                 "prefix in %s. Bump the onnxruntime pin "
                                 "to >= 1.17 for per-model isolation.",
-                                ort.__version__, cache_dir,
+                                ort.__version__,
+                                cache_dir,
                             )
                     except (AttributeError, ValueError):
                         pass
@@ -246,7 +244,9 @@ class InferenceService:
                 logger.warning(
                     "Experimental TensorRT requested but "
                     "TensorrtExecutionProvider not in %s -- using "
-                    "CUDAExecutionProvider instead.", available)
+                    "CUDAExecutionProvider instead.",
+                    available,
+                )
             return ["CUDAExecutionProvider", "CPUExecutionProvider"]
         elif self._device_str == "mps" and "CoreMLExecutionProvider" in available:
             # MPS devices can use CoreML for ONNX
@@ -298,8 +298,7 @@ class InferenceService:
 
         # Batched inference -> list of per-tile probability maps (C, H, W)
         all_prob_maps = self._infer_batch_spatial(
-            model_tuple, preprocessed,
-            gpu_batch_size=gpu_batch_size, use_amp=use_amp
+            model_tuple, preprocessed, gpu_batch_size=gpu_batch_size, use_amp=use_amp
         )
 
         # Average spatial dimensions to get per-class probabilities
@@ -361,9 +360,11 @@ class InferenceService:
 
         # Batched inference with reflection padding
         all_prob_maps = self._infer_batch_spatial(
-            model_tuple, preprocessed,
+            model_tuple,
+            preprocessed,
             reflection_padding=reflection_padding,
-            gpu_batch_size=gpu_batch_size, use_amp=use_amp
+            gpu_batch_size=gpu_batch_size,
+            use_amp=use_amp,
         )
 
         # Save each probability map to disk
@@ -374,8 +375,12 @@ class InferenceService:
         # Clear GPU cache after batch
         self._cleanup_after_inference()
 
-        logger.info("Pixel inference complete: %d tiles -> %s (format=%s)",
-                     len(output_paths), output_dir, output_format)
+        logger.info(
+            "Pixel inference complete: %d tiles -> %s (format=%s)",
+            len(output_paths),
+            output_dir,
+            output_format,
+        )
         return output_paths
 
     def run_batch_from_buffer(
@@ -420,14 +425,23 @@ class InferenceService:
 
         # Reshape entire buffer into tiles at once
         num_tiles = len(tile_ids)
-        expected_size = (num_tiles * tile_height * tile_width
-                         * num_channels * bytes_per_element)
+        expected_size = (
+            num_tiles * tile_height * tile_width * num_channels * bytes_per_element
+        )
         if len(raw_bytes) != expected_size:
             raise ValueError(
                 "Buffer size mismatch: expected %d bytes "
                 "(%d tiles x %d x %d x %d x %d bytes/elem) but got %d bytes"
-                % (expected_size, num_tiles, tile_height, tile_width,
-                   num_channels, bytes_per_element, len(raw_bytes)))
+                % (
+                    expected_size,
+                    num_tiles,
+                    tile_height,
+                    tile_width,
+                    num_channels,
+                    bytes_per_element,
+                    len(raw_bytes),
+                )
+            )
 
         all_tiles = np.frombuffer(raw_bytes, dtype=np_dtype).reshape(
             num_tiles, tile_height, tile_width, num_channels
@@ -446,8 +460,7 @@ class InferenceService:
 
         # Batched inference
         all_prob_maps = self._infer_batch_spatial(
-            model_tuple, preprocessed,
-            gpu_batch_size=gpu_batch_size, use_amp=use_amp
+            model_tuple, preprocessed, gpu_batch_size=gpu_batch_size, use_amp=use_amp
         )
 
         predictions = {}
@@ -501,12 +514,14 @@ class InferenceService:
         bytes_per_element = 4 if np_dtype == np.float32 else 1
 
         num_tiles = len(tile_ids)
-        expected_size = (num_tiles * tile_height * tile_width
-                         * num_channels * bytes_per_element)
+        expected_size = (
+            num_tiles * tile_height * tile_width * num_channels * bytes_per_element
+        )
         if len(raw_bytes) != expected_size:
             raise ValueError(
-                "Buffer size mismatch: expected %d bytes but got %d bytes" % (
-                    expected_size, len(raw_bytes)))
+                "Buffer size mismatch: expected %d bytes but got %d bytes"
+                % (expected_size, len(raw_bytes))
+            )
 
         all_tiles = np.frombuffer(raw_bytes, dtype=np_dtype).reshape(
             num_tiles, tile_height, tile_width, num_channels
@@ -523,9 +538,11 @@ class InferenceService:
             preprocessed.append(img_array)
 
         all_prob_maps = self._infer_batch_spatial(
-            model_tuple, preprocessed,
+            model_tuple,
+            preprocessed,
             reflection_padding=reflection_padding,
-            gpu_batch_size=gpu_batch_size, use_amp=use_amp
+            gpu_batch_size=gpu_batch_size,
+            use_amp=use_amp,
         )
 
         output_paths = _write_pixel_outputs(
@@ -534,14 +551,16 @@ class InferenceService:
 
         self._cleanup_after_inference()
 
-        logger.info("Pixel inference (binary) complete: %d tiles -> %s (format=%s)",
-                     len(output_paths), output_dir, output_format)
+        logger.info(
+            "Pixel inference (binary) complete: %d tiles -> %s (format=%s)",
+            len(output_paths),
+            output_dir,
+            output_format,
+        )
         return output_paths
 
     def run_batch_files(
-        self,
-        model_path: str,
-        tile_paths: List[str]
+        self, model_path: str, tile_paths: List[str]
     ) -> List[Dict[str, Any]]:
         """Run inference on tile files.
 
@@ -567,10 +586,7 @@ class InferenceService:
         results = []
         for path, prob_map in zip(tile_paths, all_prob_maps):
             class_probs = prob_map.mean(axis=(1, 2))
-            results.append({
-                "path": path,
-                "probabilities": class_probs.tolist()
-            })
+            results.append({"path": path, "probabilities": class_probs.tolist()})
 
         return results
 
@@ -618,16 +634,24 @@ class InferenceService:
                 max_pad = min(img_array.shape[0], img_array.shape[1]) // 2
                 effective_pad = min(pad, max_pad)
                 if img_array.ndim == 2:
-                    img_array = np.pad(img_array,
-                                       ((effective_pad, effective_pad),
-                                        (effective_pad, effective_pad)),
-                                       mode='reflect')
+                    img_array = np.pad(
+                        img_array,
+                        (
+                            (effective_pad, effective_pad),
+                            (effective_pad, effective_pad),
+                        ),
+                        mode="reflect",
+                    )
                 else:
-                    img_array = np.pad(img_array,
-                                       ((effective_pad, effective_pad),
-                                        (effective_pad, effective_pad),
-                                        (0, 0)),
-                                       mode='reflect')
+                    img_array = np.pad(
+                        img_array,
+                        (
+                            (effective_pad, effective_pad),
+                            (effective_pad, effective_pad),
+                            (0, 0),
+                        ),
+                        mode="reflect",
+                    )
 
             if img_array.ndim == 2:
                 img_array = img_array[..., np.newaxis]
@@ -665,8 +689,7 @@ class InferenceService:
                 # which doesn't help when "dynamic" was also exported with
                 # fixed shapes. Channel mismatches still trigger the
                 # dynamic-reload below, since pad/crop can't fix them.
-                static_shape = getattr(
-                    model, "_dlclassifier_onnx_static_shape", None)
+                static_shape = getattr(model, "_dlclassifier_onnx_static_shape", None)
                 pad_h_top = pad_w_left = 0
                 pad_h_bot = pad_w_right = 0
                 crop_h_top = crop_w_left = 0
@@ -692,22 +715,34 @@ class InferenceService:
                             try:
                                 batch_np = np.pad(
                                     batch_np,
-                                    ((0, 0), (0, 0),
-                                     (pad_h_top, pad_h_bot),
-                                     (pad_w_left, pad_w_right)),
-                                    mode="reflect")
+                                    (
+                                        (0, 0),
+                                        (0, 0),
+                                        (pad_h_top, pad_h_bot),
+                                        (pad_w_left, pad_w_right),
+                                    ),
+                                    mode="reflect",
+                                )
                             except ValueError:
                                 batch_np = np.pad(
                                     batch_np,
-                                    ((0, 0), (0, 0),
-                                     (pad_h_top, pad_h_bot),
-                                     (pad_w_left, pad_w_right)),
-                                    mode="edge")
+                                    (
+                                        (0, 0),
+                                        (0, 0),
+                                        (pad_h_top, pad_h_bot),
+                                        (pad_w_left, pad_w_right),
+                                    ),
+                                    mode="edge",
+                                )
                             onnx_pad_applied = True
                             logger.info(
                                 "ONNX static shape %s; padding input %s -> "
                                 "(%d, %d) and cropping output back",
-                                (c0, h0, w0), (cb, hb, wb), h0, w0)
+                                (c0, h0, w0),
+                                (cb, hb, wb),
+                                h0,
+                                w0,
+                            )
                         elif hb >= h0 and wb >= w0:
                             # Oversized input: center-crop to baked-in
                             # shape, run, then expand the output back to
@@ -720,15 +755,21 @@ class InferenceService:
                             crop_w_left = (wb - w0) // 2
                             crop_w_right = (wb - w0) - crop_w_left
                             batch_np = batch_np[
-                                :, :,
-                                crop_h_top:crop_h_top + h0,
-                                crop_w_left:crop_w_left + w0]
+                                :,
+                                :,
+                                crop_h_top : crop_h_top + h0,
+                                crop_w_left : crop_w_left + w0,
+                            ]
                             onnx_crop_applied = True
                             logger.info(
                                 "ONNX static shape %s; center-cropping "
                                 "input %s -> (%d, %d) and edge-padding "
                                 "output back to original",
-                                (c0, h0, w0), (cb, hb, wb), h0, w0)
+                                (c0, h0, w0),
+                                (cb, hb, wb),
+                                h0,
+                                w0,
+                            )
                         else:
                             # Mixed: one dim larger, the other smaller.
                             # Pad+crop in different axes is unusual; fall
@@ -737,7 +778,9 @@ class InferenceService:
                                 "Batch shape %s differs from static ONNX "
                                 "shape %s in mixed direction -- falling "
                                 "back to dynamic model.onnx",
-                                (cb, hb, wb), (c0, h0, w0))
+                                (cb, hb, wb),
+                                (c0, h0, w0),
+                            )
                             for key, val in list(self._model_cache.items()):
                                 if val is model_tuple:
                                     del self._model_cache[key]
@@ -751,7 +794,9 @@ class InferenceService:
                             "Batch shape %s differs from static ONNX shape "
                             "%s in non-spatial dims -- falling back to "
                             "dynamic model.onnx",
-                            (cb, hb, wb), (c0, h0, w0))
+                            (cb, hb, wb),
+                            (c0, h0, w0),
+                        )
                         for key, val in list(self._model_cache.items()):
                             if val is model_tuple:
                                 del self._model_cache[key]
@@ -772,20 +817,26 @@ class InferenceService:
                     # (CUDA OOM, missing input, malformed graph) still
                     # propagate. Catching plain Exception would trigger
                     # a wasteful reload on OOM, worsening GPU pressure.
-                    variant = getattr(
-                        model, "_dlclassifier_onnx_variant", "")
+                    variant = getattr(model, "_dlclassifier_onnx_variant", "")
                     msg = str(ort_err).lower()
-                    shape_err = any(k in msg for k in (
-                        "shape", "rank", "invalid argument",
-                        "got: ", "expected: ",
-                    ))
+                    shape_err = any(
+                        k in msg
+                        for k in (
+                            "shape",
+                            "rank",
+                            "invalid argument",
+                            "got: ",
+                            "expected: ",
+                        )
+                    )
                     if variant in ("static", "static-BN INT8") and shape_err:
                         logger.warning(
                             "Static ONNX model.run() failed with shape "
                             "error (%s), falling back to dynamic "
-                            "model.onnx", ort_err)
-                        for key, val in list(
-                                self._model_cache.items()):
+                            "model.onnx",
+                            ort_err,
+                        )
+                        for key, val in list(self._model_cache.items()):
                             if val is model_tuple:
                                 del self._model_cache[key]
                                 self._onnx_skip_static.add(key)
@@ -796,9 +847,13 @@ class InferenceService:
                         # session in case "model.onnx" was also exported
                         # with fixed shapes (observed in user traces).
                         new_static = getattr(
-                            model, "_dlclassifier_onnx_static_shape", None)
-                        if (new_static is not None and not onnx_pad_applied
-                                and not onnx_crop_applied):
+                            model, "_dlclassifier_onnx_static_shape", None
+                        )
+                        if (
+                            new_static is not None
+                            and not onnx_pad_applied
+                            and not onnx_crop_applied
+                        ):
                             _, c0, h0, w0 = new_static
                             _, cb, hb, wb = batch_np.shape
                             orig_hb, orig_wb = hb, wb
@@ -813,17 +868,25 @@ class InferenceService:
                                     try:
                                         batch_np = np.pad(
                                             batch_np,
-                                            ((0, 0), (0, 0),
-                                             (pad_h_top, pad_h_bot),
-                                             (pad_w_left, pad_w_right)),
-                                            mode="reflect")
+                                            (
+                                                (0, 0),
+                                                (0, 0),
+                                                (pad_h_top, pad_h_bot),
+                                                (pad_w_left, pad_w_right),
+                                            ),
+                                            mode="reflect",
+                                        )
                                     except ValueError:
                                         batch_np = np.pad(
                                             batch_np,
-                                            ((0, 0), (0, 0),
-                                             (pad_h_top, pad_h_bot),
-                                             (pad_w_left, pad_w_right)),
-                                            mode="edge")
+                                            (
+                                                (0, 0),
+                                                (0, 0),
+                                                (pad_h_top, pad_h_bot),
+                                                (pad_w_left, pad_w_right),
+                                            ),
+                                            mode="edge",
+                                        )
                                     onnx_pad_applied = True
                                 elif hb >= h0 and wb >= w0:
                                     crop_h_top = (hb - h0) // 2
@@ -831,21 +894,24 @@ class InferenceService:
                                     crop_w_left = (wb - w0) // 2
                                     crop_w_right = (wb - w0) - crop_w_left
                                     batch_np = batch_np[
-                                        :, :,
-                                        crop_h_top:crop_h_top + h0,
-                                        crop_w_left:crop_w_left + w0]
+                                        :,
+                                        :,
+                                        crop_h_top : crop_h_top + h0,
+                                        crop_w_left : crop_w_left + w0,
+                                    ]
                                     onnx_crop_applied = True
                         input_name = model.get_inputs()[0].name
-                        outputs = model.run(
-                            None, {input_name: batch_np})
+                        outputs = model.run(None, {input_name: batch_np})
                     else:
                         # Log the full error with traceback so OOM /
                         # infra failures are not silently retried.
                         logger.error(
-                            "ONNX model.run() failed (%s variant, "
-                            "shape_err=%s): %s",
-                            variant, shape_err, ort_err,
-                            exc_info=True)
+                            "ONNX model.run() failed (%s variant, " "shape_err=%s): %s",
+                            variant,
+                            shape_err,
+                            ort_err,
+                            exc_info=True,
+                        )
                         raise
                 batch_logits = outputs[0]  # (N, C, H, W)
                 if onnx_pad_applied:
@@ -855,9 +921,11 @@ class InferenceService:
                     out_h = batch_logits.shape[2] - pad_h_top - pad_h_bot
                     out_w = batch_logits.shape[3] - pad_w_left - pad_w_right
                     batch_logits = batch_logits[
-                        :, :,
-                        pad_h_top:pad_h_top + out_h,
-                        pad_w_left:pad_w_left + out_w]
+                        :,
+                        :,
+                        pad_h_top : pad_h_top + out_h,
+                        pad_w_left : pad_w_left + out_w,
+                    ]
                 elif onnx_crop_applied:
                     # Edge-pad output spatial dims back to the original
                     # input shape so downstream code that subtracts `pad`
@@ -867,10 +935,14 @@ class InferenceService:
                     # blending downstream masks them.
                     batch_logits = np.pad(
                         batch_logits,
-                        ((0, 0), (0, 0),
-                         (crop_h_top, crop_h_bot),
-                         (crop_w_left, crop_w_right)),
-                        mode="edge")
+                        (
+                            (0, 0),
+                            (0, 0),
+                            (crop_h_top, crop_h_bot),
+                            (crop_w_left, crop_w_right),
+                        ),
+                        mode="edge",
+                    )
             else:
                 # PyTorch inference with optional AMP
                 batch_tensor = torch.from_numpy(batch_np).to(self.device)
@@ -881,18 +953,16 @@ class InferenceService:
                     )
                 # Per-architecture spatial auto-pad. See
                 # claude-reports/2026-04-17_input-size-divisibility.md.
-                divisor = int(
-                    getattr(model, "_dlclassifier_spatial_divisor", 1)
-                )
-                batch_tensor, pad_h, pad_w = pad_to_multiple(
-                    batch_tensor, divisor
-                )
+                divisor = int(getattr(model, "_dlclassifier_spatial_divisor", 1))
+                batch_tensor, pad_h, pad_w = pad_to_multiple(batch_tensor, divisor)
                 with torch.no_grad():
                     if use_amp and self._device_str == "cuda":
                         # Prefer BF16 on Ampere+ GPUs, fall back to FP16
-                        amp_dtype = (torch.bfloat16
-                                     if torch.cuda.is_bf16_supported()
-                                     else torch.float16)
+                        amp_dtype = (
+                            torch.bfloat16
+                            if torch.cuda.is_bf16_supported()
+                            else torch.float16
+                        )
                         with torch.amp.autocast("cuda", dtype=amp_dtype):
                             outputs = model(batch_tensor)
                     else:
@@ -905,12 +975,20 @@ class InferenceService:
                 probs = self._softmax(batch_logits[i])
                 # Crop reflection padding from output
                 if pad > 0:
-                    effective_pad = min(pad,
-                                        min(images[batch_start + i].shape[0],
-                                            images[batch_start + i].shape[1]) // 2)
+                    effective_pad = min(
+                        pad,
+                        min(
+                            images[batch_start + i].shape[0],
+                            images[batch_start + i].shape[1],
+                        )
+                        // 2,
+                    )
                     if effective_pad > 0:
-                        probs = probs[:, effective_pad:-effective_pad,
-                                      effective_pad:-effective_pad]
+                        probs = probs[
+                            :,
+                            effective_pad:-effective_pad,
+                            effective_pad:-effective_pad,
+                        ]
                 all_probs.append(probs)
 
         return all_probs
@@ -946,13 +1024,15 @@ class InferenceService:
             [tile_array],
             reflection_padding=reflection_padding,
             gpu_batch_size=1,
-            use_tta=use_tta
+            use_tta=use_tta,
         )
         return prob_maps[0]  # (C, H, W)
 
     # ==================== Single-tile inference (legacy compat) ====================
 
-    def _infer_tile(self, model_tuple: Tuple[str, Any], img_array: np.ndarray) -> np.ndarray:
+    def _infer_tile(
+        self, model_tuple: Tuple[str, Any], img_array: np.ndarray
+    ) -> np.ndarray:
         """Run inference on a single tile, returning per-class average probabilities.
 
         Args:
@@ -969,7 +1049,7 @@ class InferenceService:
         self,
         model_tuple: Tuple[str, Any],
         img_array: np.ndarray,
-        reflection_padding: int = 0
+        reflection_padding: int = 0,
     ) -> np.ndarray:
         """Run inference on a single tile, returning full spatial probability map.
 
@@ -982,8 +1062,7 @@ class InferenceService:
             Probability map with shape (C, H, W) where C is num_classes
         """
         results = self._infer_batch_spatial(
-            model_tuple, [img_array],
-            reflection_padding=reflection_padding
+            model_tuple, [img_array], reflection_padding=reflection_padding
         )
         return results[0]
 
@@ -1004,17 +1083,22 @@ class InferenceService:
         """
         try:
             import ttach as tta
-            transforms = tta.Compose([
-                tta.HorizontalFlip(),
-                tta.VerticalFlip(),
-                tta.Rotate90(angles=[0, 90, 180, 270]),
-            ])
-            wrapped = tta.SegmentationTTAWrapper(model, transforms, merge_mode='mean')
+
+            transforms = tta.Compose(
+                [
+                    tta.HorizontalFlip(),
+                    tta.VerticalFlip(),
+                    tta.Rotate90(angles=[0, 90, 180, 270]),
+                ]
+            )
+            wrapped = tta.SegmentationTTAWrapper(model, transforms, merge_mode="mean")
             logger.debug("TTA: wrapped model with D4 transforms")
             return wrapped
         except ImportError:
-            logger.warning("ttach not installed -- TTA disabled. "
-                          "Install with: pip install ttach")
+            logger.warning(
+                "ttach not installed -- TTA disabled. "
+                "Install with: pip install ttach"
+            )
             return model
 
     # ==================== Model Loading ====================
@@ -1043,8 +1127,11 @@ class InferenceService:
         if model_path in self._model_cache:
             model_tuple = self._model_cache[model_path]
             # Apply torch.compile if requested and not yet compiled
-            if (compile_model and model_tuple[0] == "pytorch"
-                    and model_path not in self._compiled_models):
+            if (
+                compile_model
+                and model_tuple[0] == "pytorch"
+                and model_path not in self._compiled_models
+            ):
                 self._try_compile_model(model_path, model_tuple)
             return self._model_cache[model_path]
 
@@ -1064,6 +1151,7 @@ class InferenceService:
         onnx_static_bn_path = model_dir / "model_static_bn.onnx"
         onnx_static_path = model_dir / "model_static.onnx"
         onnx_path = model_dir / "model.onnx"
+
         def _try_load_onnx(path: Path, label: str, static_shape=None):
             try:
                 logger.info("Loading %s ONNX model from %s", label, path)
@@ -1073,12 +1161,8 @@ class InferenceService:
                 # engines from different classifiers do not collide in
                 # the shared cache dir. Fallback to self._onnx_providers
                 # (no prefix) if model_path is unavailable.
-                per_model_providers = self._get_onnx_providers(
-                    model_path=model_path)
-                session = ort.InferenceSession(
-                    str(path),
-                    providers=per_model_providers
-                )
+                per_model_providers = self._get_onnx_providers(model_path=model_path)
+                session = ort.InferenceSession(str(path), providers=per_model_providers)
                 # Tag the session so _infer_batch_spatial can tell whether
                 # it is safe to feed an arbitrary-shaped batch.
                 session._dlclassifier_onnx_variant = label
@@ -1096,37 +1180,40 @@ class InferenceService:
                         # Only set if C/H/W are fixed ints (dim 0 may
                         # be the string "batch" after the E.1 dynamic-
                         # batch export).
-                        if (len(dims) == 4
-                                and all(isinstance(d, int)
-                                        for d in dims[1:])):
+                        if len(dims) == 4 and all(isinstance(d, int) for d in dims[1:]):
                             static_shape = dims
                             logger.info(
                                 "Inferred ONNX static shape from model "
-                                "inputs for %s: %s", label, dims)
+                                "inputs for %s: %s",
+                                label,
+                                dims,
+                            )
                     except Exception:
                         pass
                 session._dlclassifier_onnx_static_shape = static_shape
                 self._model_cache[model_path] = ("onnx", session)
                 return ("onnx", session)
             except Exception as e:
-                logger.warning(
-                    "%s ONNX loading failed (%s): %s", label, path, e)
+                logger.warning("%s ONNX loading failed (%s): %s", label, path, e)
                 return None
 
-        if (self._use_tensorrt and self._use_int8
-                and onnx_static_bn_path.exists()
-                and model_path not in self._onnx_skip_static):
+        if (
+            self._use_tensorrt
+            and self._use_int8
+            and onnx_static_bn_path.exists()
+            and model_path not in self._onnx_skip_static
+        ):
             try:
                 with open(model_dir / "metadata.json") as f:
                     meta = json.load(f)
-                bn_shape = meta.get(
-                    "onnx_variants", {}).get(
-                    "static_bn", {}).get("shape")
+                bn_shape = (
+                    meta.get("onnx_variants", {}).get("static_bn", {}).get("shape")
+                )
             except Exception:
                 bn_shape = None
             loaded = _try_load_onnx(
-                onnx_static_bn_path, "static-BN INT8",
-                static_shape=bn_shape)
+                onnx_static_bn_path, "static-BN INT8", static_shape=bn_shape
+            )
             if loaded is not None:
                 return loaded
 
@@ -1141,7 +1228,8 @@ class InferenceService:
             except Exception:
                 static_shape = None
             loaded = _try_load_onnx(
-                onnx_static_path, "static", static_shape=static_shape)
+                onnx_static_path, "static", static_shape=static_shape
+            )
             if loaded is not None:
                 return loaded
 
@@ -1160,15 +1248,15 @@ class InferenceService:
             if not metadata_path.exists():
                 raise FileNotFoundError(
                     "Classifier metadata not found: %s. "
-                    "The classifier directory may be incomplete."
-                    % metadata_path)
+                    "The classifier directory may be incomplete." % metadata_path
+                )
             try:
                 with open(metadata_path) as f:
                     metadata = json.load(f)
             except json.JSONDecodeError as e:
                 raise RuntimeError(
-                    "Classifier metadata is corrupt (%s): %s"
-                    % (metadata_path, e))
+                    "Classifier metadata is corrupt (%s): %s" % (metadata_path, e)
+                )
 
             # Create model architecture
             import segmentation_models_pytorch as smp
@@ -1184,8 +1272,9 @@ class InferenceService:
             if "effective_input_channels" in arch:
                 metadata_channels = arch["effective_input_channels"]
             else:
-                metadata_channels = arch.get("input_channels",
-                                             input_config.get("num_channels", 3))
+                metadata_channels = arch.get(
+                    "input_channels", input_config.get("num_channels", 3)
+                )
                 if context_scale > 1:
                     metadata_channels = metadata_channels * 2
             num_classes = len(metadata.get("classes", [{"index": 0}, {"index": 1}]))
@@ -1195,11 +1284,13 @@ class InferenceService:
             # metadata is wrong (e.g. Java overwrites with incorrect value).
             try:
                 state_dict = torch.load(
-                    pt_path, map_location=self.device, weights_only=True)
+                    pt_path, map_location=self.device, weights_only=True
+                )
             except Exception as e:
                 raise RuntimeError(
                     "Failed to load model weights from %s: %s. "
-                    "File may be corrupt." % (pt_path, e))
+                    "File may be corrupt." % (pt_path, e)
+                )
 
             # Detect MAE checkpoint accidentally used as classifier
             mae_keys = [k for k in state_dict if k.startswith("mae.")]
@@ -1208,7 +1299,8 @@ class InferenceService:
                     "This model file contains MAE pretraining weights "
                     "(not a trained classifier). Use 'Continue from model' "
                     "during training to load MAE weights as initialization, "
-                    "then train a segmentation classifier.")
+                    "then train a segmentation classifier."
+                )
 
             # Detect actual in_channels from checkpoint weights
             num_channels = metadata_channels
@@ -1220,21 +1312,38 @@ class InferenceService:
                         "Metadata num_channels=%d but checkpoint "
                         "encoder.conv1.weight has %d input channels. "
                         "Using checkpoint value.",
-                        metadata_channels, checkpoint_channels)
+                        metadata_channels,
+                        checkpoint_channels,
+                    )
                 num_channels = checkpoint_channels
             else:
-                # Some encoder architectures use different key names.
-                # Search for the first conv weight to detect in_channels.
+                # Encoders other than ResNet name their stem differently
+                # (mobilenet encoder.features.0.0, efficientnet
+                # encoder._conv_stem, densenet encoder.features.conv0,
+                # vgg encoder.features.0). Take the FIRST 4-D weight under
+                # "encoder.": a state_dict preserves module registration
+                # order, so that is the stem, and the stem is the only conv
+                # whose input dimension is the image's channel count.
+                #
+                # Requiring "conv" in the key, as this used to, skipped
+                # mobilenet's stem entirely and matched
+                # encoder.features.1.conv.0.0.weight instead -- a DEPTHWISE
+                # conv of shape [32, 1, 3, 3]. Every mobilenet model was
+                # therefore rebuilt with in_channels=1 and rejected at load
+                # with "Model architecture mismatch", whatever it was
+                # actually trained on.
                 for key in state_dict:
-                    if ("conv" in key and "weight" in key
-                            and state_dict[key].dim() == 4):
+                    if key.startswith("encoder.") and state_dict[key].dim() == 4:
                         checkpoint_channels = state_dict[key].shape[1]
                         if checkpoint_channels != metadata_channels:
                             logger.warning(
                                 "Metadata num_channels=%d but checkpoint "
                                 "%s has %d input channels. "
                                 "Using checkpoint value.",
-                                metadata_channels, key, checkpoint_channels)
+                                metadata_channels,
+                                key,
+                                checkpoint_channels,
+                            )
                         num_channels = checkpoint_channels
                         break
 
@@ -1244,20 +1353,27 @@ class InferenceService:
             smp_encoder_name = encoder_name
             try:
                 from .pretrained_models import PretrainedModelsService
+
                 if encoder_name in PretrainedModelsService.HISTOLOGY_ENCODERS:
-                    smp_encoder_name = (
-                        PretrainedModelsService.HISTOLOGY_ENCODERS
-                        [encoder_name][0])
+                    smp_encoder_name = PretrainedModelsService.HISTOLOGY_ENCODERS[
+                        encoder_name
+                    ][0]
                     logger.info(
                         "Resolved custom encoder '%s' -> '%s' for SMP",
-                        encoder_name, smp_encoder_name)
+                        encoder_name,
+                        smp_encoder_name,
+                    )
             except ImportError:
                 pass
 
-            logger.info("Model: %s/%s, in_channels=%d (metadata=%d), "
-                        "classes=%d",
-                        model_type, encoder_name, num_channels,
-                        metadata_channels, num_classes)
+            logger.info(
+                "Model: %s/%s, in_channels=%d (metadata=%d), " "classes=%d",
+                model_type,
+                encoder_name,
+                num_channels,
+                metadata_channels,
+                num_classes,
+            )
 
             model_map = {
                 "unet": smp.Unet,
@@ -1274,6 +1390,7 @@ class InferenceService:
             # MuViT transformer: use dedicated factory
             if model_type == "muvit":
                 from .muvit_model import create_muvit_model
+
                 model = create_muvit_model(
                     architecture=arch,
                     num_channels=num_channels,
@@ -1281,6 +1398,7 @@ class InferenceService:
                 )
             elif model_type == "tiny-unet":
                 from ..models.tiny_unet import TinyUNet
+
                 model = TinyUNet(
                     in_channels=num_channels,
                     n_classes=num_classes,
@@ -1304,8 +1422,7 @@ class InferenceService:
                 # value to nn.BatchNorm2d, and PyTorch rejects a float
                 # num_features. See issue #26.
                 fp_decoder = [
-                    int(c)
-                    for c in arch.get("decoder_channels", [128, 64, 32, 16, 8])
+                    int(c) for c in arch.get("decoder_channels", [128, 64, 32, 16, 8])
                 ]
                 model = smp.Unet(
                     encoder_name=smp_encoder_name,
@@ -1316,7 +1433,8 @@ class InferenceService:
                 )
                 logger.info(
                     "Reconstructed Fast Pretrained UNet (encoder=%s, decoder=%s)",
-                    smp_encoder_name, fp_decoder,
+                    smp_encoder_name,
+                    fp_decoder,
                 )
             else:
                 model_cls = model_map.get(model_type, smp.Unet)
@@ -1324,15 +1442,15 @@ class InferenceService:
                     encoder_name=smp_encoder_name,
                     encoder_weights=None,
                     in_channels=num_channels,
-                    classes=num_classes
+                    classes=num_classes,
                 )
 
             # Auto-detect BatchRenorm from state dict keys (rmax/dmax are
             # unique to BatchRenorm2d). More robust than metadata flag which
             # may be lost when Java overwrites metadata.json.
             has_batchrenorm = any(
-                k.endswith('.rmax') or k.endswith('.dmax')
-                for k in state_dict)
+                k.endswith(".rmax") or k.endswith(".dmax") for k in state_dict
+            )
             if has_batchrenorm:
                 replace_bn_with_batchrenorm(model)
                 logger.info("Auto-detected BatchRenorm from state dict keys")
@@ -1341,25 +1459,31 @@ class InferenceService:
             model_state = model.state_dict()
             shape_mismatches = []
             for key in state_dict:
-                if (key in model_state
-                        and state_dict[key].shape != model_state[key].shape):
+                if (
+                    key in model_state
+                    and state_dict[key].shape != model_state[key].shape
+                ):
                     shape_mismatches.append(
-                        "%s: checkpoint=%s model=%s" % (
-                            key, list(state_dict[key].shape),
-                            list(model_state[key].shape)))
+                        "%s: checkpoint=%s model=%s"
+                        % (
+                            key,
+                            list(state_dict[key].shape),
+                            list(model_state[key].shape),
+                        )
+                    )
 
             if shape_mismatches:
                 detail = "\n  ".join(shape_mismatches[:5])
                 extra = ""
                 if len(shape_mismatches) > 5:
-                    extra = ("\n  ... and %d more"
-                             % (len(shape_mismatches) - 5))
+                    extra = "\n  ... and %d more" % (len(shape_mismatches) - 5)
                 raise RuntimeError(
                     "Model architecture mismatch: %d weights have "
                     "incompatible shapes.\n  %s%s\n"
                     "The model.pt may be from a different training run "
                     "or architecture configuration."
-                    % (len(shape_mismatches), detail, extra))
+                    % (len(shape_mismatches), detail, extra)
+                )
 
             missing = set(model_state.keys()) - set(state_dict.keys())
             if missing and len(missing) / max(1, len(model_state)) > 0.5:
@@ -1367,7 +1491,8 @@ class InferenceService:
                     "Model architecture mismatch: %d/%d expected weights "
                     "missing from checkpoint. The model.pt does not match "
                     "the architecture in metadata.json."
-                    % (len(missing), len(model_state)))
+                    % (len(missing), len(model_state))
+                )
 
             try:
                 model.load_state_dict(state_dict)
@@ -1377,7 +1502,8 @@ class InferenceService:
                     raise RuntimeError(
                         "Model weights do not match architecture. "
                         "The classifier may need to be retrained. "
-                        "Detail: %s" % err) from None
+                        "Detail: %s" % err
+                    ) from None
                 raise
 
             model = model.to(self.device)
@@ -1413,8 +1539,9 @@ class InferenceService:
 
         raise FileNotFoundError("No model found at %s" % model_path)
 
-    def _apply_channels_last(self, model, model_type: str,
-                             arch: Dict[str, Any]) -> bool:
+    def _apply_channels_last(
+        self, model, model_type: str, arch: Dict[str, Any]
+    ) -> bool:
         """Convert a loaded PyTorch model to channels_last memory format.
 
         Gains 10-30% throughput on convnets on Ampere+ GPUs with Tensor
@@ -1445,10 +1572,12 @@ class InferenceService:
         # speedup. See E.5 audit row.
         try:
             from ..utils.batchrenorm import BatchRenorm2d
+
             if any(isinstance(m, BatchRenorm2d) for m in model.modules()):
                 logger.debug(
                     "channels_last skipped: model contains BatchRenorm "
-                    "(model_type=%s)", model_type,
+                    "(model_type=%s)",
+                    model_type,
                 )
                 return False
         except ImportError:
@@ -1474,13 +1603,10 @@ class InferenceService:
             )
             return True
         except Exception as e:
-            logger.debug(
-                "channels_last not applied (%s): %s", model_type, e
-            )
+            logger.debug("channels_last not applied (%s): %s", model_type, e)
             return False
 
-    def _try_compile_model(self, model_path: str,
-                           model_tuple: Tuple[str, Any]) -> None:
+    def _try_compile_model(self, model_path: str, model_tuple: Tuple[str, Any]) -> None:
         """Attempt to apply torch.compile() to a PyTorch model.
 
         Only applies on CUDA with PyTorch 2.x+ when Triton is available.
@@ -1505,8 +1631,10 @@ class InferenceService:
         try:
             import triton  # noqa: F401
         except ImportError:
-            logger.info("Triton not available -- skipping torch.compile() "
-                        "(eager mode will be used)")
+            logger.info(
+                "Triton not available -- skipping torch.compile() "
+                "(eager mode will be used)"
+            )
             self._compiled_models.add(model_path)  # Don't retry
             return
 
@@ -1592,11 +1720,12 @@ class InferenceService:
         Returns:
             Image as numpy array (HWC float32)
         """
-        if path.endswith('.raw'):
+        if path.endswith(".raw"):
             return self._load_raw_tile(path)
-        if path.endswith(('.tif', '.tiff')):
+        if path.endswith((".tif", ".tiff")):
             try:
                 import tifffile
+
                 arr = tifffile.imread(path).astype(np.float32)
                 # tifffile may return (C,H,W) for multi-channel; convert to HWC
                 if arr.ndim == 3 and arr.shape[0] < arr.shape[2]:
@@ -1616,7 +1745,7 @@ class InferenceService:
         File format: 12-byte header (3x int32: height, width, channels)
         followed by H*W*C float32 values in HWC order, all little-endian.
         """
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             header = np.frombuffer(f.read(12), dtype=np.int32)
             h, w, c = int(header[0]), int(header[1]), int(header[2])
             data = np.frombuffer(f.read(), dtype=np.float32)
@@ -1692,13 +1821,13 @@ class InferenceService:
         # load by clearing the cache for this model.
         self._model_cache.pop(str(src), None)
         self._compiled_models.discard(str(src))
-        model_type, model = self._load_model(
-            str(src), compile_model=False)
+        model_type, model = self._load_model(str(src), compile_model=False)
         if model_type != "pytorch":
             raise RuntimeError(
                 "AdaBN requires a PyTorch model; got %s. ONNX models "
                 "do not expose BN running stats for in-place update -- "
-                "load the .pt source instead." % model_type)
+                "load the .pt source instead." % model_type
+            )
 
         # All BN modules in train mode (running stats update via
         # forward pass), everything else in eval (frozen layers etc.).
@@ -1713,11 +1842,15 @@ class InferenceService:
             logger.warning(
                 "Source model has no BatchNorm layers; AdaBN will be "
                 "a no-op. Save anyway so the user gets the expected "
-                "_adabn artifact.")
+                "_adabn artifact."
+            )
         logger.info(
             "AdaBN: %d BatchNorm modules set to train mode, %d tiles "
             "in calibration set, batch_size=%d",
-            n_bn, len(tile_paths), batch_size)
+            n_bn,
+            len(tile_paths),
+            batch_size,
+        )
 
         # Stream tiles in batches; no_grad so we do not update weights.
         # The forward pass updates BN running_mean/running_var via the
@@ -1728,10 +1861,17 @@ class InferenceService:
             for tp in tile_paths:
                 arr = self._load_tile_data(tp)
                 arr = self._normalize(arr, input_config)
-                t = torch.from_numpy(np.ascontiguousarray(
-                    np.transpose(arr, (2, 0, 1)) if arr.ndim == 3
-                    else arr[None, ...]
-                )).float().to(self.device)
+                t = (
+                    torch.from_numpy(
+                        np.ascontiguousarray(
+                            np.transpose(arr, (2, 0, 1))
+                            if arr.ndim == 3
+                            else arr[None, ...]
+                        )
+                    )
+                    .float()
+                    .to(self.device)
+                )
                 buf.append(t)
                 if len(buf) >= batch_size:
                     batch = torch.stack(buf, dim=0)
@@ -1749,18 +1889,18 @@ class InferenceService:
                 meta = json.load(fh)
             meta["calibrated_from"] = src.name
             meta["id"] = dst.name
-            meta["name"] = (meta.get("name", src.name) + " (AdaBN)")
+            meta["name"] = meta.get("name", src.name) + " (AdaBN)"
             with open(dst / "metadata.json", "w", encoding="utf-8") as fh:
                 json.dump(meta, fh, indent=2)
         else:
             logger.warning(
                 "Source model has no metadata.json; calibrated model "
-                "will lack provenance + class info. Copy manually.")
+                "will lack provenance + class info. Copy manually."
+            )
         # Copy ONNX variants too if present, because downstream
         # inference might prefer them; without recalibration they
         # still carry the old BN stats but the user can convert.
-        for fname in ("model.onnx", "model_static.onnx",
-                      "model_static_bn.onnx"):
+        for fname in ("model.onnx", "model_static.onnx", "model_static_bn.onnx"):
             f = src / fname
             if f.exists():
                 shutil.copy2(f, dst / fname)
