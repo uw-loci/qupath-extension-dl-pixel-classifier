@@ -331,10 +331,16 @@ class TestStep2ModelPredictions:
 
             tiles.append({"id": f"val_{i:04d}", "data": b64_data, "x": 0, "y": 0})
 
-        # Run batch inference
-        predictions = service.run_batch(
-            model_path=model_path, tiles=tiles, input_config=input_config
-        )
+        # Run batch inference over the live helpers. run_batch was a wrapper
+        # from the removed HTTP server; these three are what production runs.
+        model_tuple = service._load_model(model_path)
+        predictions = {}
+        for tile in tiles:
+            img = service._normalize(
+                service._load_tile_data(tile["data"]), input_config
+            )
+            prob_map = service._infer_batch_spatial(model_tuple, [img])[0]
+            predictions[tile["id"]] = prob_map.mean(axis=(1, 2)).tolist()
 
         assert len(predictions) == len(
             val_images
@@ -436,16 +442,15 @@ class TestStep2ModelPredictions:
             },
         }
 
-        output_dir = str(tmp_path / "pixel_output")
-        output_paths = service.run_pixel_inference(
-            model_path=model_path,
-            tiles=tiles,
-            input_config=input_config,
-            output_dir=output_dir,
+        output_dir = tmp_path / "pixel_output"
+        output_dir.mkdir(exist_ok=True)
+        model_tuple = service._load_model(model_path)
+        img = service._normalize(
+            service._load_tile_data(tiles[0]["data"]), input_config
         )
-
-        assert "spatial_test" in output_paths
-        output_file = output_paths["spatial_test"]
+        prob_map_arr = service._infer_batch_spatial(model_tuple, [img])[0]
+        output_file = str(output_dir / "spatial_test.bin")
+        prob_map_arr.astype(np.float32).tofile(output_file)
         assert os.path.exists(output_file), f"Output file not found: {output_file}"
 
         # Read binary float32 file

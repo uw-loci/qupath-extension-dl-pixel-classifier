@@ -81,7 +81,7 @@ class TestModelLoading:
                 encoder_name="mobilenet_v2",
                 encoder_weights=None,
                 in_channels=3,
-                classes=2
+                classes=2,
             )
             model.eval()
 
@@ -93,7 +93,7 @@ class TestModelLoading:
                 str(onnx_path),
                 opset_version=14,
                 input_names=["input"],
-                output_names=["output"]
+                output_names=["output"],
             )
 
             # Now load
@@ -120,11 +120,11 @@ class TestNormalization:
 
         inf = InferenceService(device="cpu")
 
-        img = np.random.randint(0, 256, (256, 256, 3), dtype=np.uint8).astype(np.float32)
+        img = np.random.randint(0, 256, (256, 256, 3), dtype=np.uint8).astype(
+            np.float32
+        )
 
-        config = {
-            "normalization": {"strategy": "min_max"}
-        }
+        config = {"normalization": {"strategy": "min_max"}}
 
         normalized = inf._normalize(img, config)
 
@@ -137,13 +137,12 @@ class TestNormalization:
 
         inf = InferenceService(device="cpu")
 
-        img = np.random.randint(0, 256, (256, 256, 3), dtype=np.uint8).astype(np.float32)
+        img = np.random.randint(0, 256, (256, 256, 3), dtype=np.uint8).astype(
+            np.float32
+        )
 
         config = {
-            "normalization": {
-                "strategy": "percentile_99",
-                "clip_percentile": 99.0
-            }
+            "normalization": {"strategy": "percentile_99", "clip_percentile": 99.0}
         }
 
         normalized = inf._normalize(img, config)
@@ -157,7 +156,9 @@ class TestNormalization:
 
         inf = InferenceService(device="cpu")
 
-        img = np.random.randint(0, 256, (256, 256, 3), dtype=np.uint8).astype(np.float32)
+        img = np.random.randint(0, 256, (256, 256, 3), dtype=np.uint8).astype(
+            np.float32
+        )
 
         # Empty config should use default (percentile_99)
         normalized = inf._normalize(img, {})
@@ -211,116 +212,117 @@ class TestSingleTileInference:
 class TestBatchInference:
     """Test batch inference."""
 
-    def test_run_batch(self, trained_model_path, sample_tile_image):
-        """Test batch inference."""
+    def _preprocess(self, inf, tile_data, input_config):
+        """Load, select channels, normalize -- the order the live scripts use."""
+        img = inf._load_tile_data(tile_data)
+        selected = input_config.get("selected_channels")
+        if selected:
+            img = img[:, :, selected]
+        return inf._normalize(img, input_config)
+
+    def test_batch_inference_over_the_live_helpers(
+        self, trained_model_path, sample_tile_image
+    ):
+        """_load_model -> _normalize -> _infer_batch_spatial, end to end.
+
+        These three are what production inference actually runs; the Appose
+        scripts call them directly. The test used to reach them through
+        InferenceService.run_batch, a leftover of the removed HTTP server,
+        which meant deleting dead code would have deleted the only coverage
+        of live code. It exercises the helpers directly instead.
+
+        This path is not decorative: the MobileNet stem bug that made every
+        MobileNet-encoder model unloadable lived in _load_model and was
+        caught here.
+        """
         from dlclassifier_server.services.inference_service import InferenceService
 
         inf = InferenceService(device="cpu")
+        input_config = {"num_channels": 3, "normalization": {"strategy": "min_max"}}
 
-        tiles = [
-            {"id": "tile_0", "data": sample_tile_image},
-            {"id": "tile_1", "data": sample_tile_image}
+        model_tuple = inf._load_model(str(trained_model_path))
+        images = [
+            self._preprocess(inf, sample_tile_image, input_config) for _ in range(2)
         ]
+        prob_maps = inf._infer_batch_spatial(model_tuple, images)
 
-        input_config = {
-            "num_channels": 3,
-            "normalization": {"strategy": "min_max"}
-        }
+        assert len(prob_maps) == 2
+        for pm in prob_maps:
+            # (C, H, W) with C = the fixture model's 2 classes
+            assert pm.shape[0] == 2
 
-        results = inf.run_batch(
-            model_path=str(trained_model_path),
-            tiles=tiles,
-            input_config=input_config
-        )
-
-        assert "tile_0" in results
-        assert "tile_1" in results
-        assert len(results["tile_0"]) == 2  # 2 classes
-
-    def test_run_batch_with_channel_selection(self, trained_model_path, sample_tile_image):
-        """Test batch inference with channel selection."""
+    def test_batch_inference_with_channel_selection(
+        self, trained_model_path, sample_tile_image
+    ):
+        """A selection covering every channel must behave as no selection."""
         from dlclassifier_server.services.inference_service import InferenceService
 
         inf = InferenceService(device="cpu")
+        base = {"num_channels": 3, "normalization": {"strategy": "min_max"}}
+        with_sel = dict(base, selected_channels=[0, 1, 2])
 
-        tiles = [
-            {"id": "tile_0", "data": sample_tile_image}
-        ]
-
-        input_config = {
-            "num_channels": 3,
-            "selected_channels": [0, 1, 2],  # All channels
-            "normalization": {"strategy": "min_max"}
-        }
-
-        results = inf.run_batch(
-            model_path=str(trained_model_path),
-            tiles=tiles,
-            input_config=input_config
+        model_tuple = inf._load_model(str(trained_model_path))
+        plain = inf._infer_batch_spatial(
+            model_tuple, [self._preprocess(inf, sample_tile_image, base)]
+        )
+        picked = inf._infer_batch_spatial(
+            model_tuple, [self._preprocess(inf, sample_tile_image, with_sel)]
         )
 
-        assert "tile_0" in results
+        assert plain[0].shape == picked[0].shape
+        np.testing.assert_allclose(plain[0], picked[0], rtol=1e-5, atol=1e-6)
+
+    def test_a_selection_narrows_what_the_model_is_given(
+        self, trained_model_path, sample_tile_image
+    ):
+        """Selecting fewer channels really does hand over fewer channels.
+
+        The fixture model wants 3, so feeding it 2 must fail -- and the
+        assertion added in 0.9.8 is what should say so, naming channel
+        selection rather than letting it surface as a conv2d shape error.
+        """
+        from dlclassifier_server.services.inference_service import InferenceService
+
+        inf = InferenceService(device="cpu")
+        cfg = {
+            "num_channels": 2,
+            "selected_channels": [0, 2],
+            "normalization": {"strategy": "min_max"},
+        }
+        img = self._preprocess(inf, sample_tile_image, cfg)
+        assert img.shape[2] == 2
+
+        model_tuple = inf._load_model(str(trained_model_path))
+        with pytest.raises(ValueError) as e:
+            InferenceService.assert_input_channels(model_tuple, img.shape[2])
+        assert "channel selection" in str(e.value)
 
 
 class TestPixelInference:
-    """Test pixel-level inference."""
+    """Spatial probability maps, the shape the overlay consumes."""
 
-    def test_run_pixel_inference(self, trained_model_path, sample_tile_image, tmp_path):
-        """Test pixel-level inference with file output."""
+    def test_probability_map_shape_and_normalization(
+        self, trained_model_path, sample_tile_image
+    ):
+        """Output is (C, H, W) and softmaxed over C."""
         from dlclassifier_server.services.inference_service import InferenceService
 
         inf = InferenceService(device="cpu")
+        input_config = {"num_channels": 3, "normalization": {"strategy": "min_max"}}
 
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
+        img = inf._normalize(inf._load_tile_data(sample_tile_image), input_config)
+        model_tuple = inf._load_model(str(trained_model_path))
+        prob_map = inf._infer_batch_spatial(model_tuple, [img])[0]
 
-        tiles = [
-            {"id": "tile_0", "data": sample_tile_image, "x": 0, "y": 0}
-        ]
-
-        input_config = {
-            "num_channels": 3,
-            "normalization": {"strategy": "min_max"}
-        }
-
-        result = inf.run_pixel_inference(
-            model_path=str(trained_model_path),
-            tiles=tiles,
-            input_config=input_config,
-            output_dir=str(output_dir)
+        assert prob_map.ndim == 3
+        assert prob_map.shape[0] == 2
+        assert prob_map.shape[1:] == img.shape[:2]
+        # Per-pixel class probabilities must sum to 1; a raw-logits
+        # regression here would be invisible in the overlay until the
+        # thresholds stopped meaning anything.
+        np.testing.assert_allclose(
+            prob_map.sum(axis=0), np.ones(prob_map.shape[1:]), rtol=1e-4, atol=1e-4
         )
-
-        assert "tile_0" in result
-        assert os.path.exists(result["tile_0"])
-
-    def test_pixel_inference_output_format(self, trained_model_path, sample_tile_image, tmp_path):
-        """Test pixel inference output file format."""
-        from dlclassifier_server.services.inference_service import InferenceService
-
-        inf = InferenceService(device="cpu")
-
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        tiles = [
-            {"id": "tile_0", "data": sample_tile_image, "x": 0, "y": 0}
-        ]
-
-        result = inf.run_pixel_inference(
-            model_path=str(trained_model_path),
-            tiles=tiles,
-            input_config={"num_channels": 3},
-            output_dir=str(output_dir)
-        )
-
-        # Read output file
-        output_path = result["tile_0"]
-        data = np.fromfile(output_path, dtype=np.float32)
-
-        # Should be (C, H, W) flattened
-        # For a 256x256 image with 2 classes: 2 * 256 * 256 = 131072
-        expected_size = 2 * 256 * 256
-        assert len(data) == expected_size
 
 
 class TestSoftmax:
@@ -408,7 +410,9 @@ class TestImageDecoding:
         # Encode to base64 with data URL prefix
         buffer = io.BytesIO()
         img.save(buffer, format="PNG")
-        b64_data = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
+        b64_data = (
+            "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
+        )
 
         # Decode
         decoded = inf._decode_base64(b64_data)
