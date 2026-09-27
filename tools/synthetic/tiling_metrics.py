@@ -238,7 +238,13 @@ def main():
         "--max-size",
         type=int,
         default=2048,
-        help="crop the image to this before measuring",
+        help="measure a square of this size rather than the whole image",
+    )
+    ap.add_argument(
+        "--crop",
+        default="center",
+        choices=("center", "topleft"),
+        help="which square to measure when the image is larger than --max-size",
     )
     ap.add_argument("--json", help="write results here as well as printing them")
     args = ap.parse_args()
@@ -254,10 +260,27 @@ def main():
 
     meta, svc, run = build_model(model_dir, device)
     ic = meta.get("input_config", {})
-    img = load_image(Path(args.image), ic.get("selected_channels"))
-    img = img[: args.max_size, : args.max_size]
+    full = load_image(Path(args.image), ic.get("selected_channels"))
+    fh, fw = full.shape[:2]
+    # WHICH square gets measured is not a detail. A whole-slide image is
+    # mostly background, and a corner of one can be entirely background --
+    # every tiling is then perfectly shift invariant and the measurement says
+    # nothing. This bit a synthetic dataset built for this tool: both of its
+    # deliberately tile-spanning regions sat outside the default top-left
+    # square, so the one structure they existed to exercise was never
+    # measured, and nothing said so.
+    ch = min(args.max_size, fh)
+    cw = min(args.max_size, fw)
+    if args.crop == "center":
+        y0, x0 = (fh - ch) // 2, (fw - cw) // 2
+    else:
+        y0, x0 = 0, 0
+    img = full[y0 : y0 + ch, x0 : x0 + cw]
     H, W = img.shape[:2]
-    _log("image %dx%d, %d channels, device %s" % (W, H, img.shape[2], device))
+    _log(
+        "image %dx%d, measuring %dx%d at (%d,%d) [%s], %d channels, device %s"
+        % (fw, fh, W, H, x0, y0, args.crop, img.shape[2], device)
+    )
 
     norm = svc._normalize(img, ic)
     nchw = np.transpose(norm, (2, 0, 1))[None].astype(np.float32)
@@ -266,7 +289,7 @@ def main():
     if args.ground_truth:
         from PIL import Image
 
-        gt = np.array(Image.open(args.ground_truth))[:H, :W]
+        gt = np.array(Image.open(args.ground_truth))[y0 : y0 + H, x0 : x0 + W]
         if args.gt_class_map:
             mapping = json.loads(args.gt_class_map)
             remap = np.full(256, 255, np.uint8)
@@ -330,6 +353,23 @@ def main():
     print()
     print("shift-invariance is the one to watch: it needs no reference, and the")
     print("pixels it counts are the ones that appear as blocks on the tile grid.")
+
+    # A region the model answers uniformly is perfectly shift invariant and
+    # proves nothing. Say so rather than letting a flat 0.00% read as success.
+    first, _ = tiled(
+        run, nchw, cases[0][0], int(round(cases[0][0] * cases[0][1])), cases[0][2]
+    )
+    counts = np.bincount(first.ravel())
+    dominant = counts.max() / float(first.size)
+    if dominant > 0.95:
+        print()
+        print(
+            "WARNING: the model predicts one class over %.1f%% of the measured"
+            % (100 * dominant)
+        )
+        print("region, so every tiling agrees trivially and these numbers mean")
+        print("little. Measure somewhere with both classes in it -- try --crop")
+        print("topleft, a larger --max-size, or a different image.")
     if any(r["uncovered_pct"] > 0 for r in rows):
         print("WARNING: a row left pixels uncovered. Those pixels hold whatever the")
         print("output array was initialised to, and every other number in that row")
