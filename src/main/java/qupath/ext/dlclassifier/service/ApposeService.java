@@ -78,6 +78,17 @@ public class ApposeService {
     private static final String SCRIPT_FIELD_KEY = "\"script\":\"";
     private static final java.util.Set<String> SEEN_SCRIPT_FINGERPRINTS =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Response envelope shapes already logged in full once ("LAUNCH", "COMPLETION", ...). */
+    private static final java.util.Set<String> SEEN_ENVELOPE_KINDS = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * An Appose debug message ready to log.
+     *
+     * @param text     what to write
+     * @param routine  true when this is a repeat of traffic already logged in
+     *                 full, so it belongs at DEBUG rather than INFO
+     */
+    record DebugLine(String text, boolean routine) {}
 
     private static ApposeService instance;
 
@@ -204,8 +215,17 @@ public class ApposeService {
         report(statusCallback, "Restarting Python service...");
         pythonService = environment.python();
         pythonService.debug(msg -> {
-            logger.info("[Appose Python] {}", msg);
-            qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(msg);
+            try {
+                DebugLine line = condenseDebugLine(msg);
+                if (line.routine()) {
+                    logger.debug("[Appose Python] {}", line.text());
+                } else {
+                    logger.info("[Appose Python] {}", line.text());
+                }
+                qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(line.text());
+            } catch (Throwable t) {
+                logger.warn("Appose debug logging failed (message dropped): {}", t.toString());
+            }
         });
 
         // Run init script -- prepend numpy import to prevent Windows deadlock
@@ -366,9 +386,13 @@ public class ApposeService {
                     // included), which strands training and inference. Logging
                     // must never be able to break the worker pipeline.
                     try {
-                        String condensed = condenseDebugMessage(msg);
-                        logger.info("[Appose Python] {}", condensed);
-                        qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(condensed);
+                        DebugLine line = condenseDebugLine(msg);
+                        if (line.routine()) {
+                            logger.debug("[Appose Python] {}", line.text());
+                        } else {
+                            logger.info("[Appose Python] {}", line.text());
+                        }
+                        qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(line.text());
                     } catch (Throwable t) {
                         logger.warn("Appose debug logging failed (message dropped): {}", t.toString());
                     }
@@ -683,19 +707,40 @@ public class ApposeService {
      *         unchanged when it has no script field or indicates an error
      */
     static String condenseDebugMessage(String msg) {
+        return condenseDebugLine(msg).text();
+    }
+
+    /**
+     * Condenses an Appose debug message and says whether it is routine repeat
+     * traffic.
+     * <p>
+     * A 1000-tile overlay sends one EXECUTE per tile and gets a LAUNCH and a
+     * COMPLETION back, and Appose hands all three to the debug listener in
+     * full. At roughly 11 KB apiece that is over 10 MB of log for a single
+     * overlay, which buries everything worth reading. The first of each shape
+     * is kept at INFO so a run is fully documented from its opening lines --
+     * the whole request, the whole script, the first response -- and every
+     * repeat after that is compacted and dropped to DEBUG.
+     * <p>
+     * Failure and crash messages are never touched.
+     *
+     * @param msg raw debug message from Appose
+     * @return the text to log, and whether it belongs at DEBUG
+     */
+    static DebugLine condenseDebugLine(String msg) {
         try {
             if (msg == null || msg.isEmpty()) {
-                return msg;
+                return new DebugLine(msg, false);
             }
             // Never elide anything when the worker reports trouble.
             if (msg.contains("\"responseType\":\"FAILURE\"")
                     || msg.contains("\"responseType\":\"CRASH\"")
                     || msg.contains("\"error\"")) {
-                return msg;
+                return new DebugLine(msg, false);
             }
             int keyIdx = msg.indexOf(SCRIPT_FIELD_KEY);
             if (keyIdx < 0) {
-                return msg;
+                return condenseResponseEnvelope(msg);
             }
             int valStart = keyIdx + SCRIPT_FIELD_KEY.length();
             // Walk forward to the closing unescaped quote, honoring backslash
@@ -716,18 +761,59 @@ public class ApposeService {
             int valEnd = Math.min(i, n); // index of the closing quote (or end)
             String body = msg.substring(valStart, valEnd);
             String fingerprint = Integer.toHexString(body.hashCode());
-            // First sighting of this script -> keep it in full (recorded once).
+            // First sighting of this script -> keep the whole request, script
+            // included. This is the one the user reads when a run goes wrong.
             if (SEEN_SCRIPT_FINGERPRINTS.add(fingerprint)) {
-                return msg;
+                return new DebugLine(msg, false);
             }
-            String elided = "\"script\":\"<repeat, " + body.length() + " chars, fp=" + fingerprint + ">\"";
-            int after = valEnd < n ? valEnd + 1 : n; // skip past closing quote
-            return msg.substring(0, keyIdx) + elided + msg.substring(after);
+            // Every tile after the first: the request differs only in the task
+            // id and the shared-memory handles, so a one-liner carries all of
+            // it that anyone can act on.
+            String compact = "repeat task=" + jsonStringField(msg, "\"task\":\"") + " script fp=" + fingerprint + " ("
+                    + body.length() + " chars, logged in full above)";
+            return new DebugLine(compact, true);
         } catch (Throwable t) {
             // Condensing must never break the caller (the message pump). On any
             // failure, fall back to logging the raw message untouched.
-            return msg;
+            return new DebugLine(msg, false);
         }
+    }
+
+    /**
+     * Compacts a repeated response envelope (LAUNCH, COMPLETION) and anything
+     * else the worker emits that is not a request.
+     * <p>
+     * Plain worker log lines -- the Python logger's own output, which carries
+     * epoch progress and warnings -- have no {@code responseType} and are
+     * returned untouched at INFO. Only the per-task envelopes repeat.
+     */
+    private static DebugLine condenseResponseEnvelope(String msg) {
+        String kind = jsonStringField(msg, "\"responseType\":\"");
+        if (kind.isEmpty()) {
+            return new DebugLine(msg, false);
+        }
+        if (SEEN_ENVELOPE_KINDS.add(kind)) {
+            return new DebugLine(msg, false);
+        }
+        return new DebugLine(kind + " task=" + jsonStringField(msg, "\"task\":\""), true);
+    }
+
+    /**
+     * Reads a short JSON string value that follows {@code key}, without a
+     * regex. The message pump cannot afford a catastrophic backtrack (see the
+     * field note on SCRIPT_FIELD_KEY), and these values are ids, so a plain
+     * scan to the next quote is enough.
+     *
+     * @return the value, or an empty string when the key is absent
+     */
+    private static String jsonStringField(String msg, String key) {
+        int idx = msg.indexOf(key);
+        if (idx < 0) {
+            return "";
+        }
+        int start = idx + key.length();
+        int end = msg.indexOf('"', start);
+        return end < 0 ? "" : msg.substring(start, end);
     }
 
     public synchronized void restartWorker() throws IOException {
@@ -1292,7 +1378,7 @@ public class ApposeService {
      * </ol>
      */
     /** Extension version. Used for pip URL construction and script generation. */
-    public static final String DL_SERVER_VERSION = "0.9.8";
+    public static final String DL_SERVER_VERSION = "0.9.9";
 
     private static final boolean IS_DEV_BUILD = DL_SERVER_VERSION.contains("-dev");
     private static final String DL_SERVER_PIP_URL;
