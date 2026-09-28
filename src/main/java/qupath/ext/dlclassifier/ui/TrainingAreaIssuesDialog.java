@@ -2314,7 +2314,7 @@ public class TrainingAreaIssuesDialog {
                     cell.setText("-");
                     cell.setStyle("-fx-background-color: white; -fx-text-fill: #ccc;");
                 } else {
-                    cell.setText(String.format("%.1f%%", pct));
+                    cell.setText(formatConfusionShare(pixels, gtTotal));
                     double intensity = Math.min(pct / 30.0, 1.0);
                     int gb = (int) Math.round(255 - intensity * 200);
                     String bg = String.format("#ff%02x%02x", gb, gb);
@@ -2415,6 +2415,34 @@ public class TrainingAreaIssuesDialog {
     }
 
     /**
+     * Formats a confusion share so a real error never reads as none.
+     * <p>
+     * This printed "%.0f%%", so any confusion under half a percent of its
+     * ground-truth class rendered as "0% of GT" -- indistinguishable from no
+     * error at all, on a panel whose entire job is showing you where the
+     * model went wrong. The matrix had the same problem one decimal further
+     * out. A count of zero is shown as zero; anything non-zero that would
+     * round to zero is shown as a bound instead.
+     *
+     * @param pixels  misclassified pixels
+     * @param gtTotal ground-truth pixels of the source class
+     * @return a percentage string, ASCII only
+     */
+    static String formatConfusionShare(long pixels, long gtTotal) {
+        if (gtTotal <= 0) {
+            return "n/a";
+        }
+        if (pixels <= 0) {
+            return "0%";
+        }
+        double pct = 100.0 * pixels / gtTotal;
+        if (pct < 0.1) {
+            return "<0.1%";
+        }
+        return String.format("%.1f%%", pct);
+    }
+
+    /**
      * Row model for the evaluation results table.
      */
     public static class TileRow implements TrainingIssuesOverlayController.TileRowData {
@@ -2492,7 +2520,9 @@ public class TrainingAreaIssuesDialog {
             if (!this.topConfusions.isEmpty()) {
                 ClassifierClient.ConfusionPair top = this.topConfusions.get(0);
                 double pct = top.gtTotal() > 0 ? (100.0 * top.pixels() / top.gtTotal()) : 0.0;
-                displayText = String.format("%s -> %s (%.0f%% of GT)", top.gt(), top.pred(), pct);
+                displayText = String.format(
+                        "%s -> %s (%s of GT, %,d px)",
+                        top.gt(), top.pred(), formatConfusionShare(top.pixels(), top.gtTotal()), top.pixels());
                 StringBuilder tip = new StringBuilder();
                 tip.append("Top GT-class -> Predicted-class confusions in this tile:\n");
                 for (ClassifierClient.ConfusionPair cp : this.topConfusions) {

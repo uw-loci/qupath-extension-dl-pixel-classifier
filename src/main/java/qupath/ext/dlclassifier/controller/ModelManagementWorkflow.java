@@ -3,6 +3,7 @@ package qupath.ext.dlclassifier.controller;
 import java.io.IOException;
 import java.nio.file.*;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -12,8 +13,10 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 import javafx.application.Platform;
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
+import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -165,11 +168,25 @@ public class ModelManagementWorkflow {
 
         classifierTable.getColumns().addAll(List.of(nameCol, typeCol, classesCol, createdCol));
 
-        // Selection listener
-        classifierTable
-                .getSelectionModel()
-                .selectedItemProperty()
-                .addListener((obs, oldVal, newVal) -> updateDetailsPane(newVal));
+        // Multiple selection, so several classifiers can be removed in one
+        // pass instead of one confirmation dialog each. Shift-click takes a
+        // range and Ctrl-click toggles individual rows, which is what the
+        // rest of QuPath's tables do -- a checkbox column would work too but
+        // costs a column and does not give range selection for free.
+        classifierTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+
+        // The details pane shows one classifier. With several selected there
+        // is nothing single to show, so it says what is selected instead of
+        // showing one row's details and implying the others are not there.
+        classifierTable.getSelectionModel().getSelectedItems().addListener((ListChangeListener<ClassifierMetadata>)
+                change -> {
+                    var selected = classifierTable.getSelectionModel().getSelectedItems();
+                    if (selected.size() == 1) {
+                        updateDetailsPane(selected.get(0));
+                    } else {
+                        updateDetailsPaneForMultiple(selected.size());
+                    }
+                });
 
         VBox.setVgrow(classifierTable, Priority.ALWAYS);
         box.getChildren().add(classifierTable);
@@ -529,13 +546,20 @@ public class ModelManagementWorkflow {
         box.setAlignment(Pos.CENTER_RIGHT);
 
         Button deleteBtn = new Button("Delete");
-        deleteBtn.setOnAction(e -> deleteSelectedClassifier());
-        deleteBtn.setTooltip(new Tooltip("Permanently removes the selected classifier and its model files from this\n"
-                + "project. Asks for confirmation first. This cannot be undone -- export it\n"
-                + "first if you may want it back."));
+        deleteBtn.setOnAction(e -> deleteSelectedClassifiers());
+        deleteBtn.setTooltip(new Tooltip("Permanently removes the selected classifiers and their model files from\n"
+                + "this project. Select several with Shift-click or Ctrl-click. Asks for\n"
+                + "confirmation and names every one first. This cannot be undone -- export\n"
+                + "them first if you may want them back."));
+        var selectedItems = classifierTable.getSelectionModel().getSelectedItems();
+        deleteBtn.disableProperty().bind(Bindings.isEmpty(selectedItems));
+        // The label carries the count, so the button says how much it is
+        // about to destroy before the confirmation does.
         deleteBtn
-                .disableProperty()
-                .bind(classifierTable.getSelectionModel().selectedItemProperty().isNull());
+                .textProperty()
+                .bind(Bindings.createStringBinding(
+                        () -> selectedItems.size() > 1 ? "Delete (" + selectedItems.size() + ")" : "Delete",
+                        selectedItems));
 
         Button exportDescriptorBtn = new Button("Export Descriptor...");
         exportDescriptorBtn.setOnAction(e -> exportDescriptorOnly());
@@ -547,9 +571,7 @@ public class ModelManagementWorkflow {
                         + "Use it to record or share how a model was configured, or to inspect it outside\n"
                         + "QuPath. The result is NOT runnable -- to move a working model to another\n"
                         + "project use \"Export Full (with weights)\"."));
-        exportDescriptorBtn
-                .disableProperty()
-                .bind(classifierTable.getSelectionModel().selectedItemProperty().isNull());
+        exportDescriptorBtn.disableProperty().bind(Bindings.size(selectedItems).isNotEqualTo(1));
 
         Button exportFullBtn = new Button("Export Full (with weights)  !");
         exportFullBtn.setOnAction(e -> exportSelectedClassifier());
@@ -559,9 +581,7 @@ public class ModelManagementWorkflow {
                         + "model_static.onnx). This can be 500 MB to several GB. Use this only to move a\n"
                         + "fully runnable model to another QuPath project via Import. For sharing or\n"
                         + "inspecting the configuration, use \"Export Descriptor...\" instead."));
-        exportFullBtn
-                .disableProperty()
-                .bind(classifierTable.getSelectionModel().selectedItemProperty().isNull());
+        exportFullBtn.disableProperty().bind(Bindings.size(selectedItems).isNotEqualTo(1));
 
         Button importBtn = new Button("Import...");
         importBtn.setOnAction(e -> importClassifier());
@@ -608,35 +628,102 @@ public class ModelManagementWorkflow {
     }
 
     /**
-     * Deletes the selected classifier.
+     * Summarises what a multi-delete did, naming what failed.
+     * <p>
+     * Deleting several classifiers at once can partly succeed -- one model
+     * directory locked on Windows, one already gone. Reporting only a count
+     * would leave the user to work out which survived by reading the list,
+     * so the failures are named.
+     *
+     * @param deleted names that were removed
+     * @param failed  names that were not, in selection order
+     * @return a message for the notification, ASCII only
      */
-    private void deleteSelectedClassifier() {
-        ClassifierMetadata selected = classifierTable.getSelectionModel().getSelectedItem();
-        if (selected == null) {
+    static String summariseDeletion(List<String> deleted, List<String> failed) {
+        if (failed.isEmpty()) {
+            return deleted.size() == 1
+                    ? "Deleted '" + deleted.get(0) + "'"
+                    : "Deleted " + deleted.size() + " classifiers";
+        }
+        String names = String.join(", ", failed);
+        if (deleted.isEmpty()) {
+            return failed.size() == 1 ? "Could not delete '" + names + "'" : "Could not delete: " + names;
+        }
+        return "Deleted " + deleted.size() + ", but could not delete: " + names;
+    }
+
+    /**
+     * Deletes every selected classifier after one confirmation.
+     */
+    private void deleteSelectedClassifiers() {
+        List<ClassifierMetadata> selected =
+                List.copyOf(classifierTable.getSelectionModel().getSelectedItems());
+        if (selected.isEmpty()) {
             return;
         }
 
-        boolean confirm = Dialogs.showConfirmDialog(
-                "Delete Classifier",
-                "Are you sure you want to delete the classifier '" + selected.getName() + "'?\n\n"
-                        + "This action cannot be undone.");
-
-        if (!confirm) {
-            return;
-        }
-
-        try {
-            boolean deleted = modelManager.deleteClassifier(selected.getId());
-            if (deleted) {
-                logger.info("Deleted classifier: {}", selected.getId());
-                Dialogs.showInfoNotification("Deleted", "Classifier deleted successfully");
-                refreshClassifierList();
-            } else {
-                Dialogs.showWarningNotification("Warning", "Could not delete classifier");
+        // Name every one. A count alone is not enough to consent to an
+        // irreversible delete, and a mis-aimed Ctrl-click is easy to make.
+        String question;
+        if (selected.size() == 1) {
+            question = "Are you sure you want to delete the classifier '"
+                    + selected.get(0).getName() + "'?\n\nThis action cannot be undone.";
+        } else {
+            StringBuilder sb = new StringBuilder("Are you sure you want to delete these ")
+                    .append(selected.size())
+                    .append(" classifiers?\n\n");
+            for (ClassifierMetadata m : selected) {
+                sb.append("  ").append(m.getName()).append("\n");
             }
-        } catch (Exception e) {
-            logger.error("Failed to delete classifier", e);
-            Dialogs.showErrorMessage("Error", "Failed to delete classifier: " + e.getMessage());
+            sb.append("\nThis action cannot be undone.");
+            question = sb.toString();
+        }
+        if (!Dialogs.showConfirmDialog("Delete Classifier" + (selected.size() > 1 ? "s" : ""), question)) {
+            return;
+        }
+
+        List<String> deleted = new ArrayList<>();
+        List<String> failed = new ArrayList<>();
+        for (ClassifierMetadata m : selected) {
+            // One failure must not abandon the rest of the selection.
+            try {
+                if (modelManager.deleteClassifier(m.getId())) {
+                    logger.info("Deleted classifier: {}", m.getId());
+                    deleted.add(m.getName());
+                } else {
+                    logger.warn("Could not delete classifier: {}", m.getId());
+                    failed.add(m.getName());
+                }
+            } catch (Exception e) {
+                logger.error("Failed to delete classifier " + m.getId(), e);
+                failed.add(m.getName());
+            }
+        }
+
+        refreshClassifierList();
+        String message = summariseDeletion(deleted, failed);
+        if (failed.isEmpty()) {
+            Dialogs.showInfoNotification("Deleted", message);
+        } else {
+            Dialogs.showWarningNotification("Delete incomplete", message);
+        }
+    }
+
+    /**
+     * Replaces the details pane when the selection is not a single row.
+     *
+     * @param count how many classifiers are selected
+     */
+    private void updateDetailsPaneForMultiple(int count) {
+        detailsPane.getChildren().clear();
+        Label label = new Label(count == 0 ? "Select a classifier to view details" : count + " classifiers selected");
+        label.setStyle("-fx-text-fill: #888;");
+        detailsPane.getChildren().add(label);
+        if (count > 1) {
+            Label hint = new Label("Delete works on all of them. Export needs exactly one.");
+            hint.setStyle("-fx-text-fill: #888; -fx-font-size: 11px;");
+            hint.setWrapText(true);
+            detailsPane.getChildren().add(hint);
         }
     }
 
