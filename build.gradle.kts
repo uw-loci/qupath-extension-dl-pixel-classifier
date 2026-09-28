@@ -18,7 +18,7 @@ plugins {
 qupathExtension {
     name = "qupath-extension-dl-pixel-classifier"
     group = "io.github.uw-loci"
-    version = "0.9.15"
+    version = "0.9.16"
     description = "Deep learning pixel classifier for QuPath supporting multi-channel images."
     automaticModule = "io.github.uw-loci.extension.dlclassifier"
 }
@@ -43,6 +43,8 @@ val javafxVersion = "17.0.2"
 dependencies {
     // Main dependencies for QuPath extensions
     shadow(libs.bundles.qupath)
+    // QuPath ships this at runtime but does not export it; used to watch for in-session updates
+    shadow(libs.extensionmanager)
     shadow(libs.bundles.logging)
     shadow(libs.qupath.fxtras)
     shadow(libs.gson)
