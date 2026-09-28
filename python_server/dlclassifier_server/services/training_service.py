@@ -49,6 +49,16 @@ from ..utils.spatial import (
 
 logger = logging.getLogger(__name__)
 
+# Version of the preprocessing agreement between training and inference.
+#
+# 1 (implicit, any model whose metadata lacks this field): training
+#   normalized each patch against its own percentiles while inference used
+#   image-level statistics. The two disagree -- about 1% of pixels on the
+#   models measured, more on bright tiles.
+# 2: the dataset statistics are computed before training and used BY
+#   training, so a tile is normalized identically in both places.
+NORMALIZATION_CONTRACT = 2
+
 # Try to import albumentations for augmentation. ToTensorV2 is probed
 # as an import-time availability check (gates ALBUMENTATIONS_AVAILABLE);
 # the symbol itself is not referenced later, hence the F401 suppression.
@@ -2243,6 +2253,30 @@ class TrainingService:
             logger.info(
                 f"Computed dataset normalization stats from "
                 f"{len(train_images)} training patches ({stats_channels} channels)"
+            )
+            # CLOSE THE NORMALIZATION ROUND TRIP.
+            #
+            # These stats used to be computed only to be written into
+            # metadata.json, and inference then normalized every tile with
+            # them -- while TRAINING had normalized each patch against its
+            # own percentiles. The model therefore learned on one
+            # preprocessing and was run on another. Measured on a brightfield
+            # model, the two disagreed on 1.2% of pixels on average and up to
+            # 8.5% on a single tile, and on bright tiles the inference path
+            # saturated every channel toward 1 where training had kept them
+            # apart.
+            #
+            # The datasets hold this dict by reference and normalize lazily
+            # in __getitem__, so injecting here reaches every patch of every
+            # epoch. Both sides now run the same function over the same
+            # numbers.
+            input_config.setdefault("normalization", {})
+            input_config["normalization"]["precomputed"] = True
+            input_config["normalization"]["channel_stats"] = dataset_norm_stats
+            logger.info(
+                "Training will normalize with these stats, matching what "
+                "inference does (normalization contract v%d)",
+                NORMALIZATION_CONTRACT,
             )
         except Exception as e:
             logger.warning(
@@ -5674,6 +5708,10 @@ class TrainingService:
             classifier_name if classifier_name else f"{model_type.upper()} Classifier"
         )
         metadata = {
+            # How training and inference agreed to preprocess. A reader that
+            # finds this absent is looking at a model trained before the two
+            # were made to match; see NORMALIZATION_CONTRACT.
+            "normalization_contract": NORMALIZATION_CONTRACT,
             "id": model_id,
             "name": display_name,
             "architecture": {

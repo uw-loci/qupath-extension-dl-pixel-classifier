@@ -76,6 +76,22 @@ public final class NormalizationStatsComputer {
             return channelConfig;
         }
 
+        // A model trained before the round trip closed was normalized one way
+        // during training and is about to be normalized another way here.
+        // Say so once, rather than leaving the user to wonder why the overlay
+        // disagrees with what the training review showed them.
+        if (metadata.hasOpenNormalizationRoundTrip()) {
+            logger.warn(
+                    "Model '{}' was trained under normalization contract {} (current is {}): its training "
+                            + "normalized each patch against that patch's own percentiles, while inference "
+                            + "normalizes every tile against image-level statistics. The two disagree -- about "
+                            + "1% of pixels on the models measured, more on bright tiles -- so the overlay can "
+                            + "differ from what Training Area Issues showed. Retrain to close it.",
+                    metadata.getName(),
+                    metadata.getNormalizationContract(),
+                    ClassifierMetadata.CURRENT_NORMALIZATION_CONTRACT);
+        }
+
         // Priority 1: Use training dataset stats from model metadata
         if (metadata.hasNormalizationStats()) {
             List<Map<String, Double>> stats = new ArrayList<>(metadata.getNormalizationStats());

@@ -67,11 +67,74 @@ def _log(msg):
     print("[tiling] " + msg, flush=True)
 
 
-def load_image(path, selected_channels):
-    """Reads a TIFF as float32 H,W,C, keeping only the model's channels."""
+def load_image(path, selected_channels, target_downsample=1.0, budget_gb=2.0):
+    """Reads an image as float32 H,W,C at roughly the model's own resolution.
+
+    This used to be `tifffile.imread(path)`, which reads the FULL first
+    series. Pointed at a whole-slide image that is level 0: CMU-1 is
+    46000x32914x3, so 4.5 GB as uint8 and 18.2 GB once cast to float32, on a
+    19 GB machine. The process was killed by the OOM killer -- exit 137 -- and
+    took the session with it.
+
+    Two things were wrong. It ignored the pyramid, and it ignored the
+    model's downsample: measuring a model trained at 16x against level-0
+    pixels is the wrong measurement even when it fits in memory.
+
+    So: pick the pyramid level closest to the model's downsample without
+    going finer, and refuse with a number rather than being killed if even
+    that will not fit.
+
+    Args:
+        path: image file
+        selected_channels: channel indices the model expects, or None
+        target_downsample: the model's downsample; 1.0 reads the finest level
+        budget_gb: refuse a level whose float32 cost exceeds this
+
+    Returns:
+        (array, downsample_of_the_level_actually_read)
+    """
     import tifffile
 
-    arr = tifffile.imread(str(path))
+    with tifffile.TiffFile(str(path)) as tf:
+        series = tf.series[0]
+        levels = list(getattr(series, "levels", []) or [series])
+        base = levels[0].shape
+        axes = getattr(series, "axes", "")
+
+        # Level dimensions, whichever way the axes are ordered.
+        def hw(shape):
+            if axes.startswith("C") and len(shape) == 3:
+                return shape[1], shape[2]
+            return shape[0], shape[1]
+
+        base_h, base_w = hw(base)
+        best, best_ds = 0, 1.0
+        for i, lvl in enumerate(levels):
+            h, w = hw(lvl.shape)
+            ds = base_w / float(w)
+            # Closest level at or coarser than the target, so we never
+            # upsample and never read more pixels than the model will use.
+            if ds <= target_downsample + 1e-6 and ds >= best_ds:
+                best, best_ds = i, ds
+        h, w = hw(levels[best].shape)
+        nch = (
+            len(selected_channels)
+            if selected_channels
+            else (base[0] if axes.startswith("C") else base[-1])
+        )
+        cost = h * w * max(nch, 1) * 4 / 1e9
+        if cost > budget_gb:
+            raise SystemExit(
+                "reading level %d (%dx%d) would need %.1f GB as float32, over the %.1f GB budget.\n"
+                "Raise --memory-budget-gb if you have the RAM, or measure a coarser level."
+                % (best, w, h, cost, budget_gb)
+            )
+        _log(
+            "pyramid: %d level(s); reading level %d (%dx%d, downsample %.3g, %.2f GB)"
+            % (len(levels), best, w, h, best_ds, cost)
+        )
+        arr = levels[best].asarray()
+
     if arr.ndim == 2:
         arr = arr[:, :, None]
     elif arr.ndim == 3 and arr.shape[0] <= 16 and arr.shape[0] < arr.shape[-1]:
@@ -79,7 +142,7 @@ def load_image(path, selected_channels):
     arr = arr.astype(np.float32)
     if selected_channels:
         arr = arr[:, :, list(selected_channels)]
-    return arr
+    return arr, best_ds
 
 
 def build_model(model_dir, device):
@@ -203,6 +266,57 @@ def consensus(run, nchw, tile, shift=32):
     return (acc / np.maximum(den, 1)[None]).argmax(0).astype(np.uint8)
 
 
+def framing_sensitivity(run, nchw, tile, positions=8, seed=0):
+    """Does the answer for a region change with WHERE IN THE TILE it lands?
+
+    Training Area Issues always shows a region centred in its patch. The
+    overlay puts it wherever the tile grid happens to fall. If the model's
+    answer depends on that, the two panels disagree for a reason that is
+    nothing to do with the inference pipeline -- and chasing it through the
+    pipeline, as this author did, finds nothing.
+
+    Takes an interior region, places it at several offsets within the model's
+    input window, and counts how often the prediction for the SAME pixels
+    changes. Zero means the model reads only local appearance; a large number
+    means it is leaning on whatever else shares the window.
+
+    Returns (mean_pct, max_pct, centred_vs_worst_pct).
+    """
+    _, _, H, W = nchw.shape
+    half = tile // 2
+    # A patch of real content, and a window big enough to slide it around in.
+    cy, cx = H // 2, W // 2
+    span = tile // 4
+    y0c, x0c = cy - half, cx - half
+    if y0c < span or x0c < span or y0c + tile + span > H or x0c + tile + span > W:
+        return float("nan"), float("nan"), float("nan")
+
+    rng = np.random.default_rng(seed)
+    offsets = [(0, 0)] + [
+        (int(rng.integers(-span, span + 1)), int(rng.integers(-span, span + 1)))
+        for _ in range(positions - 1)
+    ]
+    # The region every placement has in common: the centre, inset by span.
+    preds = []
+    for dy, dx in offsets:
+        y0, x0 = y0c + dy, x0c + dx
+        p = run(np.ascontiguousarray(nchw[:, :, y0 : y0 + tile, x0 : x0 + tile]))[
+            0
+        ].argmax(0)
+        # Crop to the shared region, expressed in this placement's coordinates.
+        preds.append(p[span - dy : tile - span - dy, span - dx : tile - span - dx])
+
+    base = preds[0]
+    diffs = [100.0 * float((p != base).mean()) for p in preds[1:]]
+    # A region the model answers uniformly cannot show framing sensitivity --
+    # every placement agrees because there is nothing to disagree about. Report
+    # the class balance so a trivial 0.00% is visible as trivial. The tool's
+    # author read one as a result before adding this.
+    counts = np.bincount(base.ravel())
+    dominant = float(counts.max()) / float(base.size)
+    return float(np.mean(diffs)), float(np.max(diffs)), dominant
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -246,6 +360,26 @@ def main():
         choices=("center", "topleft"),
         help="which square to measure when the image is larger than --max-size",
     )
+    ap.add_argument(
+        "--crop-origin",
+        help="X,Y of the measured square, in the read level's pixels, "
+        "overriding --crop. Use it to aim at a class boundary; a square of "
+        "uniform prediction cannot show a tiling or framing problem",
+    )
+    ap.add_argument(
+        "--framing",
+        action="store_true",
+        help="also measure whether the answer depends on where in the tile a "
+        "region lands, which is what makes the overlay disagree with the "
+        "per-patch training review",
+    )
+    ap.add_argument(
+        "--memory-budget-gb",
+        type=float,
+        default=2.0,
+        help="refuse a pyramid level whose float32 cost exceeds this, rather "
+        "than being killed by the OOM killer",
+    )
     ap.add_argument("--json", help="write results here as well as printing them")
     args = ap.parse_args()
 
@@ -260,7 +394,17 @@ def main():
 
     meta, svc, run = build_model(model_dir, device)
     ic = meta.get("input_config", {})
-    full = load_image(Path(args.image), ic.get("selected_channels"))
+    # Measure at the resolution the model runs at, which is also what keeps a
+    # whole-slide image from being read at level 0.
+    model_ds = float(meta.get("architecture", {}).get("downsample", 1.0) or 1.0)
+    full, level_ds = load_image(
+        Path(args.image), ic.get("selected_channels"), model_ds, args.memory_budget_gb
+    )
+    if abs(level_ds - model_ds) > 1e-6:
+        _log(
+            "note: model downsample is %.3g but the nearest pyramid level is %.3g"
+            % (model_ds, level_ds)
+        )
     fh, fw = full.shape[:2]
     # WHICH square gets measured is not a detail. A whole-slide image is
     # mostly background, and a corner of one can be entirely background --
@@ -275,7 +419,11 @@ def main():
     # them diverge on any image smaller than max_size in one dimension --
     # which is every quick test run.
     ch = cw = min(args.max_size, fh, fw)
-    if args.crop == "center":
+    if args.crop_origin:
+        ox, oy = (int(v) for v in args.crop_origin.split(","))
+        x0 = max(0, min(ox, fw - cw))
+        y0 = max(0, min(oy, fh - ch))
+    elif args.crop == "center":
         y0, x0 = (fh - ch) // 2, (fw - cw) // 2
     else:
         y0, x0 = 0, 0
@@ -378,6 +526,33 @@ def main():
         print("WARNING: a row left pixels uncovered. Those pixels hold whatever the")
         print("output array was initialised to, and every other number in that row")
         print("is measured partly against fill rather than against a prediction.")
+
+    if args.framing:
+        mean_pct, max_pct, dominant = framing_sensitivity(run, nchw, cases[0][0])
+        print()
+        if mean_pct != mean_pct:  # NaN
+            print("framing sensitivity: region too close to the edge to measure")
+        else:
+            print(
+                "framing sensitivity at tile %d: the same pixels change class on"
+                % cases[0][0]
+            )
+            print(
+                "  %.2f%% of pixels on average, %.2f%% at worst, purely from moving"
+                % (mean_pct, max_pct)
+            )
+            print("  the region within the model's input window.")
+            if dominant > 0.95:
+                print(
+                    "  BUT the model calls %.1f%% of this region one class, so there was"
+                    % (100 * dominant)
+                )
+                print("  nothing to disagree about and this number means little. Point")
+                print("  --crop or --max-size at a region containing a class boundary.")
+            print("  This is why a patch that scores well centred in the training")
+            print("  review can come back wrong in the overlay, where the tile grid")
+            print("  decides the framing. It is a property of the model, not the")
+            print("  pipeline: more annotation in varied context is the lever.")
 
     if args.json:
         Path(args.json).write_text(

@@ -415,6 +415,13 @@ public class ModelManager {
 
             // Parse normalization stats (from models trained with Phase 2)
             List<Map<String, Double>> normalizationStats = null;
+            // Absent means 1: a model trained before training and inference
+            // were made to normalize identically.
+            int normalizationContract = 1;
+            if (obj.has("normalization_contract")
+                    && obj.get("normalization_contract").isJsonPrimitive()) {
+                normalizationContract = obj.get("normalization_contract").getAsInt();
+            }
             if (obj.has("normalization_stats") && obj.get("normalization_stats").isJsonArray()) {
                 normalizationStats = new ArrayList<>();
                 for (var statElement : obj.getAsJsonArray("normalization_stats")) {
@@ -455,7 +462,8 @@ public class ModelManager {
                     .finalLoss(finalLoss)
                     .finalAccuracy(finalAccuracy)
                     .trainingSettings(trainingSettings)
-                    .normalizationStats(normalizationStats);
+                    .normalizationStats(normalizationStats)
+                    .normalizationContract(normalizationContract);
             // Resolution contract -- top-level metadata fields written by
             // training_service / mae / ssl. Absent in older models.
             if (obj.has("training_pixel_size_um")

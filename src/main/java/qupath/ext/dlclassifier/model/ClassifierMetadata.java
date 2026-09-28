@@ -88,6 +88,24 @@ public class ClassifierMetadata {
     // Normalization stats computed from training dataset (may be null for older models)
     private final List<Map<String, Double>> normalizationStats;
 
+    /**
+     * Which preprocessing agreement this model was trained under.
+     * <p>
+     * 1, the implicit value for any model saved before the field existed,
+     * means training normalized each patch against its own percentiles
+     * while inference used image-level statistics -- so the model was run
+     * on preprocessing it never saw. 2 means both sides use the same
+     * statistics. See NORMALIZATION_CONTRACT in training_service.py.
+     */
+    private final int normalizationContract;
+
+    /**
+     * The contract this build of the extension trains under. Must track
+     * NORMALIZATION_CONTRACT in training_service.py; they are two halves of
+     * one agreement and there is no way for the build to check that for us.
+     */
+    public static final int CURRENT_NORMALIZATION_CONTRACT = 2;
+
     // Resolution contract (may be NaN/0 for older models trained before
     // these fields were saved). Used at inference to detect cross-batch
     // pixel-size mismatch with the source image and warn the user.
@@ -137,6 +155,7 @@ public class ClassifierMetadata {
         this.trainingSettings = builder.trainingSettings != null
                 ? Collections.unmodifiableMap(new LinkedHashMap<>(builder.trainingSettings))
                 : null;
+        this.normalizationContract = builder.normalizationContract;
         this.normalizationStats = builder.normalizationStats != null
                 ? Collections.unmodifiableList(new ArrayList<>(builder.normalizationStats))
                 : null;
@@ -403,6 +422,27 @@ public class ClassifierMetadata {
     }
 
     /**
+     * The preprocessing agreement this model was trained under.
+     *
+     * @return the contract version; 1 for a model saved before the field
+     *     existed, which means its training and inference normalization do
+     *     not match
+     */
+    public int getNormalizationContract() {
+        return normalizationContract;
+    }
+
+    /**
+     * Whether this model was trained before training and inference were made
+     * to normalize identically.
+     *
+     * @return true when the model's own preprocessing round trip is open
+     */
+    public boolean hasOpenNormalizationRoundTrip() {
+        return normalizationContract < CURRENT_NORMALIZATION_CONTRACT;
+    }
+
+    /**
      * Returns the full training hyperparameters map, or null if not available
      * (older models trained before this feature was added).
      * <p>
@@ -521,6 +561,7 @@ public class ClassifierMetadata {
             map.put("training_settings", trainingSettings);
         }
 
+        map.put("normalization_contract", normalizationContract);
         if (normalizationStats != null && !normalizationStats.isEmpty()) {
             map.put("normalization_stats", normalizationStats);
         }
@@ -610,6 +651,7 @@ public class ClassifierMetadata {
         private double finalAccuracy = 0.0;
         private Map<String, Object> trainingSettings;
         private List<Map<String, Double>> normalizationStats;
+        private int normalizationContract = 1;
         private double trainingPixelSizeMicrons = Double.NaN;
         private int trainingTileSizePx = 0;
         private int trainingPatchesTotal = 0;
@@ -761,6 +803,17 @@ public class ClassifierMetadata {
          *
          * @param stats list of per-channel stat maps (p1, p99, min, max, mean, std)
          */
+        /**
+         * Sets the preprocessing agreement version.
+         *
+         * @param contract version from metadata; 1 when absent
+         * @return this builder
+         */
+        public Builder normalizationContract(int contract) {
+            this.normalizationContract = contract;
+            return this;
+        }
+
         public Builder normalizationStats(List<Map<String, Double>> stats) {
             this.normalizationStats = stats != null ? new ArrayList<>(stats) : null;
             return this;

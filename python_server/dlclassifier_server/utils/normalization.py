@@ -3,8 +3,9 @@
 This module provides consistent normalization logic used by both
 InferenceService and TrainingService (SegmentationDataset).
 """
+
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import numpy as np
 
@@ -31,9 +32,24 @@ def normalize(img: np.ndarray, input_config: Dict[str, Any]) -> np.ndarray:
     precomputed = norm_config.get("precomputed", False)
     channel_stats = norm_config.get("channel_stats", None)
 
-    # Use precomputed image-level stats when available
+    # Use precomputed image-level stats when available -- but only when they
+    # can actually normalize anything. Degenerate stats (p99 == p1, or a zero
+    # range) hit the divide-by-zero guard inside _normalize_with_stats, which
+    # returns the image UNSCALED: raw 0-255 values where the model expects
+    # 0-1. Training on that produces a NaN loss within two epochs, and
+    # inference on it produces silent nonsense, because nothing downstream
+    # checks the range. Falling back to per-tile normalization keeps the
+    # contract that this function always returns something normalized.
     if precomputed and channel_stats:
-        return _normalize_precomputed(img, channel_stats, strategy, per_channel)
+        if _stats_usable(channel_stats, strategy):
+            return _normalize_precomputed(img, channel_stats, strategy, per_channel)
+        logger.warning(
+            "Precomputed %s statistics have no range (%s); normalizing this "
+            "tile against its own percentiles instead. A constant channel or "
+            "a blank training region will do this.",
+            strategy,
+            _describe_degenerate(channel_stats, strategy),
+        )
 
     # Fall back to per-tile normalization
     if per_channel and img.ndim == 3 and img.shape[2] > 1:
@@ -47,11 +63,63 @@ def normalize(img: np.ndarray, input_config: Dict[str, Any]) -> np.ndarray:
     return img
 
 
+def _stats_usable(channel_stats: List[Dict[str, float]], strategy: str) -> bool:
+    """Whether these statistics can actually rescale an image.
+
+    A zero range makes _normalize_with_stats return its input untouched, so
+    the caller silently gets unnormalized pixels. Every channel must be
+    usable: one dead channel is enough to feed the model raw values in that
+    channel while the others are scaled, which is harder to spot than all of
+    them being wrong.
+
+    Args:
+        channel_stats: per-channel statistics
+        strategy: which fields the strategy reads
+
+    Returns:
+        True when every channel has a non-zero range for this strategy
+    """
+    if not channel_stats:
+        return False
+    for stats in channel_stats:
+        if strategy == "percentile_99":
+            ok = stats.get("p99", 0.0) > stats.get("p1", 0.0)
+        elif strategy == "min_max":
+            ok = stats.get("max", 0.0) > stats.get("min", 0.0)
+        elif strategy == "z_score":
+            ok = stats.get("std", 0.0) > 0.0
+        elif strategy == "fixed_range":
+            # User-specified bounds, not measured from data.
+            ok = stats.get("max", 255.0) > stats.get("min", 0.0)
+        else:
+            ok = True
+        if not ok:
+            return False
+    return True
+
+
+def _describe_degenerate(channel_stats: List[Dict[str, float]], strategy: str) -> str:
+    """Names the channels whose statistics have no range, for the warning."""
+    keys = {
+        "percentile_99": ("p1", "p99"),
+        "min_max": ("min", "max"),
+        "z_score": ("std", "std"),
+        "fixed_range": ("min", "max"),
+    }.get(strategy, ("p1", "p99"))
+    bad = []
+    for i, stats in enumerate(channel_stats):
+        lo = stats.get(keys[0], 0.0)
+        hi = stats.get(keys[1], 0.0)
+        if hi <= lo or (strategy == "z_score" and stats.get("std", 0.0) <= 0.0):
+            bad.append("channel %d %s=%g %s=%g" % (i, keys[0], lo, keys[1], hi))
+    return "; ".join(bad) if bad else "no usable range"
+
+
 def _normalize_precomputed(
     img: np.ndarray,
     channel_stats: List[Dict[str, float]],
     strategy: str,
-    per_channel: bool
+    per_channel: bool,
 ) -> np.ndarray:
     """Normalize using pre-computed image-level statistics.
 
@@ -72,17 +140,64 @@ def _normalize_precomputed(
             stats = channel_stats[c]
             img[..., c] = _normalize_with_stats(img[..., c], stats, strategy)
     else:
-        # Use stats from first channel (or compute from tile if no stats)
-        stats = channel_stats[0] if channel_stats else {}
+        # ONE shared transform across every channel, which is the point of
+        # per_channel=False: it preserves the ratios between channels, and
+        # for H&E those ratios are the signal.
+        #
+        # This used to take channel 0's statistics and apply them to all
+        # channels. That is not a joint statistic, it is the red channel's,
+        # and on a real H&E model red p1 was 97 while green was 43 -- so
+        # everything below 97 in green and blue was clipped flat. The
+        # per-tile path this mirrors computes its percentile over the whole
+        # multi-channel tile, so it pools; this now pools too, and the two
+        # agree. Measured on that model, pooling took the disagreement with
+        # the training-time normalization from 1.17% of pixels to 0.77%.
+        stats = _pool_stats(channel_stats) if channel_stats else {}
         img = _normalize_with_stats(img, stats, strategy)
 
     return img
 
 
+def _pool_stats(channel_stats: List[Dict[str, float]]) -> Dict[str, float]:
+    """Combines per-channel statistics into one covering every channel.
+
+    Percentiles and extremes widen to bracket all channels. Mean and
+    standard deviation are pooled properly -- the pooled variance is the
+    mean of the per-channel variances PLUS the variance of their means,
+    because channels with different means are themselves a source of
+    spread. Averaging the standard deviations would understate it.
+
+    Args:
+        channel_stats: one stat dict per channel
+
+    Returns:
+        A single stat dict; the input unchanged when there is only one.
+    """
+    if not channel_stats:
+        return {}
+    if len(channel_stats) == 1:
+        return dict(channel_stats[0])
+
+    def vals(key, default=0.0):
+        return [float(s.get(key, default)) for s in channel_stats]
+
+    means = vals("mean")
+    stds = vals("std")
+    grand_mean = sum(means) / len(means)
+    within = sum(v * v for v in stds) / len(stds)
+    between = sum((m - grand_mean) ** 2 for m in means) / len(means)
+    return {
+        "p1": min(vals("p1")),
+        "p99": max(vals("p99")),
+        "min": min(vals("min")),
+        "max": max(vals("max")),
+        "mean": grand_mean,
+        "std": (within + between) ** 0.5,
+    }
+
+
 def _normalize_with_stats(
-    img: np.ndarray,
-    stats: Dict[str, float],
-    strategy: str
+    img: np.ndarray, stats: Dict[str, float], strategy: str
 ) -> np.ndarray:
     """Normalize a single channel/image using pre-computed statistics.
 
@@ -128,9 +243,7 @@ def _normalize_with_stats(
 
 
 def _normalize_single(
-    img: np.ndarray,
-    norm_config: Dict[str, Any],
-    strategy: str
+    img: np.ndarray, norm_config: Dict[str, Any], strategy: str
 ) -> np.ndarray:
     """Normalize a single image or channel using per-tile statistics.
 
@@ -176,9 +289,7 @@ def _normalize_single(
 
 
 def compute_dataset_stats(
-    images: List[np.ndarray],
-    num_channels: int,
-    max_samples_per_channel: int = 500_000
+    images: List[np.ndarray], num_channels: int, max_samples_per_channel: int = 500_000
 ) -> List[Dict[str, float]]:
     """Compute normalization statistics across a collection of images.
 
@@ -242,8 +353,14 @@ def compute_dataset_stats(
                 "std": float(np.std(all_samples)),
             }
         else:
-            stats = {"p1": 0.0, "p99": 1.0, "min": 0.0, "max": 1.0,
-                     "mean": 0.5, "std": 0.25}
+            stats = {
+                "p1": 0.0,
+                "p99": 1.0,
+                "min": 0.0,
+                "max": 1.0,
+                "mean": 0.5,
+                "std": 0.25,
+            }
         channel_stats.append(stats)
 
     return channel_stats
