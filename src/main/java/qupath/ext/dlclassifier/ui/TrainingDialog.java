@@ -6993,7 +6993,9 @@ public class TrainingDialog {
                             interactionWarnings);
             if (!visibleInteractionWarnings.isEmpty()) {
                 boolean proceed = qupath.ext.dlclassifier.service.warnings.InteractionWarningService.showIfAny(
-                        visibleInteractionWarnings, dialog);
+                        visibleInteractionWarnings,
+                        dialog,
+                        qupath.ext.dlclassifier.service.warnings.InteractionWarningService.Scope.TRAINING);
                 if (!proceed) {
                     return null;
                 }

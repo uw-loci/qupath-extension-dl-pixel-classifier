@@ -97,7 +97,8 @@ public final class OutOfDistributionPreflight {
 
         switch (mode) {
             case DIALOG:
-                return InteractionWarningService.showIfAny(List.of(new OutOfDistributionWarning(report)), null);
+                return InteractionWarningService.showIfAny(
+                        List.of(new OutOfDistributionWarning(report)), null, InteractionWarningService.Scope.INFERENCE);
             case NOTIFICATION:
                 Dialogs.showWarningNotification(NOTIFICATION_TITLE, buildNotificationText(report));
                 return true;

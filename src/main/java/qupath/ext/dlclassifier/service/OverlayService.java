@@ -178,7 +178,9 @@ public class OverlayService {
     /**
      * Creates an overlay from the stored model selection on the given image.
      * <p>
-     * Uses GAUSSIAN blend mode and reads overlay smoothing from preferences.
+     * Blend mode, overlap and overlay smoothing all come from preferences.
+     * Returns false when the user declined an interaction warning, so the
+     * caller does not report an overlay that was never created.
      *
      * @param imageData the image to overlay
      * @return true if the overlay was created
@@ -204,7 +206,10 @@ public class OverlayService {
                 .outputType(InferenceConfig.OutputType.OVERLAY)
                 .build();
 
-        showInferenceInteractionWarnings(config, selectedMetadata);
+        if (!showInferenceInteractionWarnings(config, selectedMetadata)) {
+            logger.info("Overlay cancelled at the interaction warning");
+            return false;
+        }
 
         DLPixelClassifier pixelClassifier =
                 new DLPixelClassifier(selectedMetadata, selectedChannelConfig, config, imageData);
@@ -241,18 +246,25 @@ public class OverlayService {
      * creation -- the user dismisses or suppresses them and work
      * proceeds. Suppressed watchers are silent.
      */
-    private void showInferenceInteractionWarnings(
+    private boolean showInferenceInteractionWarnings(
             InferenceConfig config, qupath.ext.dlclassifier.model.ClassifierMetadata metadata) {
         try {
             var warnings =
                     qupath.ext.dlclassifier.service.warnings.InteractionWarningService.evaluate(config, metadata);
             var visible = qupath.ext.dlclassifier.service.warnings.InteractionWarningService.filterVisible(warnings);
-            if (!visible.isEmpty()) {
-                qupath.ext.dlclassifier.service.warnings.InteractionWarningService.showIfAny(visible, null);
+            if (visible.isEmpty()) {
+                return true;
             }
+            // The answer is acted on now. This used to discard it, so Cancel
+            // dismissed the popup and the overlay appeared anyway -- and the
+            // popup said "Back to Settings", on a path with no settings to go
+            // back to.
+            return qupath.ext.dlclassifier.service.warnings.InteractionWarningService.showIfAny(
+                    visible, null, qupath.ext.dlclassifier.service.warnings.InteractionWarningService.Scope.OVERLAY);
         } catch (RuntimeException ex) {
             // A buggy watcher must never prevent overlay creation.
             logger.warn("Inference interaction-warning evaluation failed", ex);
+            return true;
         }
     }
 

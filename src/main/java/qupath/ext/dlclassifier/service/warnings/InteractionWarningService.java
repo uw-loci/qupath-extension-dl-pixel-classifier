@@ -50,10 +50,47 @@ public final class InteractionWarningService {
 
     private static final Logger logger = LoggerFactory.getLogger(InteractionWarningService.class);
 
-    // Buttons for non-blocking warnings: proceed, or return to the dialog to change settings.
-    private static final ButtonType START_TRAINING = new ButtonType("Start Training", ButtonBar.ButtonData.OK_DONE);
-    private static final ButtonType BACK_TO_SETTINGS =
-            new ButtonType("Back to Settings", ButtonBar.ButtonData.CANCEL_CLOSE);
+    /**
+     * Where the popup was raised from, which decides what its buttons say
+     * and whether the answer is acted on.
+     * <p>
+     * These were hardcoded to "Start Training" / "Back to Settings" for every
+     * caller. Three of the four callers are not training, so an inference run
+     * offered to start a training run -- visible as soon as the first
+     * inference-scope WARN actually fired. Worse, two of those callers
+     * discarded the return value, so "Back to Settings" changed nothing and
+     * the run proceeded anyway. A button that does not do what it says is a
+     * worse defect than a button with the wrong word on it, so a scope whose
+     * answer is not acted on gets ONE acknowledging button rather than a
+     * choice it will ignore.
+     */
+    public enum Scope {
+        /** The Train dialog, before a run starts. The answer is honoured. */
+        TRAINING("Start Training", "Back to Settings"),
+        /** Apply Classifier, before inference starts. The answer is honoured. */
+        INFERENCE("Run Inference", "Back to Settings"),
+        /** Live overlay creation. The answer is honoured. */
+        OVERLAY("Show Overlay", "Cancel"),
+        /** A preference the user just toggled. Already applied, so acknowledge only. */
+        PREFERENCE("OK", null);
+
+        private final String proceed;
+        private final String cancel;
+
+        Scope(String proceed, String cancel) {
+            this.proceed = proceed;
+            this.cancel = cancel;
+        }
+
+        ButtonType proceedButton() {
+            return new ButtonType(proceed, ButtonBar.ButtonData.OK_DONE);
+        }
+
+        /** Null when this scope only acknowledges, so no choice is offered. */
+        ButtonType cancelButton() {
+            return cancel == null ? null : new ButtonType(cancel, ButtonBar.ButtonData.CANCEL_CLOSE);
+        }
+    }
 
     private static final String PREF_KEY_PREFIX = "dlclassifier.warning.";
     private static final String PREF_KEY_SUFFIX = ".suppressed";
@@ -167,31 +204,36 @@ public final class InteractionWarningService {
     /**
      * Show a single popup summarising the triggered warnings.
      * <p>
-     * Return value: non-blocking warnings offer "Start Training" /
-     * "Back to Settings" and this method returns {@code false} when
-     * the user chose "Back to Settings" (or closed the dialog), so the
-     * caller can keep the settings dialog open. If any warning is
-     * BLOCKING the popup offers OK / Cancel and this method returns
-     * {@code false} when the user cancelled.
+     * Return value: a non-blocking warning offers the scope's own proceed
+     * and cancel labels, and this method returns {@code false} when the user
+     * cancelled or closed the dialog. A BLOCKING warning offers OK / Cancel
+     * and returns {@code false} on cancel. An acknowledge-only scope has no
+     * cancel button and always returns {@code true}.
+     *
+     * <p>Callers MUST act on the answer. Ignoring it turns the cancel button
+     * into a lie, which is how this dialog spent several releases offering
+     * "Back to Settings" on a path that proceeded regardless.
      *
      * @param warnings triggered watchers (already filtered via
      *     {@link #filterVisible(List)} if desired)
      * @param parent parent stage for modality, may be null
+     * @param scope where this was raised from; decides the button labels
      * @return true when the user chose to proceed, false when
      *     blocked or cancelled
      */
-    public static boolean showIfAny(List<InteractionWarning> warnings, Stage parent) {
+    public static boolean showIfAny(List<InteractionWarning> warnings, Stage parent, Scope scope) {
         if (warnings == null || warnings.isEmpty()) return true;
         final boolean[] result = {true};
         Runnable show = () -> {
-            Alert alert = buildAlert(warnings, parent);
+            ButtonType proceed = scope.proceedButton();
+            Alert alert = buildAlert(warnings, parent, scope, proceed);
             Optional<ButtonType> choice = alert.showAndWait();
             if (hasBlocking(warnings)) {
                 result[0] = choice.isPresent() && choice.get() == ButtonType.OK;
+            } else if (scope.cancelButton() == null) {
+                result[0] = true; // acknowledge-only: nothing to decline
             } else {
-                // Non-blocking: proceed only on "Start Training". "Back to
-                // Settings" (or closing the dialog) returns to the settings.
-                result[0] = choice.isPresent() && choice.get() == START_TRAINING;
+                result[0] = choice.isPresent() && choice.get() == proceed;
             }
         };
         if (Platform.isFxApplicationThread()) {
@@ -245,7 +287,7 @@ public final class InteractionWarningService {
         return false;
     }
 
-    private static Alert buildAlert(List<InteractionWarning> warnings, Stage parent) {
+    private static Alert buildAlert(List<InteractionWarning> warnings, Stage parent, Scope scope, ButtonType proceed) {
         boolean blocking = hasBlocking(warnings);
         Alert.AlertType type = blocking ? Alert.AlertType.CONFIRMATION : Alert.AlertType.WARNING;
         Alert alert = new Alert(type);
@@ -257,13 +299,19 @@ public final class InteractionWarningService {
         if (parent != null) {
             alert.initOwner(parent);
         }
-        // Blocking alerts get OK / Cancel; non-blocking warnings get
-        // "Start Training" / "Back to Settings" so the user can return to the
-        // dialog and change settings instead of being forced to proceed.
+        // Blocking alerts get OK / Cancel. Non-blocking warnings get the
+        // scope's labels, so an inference run does not offer to start
+        // training, and a scope that cannot honour a refusal offers no
+        // refusal to make.
         if (blocking) {
             alert.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
         } else {
-            alert.getButtonTypes().setAll(START_TRAINING, BACK_TO_SETTINGS);
+            ButtonType back = scope.cancelButton();
+            if (back == null) {
+                alert.getButtonTypes().setAll(proceed);
+            } else {
+                alert.getButtonTypes().setAll(proceed, back);
+            }
         }
 
         // Body: one entry per warning, with description, docs link,

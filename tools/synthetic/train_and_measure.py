@@ -113,7 +113,15 @@ def main():
         "--work", required=True, help="scratch dir for patches and the trained model"
     )
     ap.add_argument("--epochs", type=int, default=20)
-    ap.add_argument("--patch", type=int, default=256)
+    ap.add_argument("--patch", type=int, default=256, help="model input size")
+    ap.add_argument(
+        "--context-pad",
+        type=int,
+        default=0,
+        help="export patches this much larger per side; training random-crops "
+        "back to --patch, so this is how much tile-framing variation the "
+        "model sees (the 'overlap' field of a training profile)",
+    )
     ap.add_argument("--stride", type=int, default=256)
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--val-fraction", type=float, default=0.25)
@@ -169,28 +177,48 @@ def main():
     if export.exists():
         shutil.rmtree(export)
     rng = np.random.default_rng(0)
+    export_size = args.patch + 2 * args.context_pad
     counts = export_patches(
         image,
         mask,
         export,
-        args.patch,
+        export_size,
         args.stride,
         args.val_fraction,
         args.min_label,
         rng,
     )
     _log(
-        "exported %d train / %d validation patches"
-        % (counts["train"], counts["validation"])
+        "exported %d train / %d validation patches at %dpx (model input %d, context pad %d)"
+        % (
+            counts["train"],
+            counts["validation"],
+            export_size,
+            args.patch,
+            args.context_pad,
+        )
     )
     if counts["train"] == 0 or counts["validation"] == 0:
         raise SystemExit("one split is empty; lower --min-label or --stride")
+    if args.max_patches and counts["train"] > args.max_patches:
+        # Workshop scale: a participant brushes a few regions, not a slide.
+        # Keeping a deterministic subset makes the small-data regime testable.
+        for split, keep in (
+            ("train", args.max_patches),
+            ("validation", max(2, args.max_patches // 4)),
+        ):
+            imgs = sorted((export / split / "images").glob("*.raw"))
+            for extra in imgs[keep:]:
+                extra.unlink()
+                (export / split / "masks" / (extra.stem + ".png")).unlink(missing_ok=True)
+            counts[split] = min(counts[split], keep)
+        _log("trimmed to %d train / %d validation patches" % (counts["train"], counts["validation"]))
 
     (export / "config.json").write_text(
         json.dumps(
             {
                 "patch_size": args.patch,
-                "context_padding": 0,
+                "context_padding": args.context_pad,
                 "downsample": 1.0,
                 "unlabeled_index": UNLABELED,
                 "classes": [{"index": i, "name": n} for i, n in enumerate(classes)],

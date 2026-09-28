@@ -457,7 +457,9 @@ public final class DLClassifierPreferences {
                 var list = InteractionWarningService.evaluatePreferences();
                 var visible = InteractionWarningService.filterVisible(list);
                 if (!visible.isEmpty()) {
-                    InteractionWarningService.showIfAny(visible, null);
+                    // The preference is already set, so there is nothing to
+                    // decline -- PREFERENCE scope shows one acknowledging button.
+                    InteractionWarningService.showIfAny(visible, null, InteractionWarningService.Scope.PREFERENCE);
                 }
             } catch (RuntimeException ex) {
                 logger.warn("Preference-toggle interaction warning " + "evaluation failed", ex);
