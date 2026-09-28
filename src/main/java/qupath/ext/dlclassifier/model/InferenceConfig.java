@@ -376,7 +376,7 @@ public class InferenceConfig {
      *
      * @see #effectivePadding()
      */
-    public static final double CENTER_CROP_MIN_OVERLAP_FRACTION = 0.375;
+    public static final double CENTER_CROP_MIN_OVERLAP_FRACTION = 0.25;
 
     /**
      * The per-side padding this configuration will actually run with.
@@ -388,29 +388,40 @@ public class InferenceConfig {
      * <p>
      * Center-crop gives each pixel to a single tile instead of averaging the
      * tiles that cover it, so whatever that one tile predicted stands. A
-     * U-Net with a ResNet-18 encoder has a receptive field wider than a
-     * 256px tile, so two tiles sharing a piece of tissue can predict
-     * differently for it, and center-crop turns that disagreement into a
-     * rectangular block of the wrong class on the tile grid. The halo is the
-     * only lever that helps, and below roughly 37.5% it does not help
-     * enough.
+     * U-Net's receptive field is wider than a 256px tile, so two tiles
+     * sharing a piece of tissue can predict differently for it, and
+     * center-crop turns that disagreement into a rectangular block on the
+     * tile grid. A wider halo fixes that, but it is paid for in stride: the
+     * tile count goes as 1/stride^2, so the last few points of stability are
+     * extremely expensive.
      * <p>
-     * Measured on a 6-channel U-Net at tileSize 256, shifting the tile grid
-     * by half a stride and counting pixels whose class changed -- the
-     * cleanest statement of the artifact, since it needs no reference:
+     * Measured on a brightfield ResNet-18 U-Net at tileSize 256 over a real
+     * slide, shifting the tile grid half a stride and counting pixels whose
+     * class changed, against the tile count each geometry costs:
      *
      * <pre>
-     *   overlap 20.0%  (pad 51)   CENTER_CROP 10.65%   LINEAR 7.59%
-     *   overlap 25.0%  (pad 64)   CENTER_CROP  7.08%   LINEAR 4.55%
-     *   overlap 37.5%  (pad 96)   CENTER_CROP  3.42%   LINEAR 2.14%
-     *   overlap 43.8%  (pad 112)  CENTER_CROP  3.39%   LINEAR 2.57%
+     *   overlap 12.5%  stride 192   1.0x tiles   4.37% shift
+     *   overlap 20.0%  stride 154   1.6x tiles   1.98% shift
+     *   overlap 25.0%  stride 128   2.2x tiles   1.69% shift
+     *   overlap 30.0%  stride 102   4.0x tiles   1.37% shift
+     *   overlap 37.5%  stride  64   9.0x tiles   0.79% shift
      * </pre>
      *
-     * 37.5% is where center-crop stops improving: the next step buys 0.03
-     * points for double the tiles. It costs real time -- stride falls from
-     * 154 to 64, which is 5.8x the tiles -- so callers should say when they
-     * raise it rather than leaving the user to wonder why a run got slower.
-     * {@link #centerCropPaddingWasRaised()} reports exactly that.
+     * Nearly all of the benefit arrives by 20-25%. Going on to 37.5% buys
+     * 0.9 further points for FOUR TIMES the compute, which is unusable for a
+     * live overlay -- it was reported as "far, far too slow for a demo", and
+     * rightly. 25% is the floor.
+     * <p>
+     * This constant was 0.375 in 0.9.10, chosen from a 6-channel
+     * fluorescence model whose disagreement at 20% was 10.65% rather than
+     * this model's 1.98%. Generalising a threshold measured on one dataset to
+     * every model is the mistake that guidance warns about; the floor now
+     * sits where the curve flattens on both.
+     * <p>
+     * A wider halo does NOT reduce the halo of misclassified background
+     * around tissue -- that is the model using tile context, measured at 41.6%
+     * to 43.3% of glass called tissue across this entire range, and it is a
+     * training-data question rather than a tiling one.
      *
      * @return per-side padding in pixels
      */

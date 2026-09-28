@@ -51,26 +51,30 @@ public final class CenterCropHaloWatcher implements InferenceWarning {
 
     @Override
     public String getTitle() {
-        return "Tile overlap raised to 37.5% for CENTER_CROP";
+        return "Tile overlap raised to 25% for CENTER_CROP";
     }
 
     @Override
     public String getDescription() {
         return "Blend Mode is CENTER_CROP, so the tile overlap has been "
-                + "raised to 37.5% for this run. Center-crop gives each "
+                + "raised to 25% for this run. Center-crop gives each "
                 + "pixel to a single tile rather than averaging the tiles "
                 + "that cover it. This model's receptive field is wider "
                 + "than one tile, so neighbouring tiles genuinely disagree "
                 + "about the tissue they share, and center-crop settles "
                 + "that by picking one of them -- which appears as "
                 + "rectangular blocks of the wrong class, aligned to the "
-                + "tile grid. A wider halo is what fixes it: shifting the "
-                + "tile grid half a stride moves 10.65% of pixels at 20% "
-                + "overlap, 7.08% at 25%, and 3.42% at 37.5%. "
-                + "This costs time -- the stride falls from 154px to 64px "
-                + "at tile 256, which is 5.8x the tiles. Choose GAUSSIAN "
-                + "or LINEAR to keep your own overlap; they reach a "
-                + "similar result with less compute.";
+                + "tile grid. A wider halo is what fixes it, and the gain "
+                + "flattens by 25%: shifting the tile grid half a stride "
+                + "moves 4.37% of pixels at 12.5% overlap, 1.98% at 20% "
+                + "and 1.69% at 25%, while 37.5% buys under a further "
+                + "point for four times the compute. At tile 256 this "
+                + "setting takes the stride from 154px to 128px, about "
+                + "1.4x the tiles. Choose GAUSSIAN or LINEAR to keep your "
+                + "own overlap. Note this does NOT shrink a halo of "
+                + "misclassified background around tissue -- that is the "
+                + "model reading tile context, and it needs more training "
+                + "annotation there rather than different tiling.";
     }
 
     @Override

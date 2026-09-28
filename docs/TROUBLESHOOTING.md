@@ -459,22 +459,32 @@ A U-Net with a ResNet encoder sees a receptive field wider than a 256-pixel tile
 
 **CENTER_CROP** settles that disagreement by giving the pixel to whichever tile it sits nearest the centre of. That removes the visible *seam* but keeps one tile's answer for the whole region it owns, which is what you see as a block with straight edges on the tile grid. **Blending** averages the tiles that cover each pixel instead, so a contested pixel lands between the two predictions.
 
-The measurement below shifts the tile grid by half a stride and counts pixels whose class changed. It needs no reference image, and the pixels it counts are the blocks. Measured on a 6-channel U-Net at tile size 256:
+The measurement below shifts the tile grid by half a stride and counts pixels whose class changed. It needs no reference image, and the pixels it counts are the blocks. Measured on a brightfield ResNet-18 at tile size 256 over a real slide, against what each geometry costs -- tile count goes as 1/stride^2:
 
-| Overlap | CENTER_CROP | LINEAR | GAUSSIAN |
+| Overlap | Stride | Tiles | Shift-invariance |
 |---|---|---|---|
-| 20% | 10.65% | 7.59% | 7.58% |
-| 25% | 7.08% | 4.55% | 4.62% |
-| 37.5% | 3.42% | 2.14% | 2.12% |
-| 43.8% | 3.39% | 2.57% | 2.69% |
+| 12.5% | 192 | 1.0x | 4.37% |
+| 20% | 154 | 1.6x | 1.98% |
+| **25%** | 128 | **2.2x** | **1.69%** |
+| 30% | 102 | 4.0x | 1.37% |
+| 37.5% | 64 | 9.0x | 0.79% |
 
-Two things follow.
+Nearly all the benefit arrives by 25%, and the last stretch is four times the compute for under a point. The extension therefore **raises the overlap to 25% automatically whenever Blend Mode is CENTER_CROP**, and says so in the log and in the dialog. That is the only place it overrides your tiling geometry.
 
-**The halo is what fixes center-crop.** At 37.5% overlap it reaches 3.42%, better than blending at 20%. Past 37.5% it stops paying: the next step buys 0.03 points for double the tiles. Because of that the extension now **raises the overlap to 37.5% automatically whenever Blend Mode is CENTER_CROP**, and says so in the log and in the dialog. That is the only place it overrides your tiling geometry, and it costs real time -- at tile 256 the stride falls from 154 pixels to 64, which is 5.8 times the tiles.
+If the overlay is too slow to work with, this is the first thing to change: switch Blend Mode to GAUSSIAN or LINEAR and keep your own overlap. They reach comparable stability without the forced halo.
 
-**Blending gets there with less compute.** At matched settings LINEAR and GAUSSIAN sit 2 to 3 points below CENTER_CROP, so if the forced overlap makes a run too slow, switch to GAUSSIAN or LINEAR and keep your own overlap. Choose CENTER_CROP when a later step needs every pixel to come from exactly one inference pass.
+### A halo of background classified as tissue
 
-Neither mode goes below roughly 2%. That floor is the model itself being uncertain near boundaries; no tiling scheme removes it. If the blocks persist at 37.5% overlap, the model needs more or better annotation, not different tiling.
+Different problem, and tiling will not fix it. If a band of glass around the tissue comes back as tissue, look at the width: it follows the tissue contour rather than the tile grid.
+
+This is the model using tile context. Its receptive field is wider than the tile, so a window centred on glass near tissue is mostly tissue, and the model answers accordingly. Measured across the whole overlap range above, the fraction of glass called tissue moved only between 41.6% and 43.3% -- the geometry is almost irrelevant to it.
+
+Two things do help:
+
+- **Annotate background further out.** The model needs examples of glass that sits near tissue, not only glass in open space. Brush background right up against the tissue edge, and in the gaps between tissue folds.
+- **Check the model is actually trained.** A model that ran only a couple of optimizer steps per epoch leans harder on context because it has not learned local appearance. The training log says so directly: "Only N optimizer steps per epoch". If you see that, lower the batch size.
+
+Raising the tile size makes this **worse**, not better: more context per window means more of the glass near tissue looks like tissue. At tile 512 the same model called the entire measured region tissue.
 
 ### Tile seams visible in output
 

@@ -13,8 +13,11 @@ import org.junit.jupiter.api.Test;
  * differently for it and center-crop turns that into a rectangular block on
  * the tile grid. Shifting the tile grid half a stride and counting the pixels
  * whose class changed, on a 6-channel model at tile 256: 10.65% at 20%
- * overlap, 7.08% at 25%, 3.42% at 37.5%, 3.39% at 43.8%. So the halo fixes
- * it, and 37.5% is where it stops paying for itself.
+ * overlap, 7.08% at 25%, 3.42% at 37.5%. A brightfield model on a real slide
+ * gives 4.37% at 12.5%, 1.98% at 20%, 1.69% at 25%, 0.79% at 37.5% -- while
+ * costing 1.0x, 1.6x, 2.2x and 9.0x the tiles. Nearly all the benefit lands
+ * by 25%, and the last stretch is four times the compute for under a point,
+ * which made a live overlay unusable. 25% is the floor.
  *
  * <p>The floor therefore applies to CENTER_CROP and to nothing else, and the
  * raise is reported so a caller can explain why a run got slower.
@@ -33,14 +36,14 @@ class CenterCropPaddingFloorTest {
     void centerCropIsRaisedToTheFloorAndSaysSo() {
         // 20% of 256 is 51px, which is what the reported overlay ran at.
         InferenceConfig c = config(256, 51, InferenceConfig.BlendMode.CENTER_CROP);
-        assertThat(c.effectivePadding()).isEqualTo(96); // 37.5% of 256
+        assertThat(c.effectivePadding()).isEqualTo(64); // 25% of 256
         assertThat(c.centerCropPaddingWasRaised()).isTrue();
     }
 
     @Test
     void anOverlapAlreadyAboveTheFloorIsLeftAlone() {
-        InferenceConfig c = config(256, 112, InferenceConfig.BlendMode.CENTER_CROP);
-        assertThat(c.effectivePadding()).isEqualTo(112);
+        InferenceConfig c = config(256, 96, InferenceConfig.BlendMode.CENTER_CROP);
+        assertThat(c.effectivePadding()).isEqualTo(96);
         assertThat(c.centerCropPaddingWasRaised()).isFalse();
     }
 
@@ -59,9 +62,9 @@ class CenterCropPaddingFloorTest {
     @Test
     void theFloorScalesWithTileSizeRatherThanBeingAFixedPixelCount() {
         assertThat(config(512, 64, InferenceConfig.BlendMode.CENTER_CROP).effectivePadding())
-                .isEqualTo(192);
+                .isEqualTo(128);
         assertThat(config(64, 8, InferenceConfig.BlendMode.CENTER_CROP).effectivePadding())
-                .isEqualTo(24);
+                .isEqualTo(16);
     }
 
     @Test
