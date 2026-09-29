@@ -2352,6 +2352,7 @@ public class TrainingDialog {
                         logger.debug("Could not read image '{}': {}", entry.getImageName(), e.getMessage());
                     }
                 }
+                warnIfOpenImageHasUnsavedAnnotations(project);
             }
 
             // Background fill-in for images whose ServerBuilder didn't expose
@@ -6272,6 +6273,57 @@ public class TrainingDialog {
 
             // Update whole-image info label for ViT tile size cap
             updateWholeImageInfoLabel();
+        }
+
+        /**
+         * Warns when the open image holds classified annotations the project
+         * has not been told about.
+         * <p>
+         * This list is built from {@code entry.readHierarchy()} -- what the
+         * PROJECT has stored for each image -- not from the open viewer. Import
+         * a GeoJSON, or draw annotations, and they are plainly visible on
+         * screen while being invisible here until File &gt; Save writes them to
+         * the entry. The dialog then reports no classes and nothing to train
+         * on, which reads as a broken extension rather than an unsaved file.
+         *
+         * @param project the current project, never null here
+         */
+        private void warnIfOpenImageHasUnsavedAnnotations(Project<BufferedImage> project) {
+            try {
+                var gui = QuPathGUI.getInstance();
+                if (gui == null || gui.getImageData() == null) {
+                    return;
+                }
+                ImageData<BufferedImage> open = gui.getImageData();
+                ProjectImageEntry<BufferedImage> entry = project.getEntry(open);
+                if (entry == null) {
+                    return;
+                }
+                long live = open.getHierarchy().getAnnotationObjects().stream()
+                        .filter(a -> a.getPathClass() != null)
+                        .count();
+                long stored = entry.readHierarchy().getAnnotationObjects().stream()
+                        .filter(a -> a.getPathClass() != null)
+                        .count();
+                if (live <= stored) {
+                    return;
+                }
+                String name = entry.getImageName();
+                logger.warn(
+                        "Open image '{}' has {} classified annotations but the project has {} saved; "
+                                + "training reads the saved copy",
+                        name,
+                        live,
+                        stored);
+                Platform.runLater(() -> Dialogs.showWarningNotification(
+                        "Unsaved annotations",
+                        "'" + name + "' has " + live + " classified annotations on screen but "
+                                + stored + " saved in the project. Training reads the saved copy, so "
+                                + "use File > Save first."));
+            } catch (Exception e) {
+                // A warning must never stop the dialog opening.
+                logger.debug("Unsaved-annotation check failed: {}", e.getMessage());
+            }
         }
 
         /**
