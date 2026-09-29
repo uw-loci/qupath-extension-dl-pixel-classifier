@@ -1,5 +1,6 @@
 package qupath.ext.dlclassifier.service;
 
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentSkipListSet;
@@ -32,6 +33,22 @@ public class TileBlendCache {
 
     /** Cache of probability maps. Key = (requestX, requestY) packed into long. */
     private final ConcurrentHashMap<Long, float[][][]> probCache = new ConcurrentHashMap<>();
+
+    /**
+     * The image whose tiles the cache currently holds.
+     * <p>
+     * The key is only the tile's x and y, which identifies a tile within one
+     * image and not the image it came from. QuPath keeps a pixel-classification
+     * overlay on the viewer across an image change, so the same classifier --
+     * and this cache with it -- can outlive the image it was built for, and
+     * every tile whose coordinates collide is then served from the wrong
+     * image. That produced tile-shaped rectangles of the opposite class in
+     * the middle of solid tissue, different on each visit because it depends
+     * on what is still in the LRU (measured on a 4-block case, 2026-09-29:
+     * all four matched the previously-viewed image's prediction at those
+     * coordinates, and none matched the displayed image's own).
+     */
+    private volatile String imagePath;
 
     /** Tracks insertion order for LRU eviction. */
     private final ConcurrentLinkedDeque<Long> probCacheOrder = new ConcurrentLinkedDeque<>();
@@ -87,15 +104,54 @@ public class TileBlendCache {
     /**
      * Returns the cached probability map for the given tile coordinates, or null.
      */
-    public float[][][] getIfCached(int requestX, int requestY) {
+    public float[][][] getIfCached(String requested, int requestX, int requestY) {
+        if (bindTo(requested)) {
+            return null;
+        }
         return probCache.get(cacheKey(requestX, requestY));
+    }
+
+    /**
+     * Binds the cache to {@code requested}, clearing it if it held another image.
+     *
+     * <p>Called from the read path, which runs once per tile request before that
+     * request's result is written back.
+     *
+     * @param requested the image whose tiles are about to be read
+     * @return true when the cache was cleared because the image changed
+     */
+    private synchronized boolean bindTo(String requested) {
+        if (Objects.equals(imagePath, requested)) {
+            return false;
+        }
+        int dropped = probCache.size();
+        clear();
+        imagePath = requested;
+        if (dropped > 0) {
+            logger.info("Overlay image changed -- discarded {} tile(s) cached for the previous image", dropped);
+        }
+        return true;
     }
 
     /**
      * Caches a probability map and tracks tile positions for step computation.
      * Evicts the oldest entry if over capacity.
      */
-    public void cache(int requestX, int requestY, float[][][] probMap) {
+    public void cache(String requested, int requestX, int requestY, float[][][] probMap) {
+        // Drop, never rebind. A tile that was already in flight when the viewer
+        // moved to another image arrives here carrying the OLD image's path,
+        // after the read path has bound the cache to the new one. Rebinding on
+        // write would let that straggler evict the new image's tiles and then
+        // be served for a colliding coordinate -- which is the defect this
+        // guards. Writes for an image the cache is not bound to are discarded.
+        synchronized (this) {
+            if (this.imagePath == null) {
+                this.imagePath = requested;
+            } else if (!Objects.equals(this.imagePath, requested)) {
+                logger.debug("Dropping a tile cached for a previous image at ({}, {})", requestX, requestY);
+                return;
+            }
+        }
         long key = cacheKey(requestX, requestY);
         probCache.put(key, probMap);
         probCacheOrder.addLast(key);

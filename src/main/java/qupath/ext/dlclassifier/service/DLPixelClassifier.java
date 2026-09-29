@@ -379,7 +379,7 @@ public class DLPixelClassifier implements PixelClassifier {
         // that only a probability-map pipeline can produce.
         boolean useArgmax = inferenceConfig.isUseCompactArgmaxOutput();
         if (!useArgmax) {
-            float[][][] cachedProbMap = blendCache.getIfCached(request.getX(), request.getY());
+            float[][][] cachedProbMap = blendCache.getIfCached(serverPath, request.getX(), request.getY());
             if (cachedProbMap != null) {
                 int cachedH = cachedProbMap.length;
                 int cachedW = cachedProbMap[0].length;
@@ -657,7 +657,7 @@ public class DLPixelClassifier implements PixelClassifier {
             }
 
             // Cache stride-sized probMap for fast path on repaint
-            blendCache.cache(request.getX(), request.getY(), strideProbMap);
+            blendCache.cache(serverPath, request.getX(), request.getY(), strideProbMap);
 
             // Success -- reset error counter and log progress
             consecutiveErrors.set(0);
