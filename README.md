@@ -107,6 +107,8 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and G
 3. **Train a classifier** -- create annotations, open **Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**, select images, load classes, name your classifier, and click Start Training. The dialog starts in a simplified Basic mode; click "Show All Settings" for advanced options.
 
    > **Note:** When training from scratch (tiny-unet or without pretrained weights), an advisory appears beneath the Epochs spinner recommending a minimum epoch count. This is advice only — the spinner value is always what trains. You are free to follow the recommendation or set a different value.
+   >
+   > **Unsaved annotations:** Training reads the copy the project has saved for each image, not what is on screen, so annotations you have just imported or drawn are invisible to it until **File > Save**. The dialog warns when it sees more classified annotations in the viewer than the project has stored.
 
 4. **Apply the classifier** -- open **Extensions > DL Pixel Classifier > Apply DL Pixel Classifier...**, select a model, choose an output type, and click Apply
 
