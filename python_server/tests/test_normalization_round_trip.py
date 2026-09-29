@@ -235,3 +235,93 @@ class TestDegenerateStatsDoNotReturnRawPixels:
             img.copy(), self._cfg("percentile_99", [_stats(100, 200, 150, 25)])
         )
         assert out[0, 0, 0] == pytest.approx(0.5)
+
+
+class TestUniformTilesExposeAMissingPrecomputedFlag:
+    """A dropped ``precomputed`` flag is silent on varied tiles and severe on flat ones.
+
+    Training Area Issues sent an input_config built from live UI state, which
+    carries no dataset statistics, so evaluation fell back to normalizing each
+    tile against its own percentiles. On a brightfield run that reported 38% of
+    the annotated background as background-called-tissue. Re-running the
+    exported model.onnx over the same patches gave 0% with the dataset
+    statistics and 38.2% with per-tile statistics, which is how the fallback
+    was identified rather than the model.
+
+    The tests below encode why, in terms of the arithmetic rather than that
+    dataset's numbers: a percentile stretch divides by the range it is given,
+    so the narrower a tile's own range is relative to the dataset's, the more
+    per-tile normalization magnifies it.
+    """
+
+    DATASET_STATS = [
+        {"p1": 40.0, "p99": 245.0, "min": 0.0, "max": 255.0, "mean": 180.0, "std": 60.0}
+    ] * 3
+
+    def _config(self, precomputed):
+        norm = {
+            "strategy": "percentile_99",
+            "clip_percentile": 99.0,
+            "per_channel": False,
+            "min": 0.0,
+            "max": 255.0,
+        }
+        if precomputed:
+            norm["precomputed"] = True
+            norm["channel_stats"] = self.DATASET_STATS
+        return {"num_channels": 3, "normalization": norm}
+
+    def _tile(self, centre, spread, rng):
+        return np.clip(rng.normal(centre, spread, size=(64, 64, 3)), 0, 255).astype(
+            np.float32
+        )
+
+    def test_a_flat_bright_tile_stays_bright_under_dataset_stats(self):
+        # Glass is near the top of the dataset range, so it must normalize near
+        # the top of the scale. This is the behaviour the model trained on.
+        rng = np.random.default_rng(0)
+        out = normalize(self._tile(238.0, 4.0, rng), self._config(True))
+        assert out.mean() > 0.9
+        assert out.std() < 0.1
+
+    def test_the_same_tile_is_spread_across_the_scale_without_the_flag(self):
+        # Identical pixels, no dataset stats: the tile's own p1/p99 are only a
+        # few grey levels apart, so sensor noise is stretched into structure.
+        rng = np.random.default_rng(0)
+        tile = self._tile(238.0, 4.0, rng)
+        with_stats = normalize(tile, self._config(True))
+        per_tile = normalize(tile, self._config(False))
+        assert per_tile.std() > 5 * with_stats.std()
+        assert abs(per_tile.mean() - with_stats.mean()) > 0.2
+
+    def test_the_divergence_grows_as_the_tile_gets_narrower(self):
+        # The generalizing claim: this is a property of dividing by the tile's
+        # own range, not a threshold fitted to one slide. A tile spanning the
+        # dataset range normalizes almost identically either way; each step
+        # narrower widens the gap, because the same stretch is applied over a
+        # smaller denominator.
+        rng = np.random.default_rng(1)
+        gaps = []
+        for lo, hi in ((40, 245), (120, 240), (200, 245), (234, 242)):
+            tile = rng.uniform(lo, hi, size=(64, 64, 3)).astype(np.float32)
+            gaps.append(
+                float(
+                    np.abs(
+                        normalize(tile, self._config(True))
+                        - normalize(tile, self._config(False))
+                    ).mean()
+                )
+            )
+        assert gaps == sorted(gaps), f"expected monotonic divergence, got {gaps}"
+        assert gaps[0] < 0.02, "a tile spanning the dataset range should barely differ"
+        assert gaps[-1] > 0.4, "a near-uniform tile should differ enormously"
+
+    def test_a_tile_spanning_the_dataset_range_hides_the_bug(self):
+        # Why this survived review: on tissue, where the reviewed tiles cover
+        # most of the intensity range, the two paths agree closely enough to
+        # look correct. Only the background tiles gave it away.
+        rng = np.random.default_rng(2)
+        tile = rng.uniform(40, 245, size=(64, 64, 3)).astype(np.float32)
+        with_stats = normalize(tile, self._config(True))
+        per_tile = normalize(tile, self._config(False))
+        assert np.abs(with_stats - per_tile).mean() < 0.02

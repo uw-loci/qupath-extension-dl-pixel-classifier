@@ -88,6 +88,48 @@ public class TrainingWorkflow {
 
     private static final Logger logger = LoggerFactory.getLogger(TrainingWorkflow.class);
 
+    /**
+     * Loads the metadata written beside a trained model, or null when it cannot be read.
+     *
+     * <p>Kept separate so callers get an effectively-final value they can capture
+     * in a lambda.
+     */
+    private static ClassifierMetadata loadTrainedMetadata(Path modelDir) {
+        try {
+            return new ModelManager().loadMetadata(modelDir);
+        } catch (Exception e) {
+            logger.debug("Could not load classifier metadata from {}: {}", modelDir, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Returns {@code channelConfig} carrying the dataset normalization statistics the
+     * model actually trained with.
+     *
+     * <p>Training computes these in Python and records them in metadata.json. Any
+     * later pass that re-runs the model -- Training Area Issues in particular --
+     * has to normalize the same way or it measures a model nobody trained. Without
+     * them the Python side normalizes each tile against its own percentiles, which
+     * is indistinguishable on a varied tile and wildly different on a uniform one.
+     *
+     * @return the configuration with stats attached, or the original when the
+     *     metadata has none to give
+     */
+    static ChannelConfiguration withTrainedNormalizationStats(
+            ChannelConfiguration channelConfig, ClassifierMetadata metadata, Path modelDir) {
+        List<Map<String, Double>> stats = metadata == null ? null : metadata.getNormalizationStats();
+        if (stats == null || stats.isEmpty()) {
+            logger.warn(
+                    "No precomputed normalization stats in metadata at {} -- tile review will normalize "
+                            + "per tile, which can disagree with the trained model on uniform tiles",
+                    modelDir);
+            return channelConfig;
+        }
+        logger.info("Tile review will normalize with the {} dataset channel stats the model trained on", stats.size());
+        return channelConfig.withPrecomputedStats(stats);
+    }
+
     /** Name of the marker file written inside active training temp directories. */
     public static final String ACTIVE_MARKER = ".dl-training-active";
 
@@ -837,8 +879,28 @@ public class TrainingWorkflow {
                 progress.log("Cannot review: training data or model path not available");
                 return;
             }
-            // Build input config map for evaluation
-            Map<String, Object> inputConfig = ApposeClassifierBackend.buildInputConfig(channelConfig);
+            // Build input config map for evaluation.
+            //
+            // The normalization stats MUST come from the trained model's
+            // metadata, not from the live channelConfig. Dataset-level stats
+            // are computed inside training_service (compute_dataset_stats) and
+            // written to metadata.json; the Java channelConfig never receives
+            // them. Passing it unmodified left "precomputed" unset, so
+            // evaluate_tiles.py fell back to normalizing each tile by its OWN
+            // percentiles. On a tile of plain glass that stretches sensor
+            // noise across the full range, and a model trained on dataset
+            // stats reads the noise as tissue -- 38% of the annotated
+            // background reported as a confusion the exported model does not
+            // make (measured against model.onnx, 2026-09-28). The result was a
+            // review dialog that condemned a good model.
+            // See docs/NORMALIZATION_ROUNDTRIP.md.
+            final Path modelDirCandidate = Path.of(modelPath);
+            final Path modelDir =
+                    Files.isDirectory(modelDirCandidate) ? modelDirCandidate : modelDirCandidate.getParent();
+            final ClassifierMetadata trainedMetadata = loadTrainedMetadata(modelDir);
+            final ChannelConfiguration evalChannelConfig =
+                    withTrainedNormalizationStats(channelConfig, trainedMetadata, modelDir);
+            Map<String, Object> inputConfig = ApposeClassifierBackend.buildInputConfig(evalChannelConfig);
             CompletableFuture.runAsync(() -> {
                 try {
                     progress.setStatus("Evaluating training tiles...");
@@ -873,28 +935,18 @@ public class TrainingWorkflow {
                     // Python's model_path IS the classifier directory (contains
                     // model.pt, metadata.json, disagreement/). If the path points
                     // to a file (legacy/fallback), fall back to its parent.
-                    Path modelPathCandidate = Path.of(modelPath);
-                    Path modelDir =
-                            Files.isDirectory(modelPathCandidate) ? modelPathCandidate : modelPathCandidate.getParent();
-                    qupath.ext.dlclassifier.model.ClassifierMetadata metadata = null;
-                    try {
-                        metadata = new ModelManager().loadMetadata(modelDir);
-                    } catch (Exception metaErr) {
-                        logger.debug(
-                                "Could not load classifier metadata for session support: {}", metaErr.getMessage());
-                    }
-                    if (metadata == null) {
+                    // modelDir and trainedMetadata are resolved above, where the
+                    // evaluation's normalization stats are read from the same file.
+                    if (trainedMetadata == null) {
                         logger.warn(
                                 "No classifier metadata found at {} -- " + "Save/Load Session will be disabled",
                                 modelDir);
                     }
-                    final qupath.ext.dlclassifier.model.ClassifierMetadata finalMetadata = metadata;
-                    final Path finalModelDir = modelDir;
                     Platform.runLater(() -> {
                         TrainingAreaIssuesDialog dialog = new TrainingAreaIssuesDialog(
                                 classifierName,
-                                finalMetadata,
-                                finalModelDir,
+                                trainedMetadata,
+                                modelDir,
                                 results,
                                 trainingConfig.getDownsample(),
                                 trainingConfig.getTileSize(),

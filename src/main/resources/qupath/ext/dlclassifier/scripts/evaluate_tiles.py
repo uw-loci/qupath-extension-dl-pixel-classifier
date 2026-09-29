@@ -255,6 +255,36 @@ try:
         model_arch.update(saved_arch)
         logger.info("Loaded model metadata from %s", model_metadata_path)
 
+        # Normalization MUST match what the model trained with. The dataset
+        # stats are computed during training (compute_dataset_stats) and
+        # recorded here; a caller that builds input_config from live UI state
+        # has no way to know them. When they are missing the fallback
+        # normalizes each tile against its own percentiles, which agrees on a
+        # varied tile and diverges sharply on a uniform one -- a tile of plain
+        # glass has its sensor noise stretched across the full range and reads
+        # as tissue. That reported 38% of annotated background as a confusion
+        # the exported model does not make (measured against model.onnx,
+        # 2026-09-28), so the review dialog condemned a good model. The model's
+        # own metadata is the authority; prefer it over what was passed in.
+        saved_norm = (model_metadata.get("input_config") or {}).get(
+            "normalization"
+        ) or {}
+        saved_stats = saved_norm.get("channel_stats")
+        if saved_stats:
+            norm_cfg = input_config.setdefault("normalization", {})
+            if not norm_cfg.get("precomputed") or not norm_cfg.get("channel_stats"):
+                logger.warning(
+                    "input_config carried no precomputed normalization stats; using "
+                    "the %d channel stats recorded in metadata.json so evaluation "
+                    "normalizes the way training did",
+                    len(saved_stats),
+                )
+            norm_cfg["precomputed"] = True
+            norm_cfg["channel_stats"] = saved_stats
+            for key in ("per_channel", "strategy", "clip_percentile"):
+                if key in saved_norm:
+                    norm_cfg[key] = saved_norm[key]
+
     training_service = TrainingService(gpu_manager=gpu_manager)
     num_channels = input_config.get("num_channels", 3)
     context_scale = model_arch.get("context_scale", 1)

@@ -628,6 +628,21 @@ public class ModelManager {
                         javaMetadata.put(key, gson.fromJson(pythonMeta.get(key), Object.class));
                     }
                 }
+                // normalization_contract states how training ACTUALLY
+                // normalized, which only the Python side knows, so it
+                // overrides the Java value instead of deferring to it like
+                // the keys above. toMap() always writes the field from a
+                // builder that defaults to 1, so the containsKey guard would
+                // pin every freshly trained model at 1 forever -- reporting an
+                // open round trip, and firing the "retrain to close it"
+                // warning on every overlay, for models whose round trip is
+                // closed. See NORMALIZATION_CONTRACT in training_service.py.
+                if (pythonMeta.has("normalization_contract")
+                        && pythonMeta.get("normalization_contract").isJsonPrimitive()) {
+                    javaMetadata.put(
+                            "normalization_contract",
+                            pythonMeta.get("normalization_contract").getAsInt());
+                }
                 // Merge Python-only architecture fields into the Java architecture
                 // map so they survive the overwrite. This preserves:
                 //   use_batchrenorm, model_config, patch_size, level_scales,
