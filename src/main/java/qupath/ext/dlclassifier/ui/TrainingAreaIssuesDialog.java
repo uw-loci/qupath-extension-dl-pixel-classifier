@@ -333,9 +333,14 @@ public class TrainingAreaIssuesDialog {
         // backing column property is recomputed from the per-tile confidence
         // histogram each time the user moves the confidence slider. Falls
         // back to the raw total for legacy sessions that lack a histogram.
-        TableColumn<TileRow, Number> disagreePxCol = new TableColumn<>("Disagree px");
+        // The header carries the threshold because this column counts only
+        // disagreements the model is at least that confident about, while
+        // Disagree% next to it is unconditional. Without the threshold in the
+        // header the two read as a contradiction: at a 97% threshold a row
+        // legitimately shows "19.7%" beside "0".
+        disagreePxCol = new TableColumn<>("Disagree px");
         disagreePxCol.setCellValueFactory(cell -> cell.getValue().disagreementPixelsAtThresholdProperty());
-        disagreePxCol.setPrefWidth(95);
+        disagreePxCol.setPrefWidth(120);
         disagreePxCol.setSortType(TableColumn.SortType.DESCENDING);
         disagreePxCol.setCellFactory(col -> new TableCell<TileRow, Number>() {
             @Override
@@ -811,12 +816,33 @@ public class TrainingAreaIssuesDialog {
      * histogram. Cheap (~20 ints summed per row, ~5000 rows max) so we
      * just iterate -- no batching needed.
      */
+    /**
+     * Header for the disagreement-pixel column at a given confidence threshold.
+     *
+     * <p>The threshold belongs in the header because the column counts only the
+     * disagreements the model is at least that confident about, while the
+     * Disagree% column beside it is unconditional. A row showing "19.7%" next
+     * to "0" is correct at a high threshold, and reads as a bug without it.
+     *
+     * @param threshold confidence in [0, 1]
+     * @return the column header text
+     */
+    static String disagreeColumnHeader(double threshold) {
+        return String.format("Disagree px @%.0f%%", threshold * 100);
+    }
+
     private void recomputeAllDisagreementCounts(double threshold) {
+        if (disagreePxCol != null) {
+            disagreePxCol.setText(disagreeColumnHeader(threshold));
+        }
         if (allRows == null) return;
         for (TileRow row : allRows) {
             row.recomputeDisagreementAtThreshold(threshold);
         }
     }
+
+    /** Header shows the confidence threshold its counts are taken at. */
+    private TableColumn<TileRow, Number> disagreePxCol;
 
     private void navigateToTile(TileRow row) {
         QuPathGUI qupath = QuPathGUI.getInstance();
