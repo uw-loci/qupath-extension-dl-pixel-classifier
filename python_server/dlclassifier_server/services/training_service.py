@@ -2438,6 +2438,24 @@ class TrainingService:
                 "as optimistic, and raise the validation split or annotate "
                 "more area if you need to compare runs." % (_n_val, 100.0 / _n_val)
             )
+            # Early stopping reads this same noisy number, and noise hurts it
+            # worse than it hurts best-epoch selection. One lucky epoch sets a
+            # score the run can never beat -- observed at 8 validation patches,
+            # where the best validation loss was 4.25x lower than the median of
+            # every other epoch -- so the counter runs to patience and the run
+            # ends on the measurement rather than on convergence, keeping that
+            # lucky epoch.
+            if str(
+                training_params.get("early_stopping_metric", "mean_iou")
+            ).lower() not in ("disabled", "none", "off"):
+                _budget["val_message"] += (
+                    " Early stopping is ON and watches this same number, so a "
+                    "lucky early epoch can set a score nothing later beats, and "
+                    "the run will end on the patience counter instead of on "
+                    "convergence. With this few validation patches, consider "
+                    "turning early stopping off and capping the epoch count "
+                    "instead."
+                )
             logger.warning("TRAINING DIAGNOSTIC: %s", _budget["val_message"])
         elif _n_val == 0:
             _budget["val_message"] = (
