@@ -48,6 +48,29 @@ import qupath.lib.regions.RegionRequest;
  * @author UW-LOCI
  * @since 0.1.0
  */
+/**
+ * Thrown when a classifier's model files are not on disk.
+ * <p>
+ * Distinct from a backend or inference failure: nothing is wrong with the
+ * server, the model simply is not there -- usually because it was deleted or
+ * the project moved while it was still selected for the overlay. Callers
+ * should tell the user and stop, not retry.
+ */
+class ModelFilesMissingException extends IllegalStateException {
+
+    private final String classifierName;
+
+    ModelFilesMissingException(String classifierName, String id) {
+        super("Model files for classifier '" + classifierName + "' (id " + id
+                + ") are not on disk. It may have been deleted, or the project may have moved.");
+        this.classifierName = classifierName;
+    }
+
+    String getClassifierName() {
+        return classifierName;
+    }
+}
+
 public class DLPixelClassifier implements PixelClassifier {
 
     private static final Logger logger = LoggerFactory.getLogger(DLPixelClassifier.class);
@@ -170,6 +193,17 @@ public class DLPixelClassifier implements PixelClassifier {
         // version), fall back to scanning all classifier directories for a
         // metadata.json that matches this classifier's name.
         ModelManager modelManager = new ModelManager();
+        // Resolve the model on disk NOW. This used to fall back to the bare
+        // classifier ID when neither lookup found anything, and that id is
+        // not a path -- so every tile asked the Python side to load a
+        // directory that cannot exist, and every tile failed. One deleted
+        // classifier produced over a thousand stack traces: the Appose
+        // traceback, plus QuPath's own "Error requesting tile
+        // classification" for each request, which this class cannot
+        // suppress because it is logged by the caller.
+        //
+        // Failing here instead turns that into one message before a single
+        // tile is requested.
         this.modelDirPath = modelManager
                 .getModelPath(metadata.getId())
                 .map(p -> p.getParent().toString())
@@ -179,8 +213,11 @@ public class DLPixelClassifier implements PixelClassifier {
                             "Model directory not found for ID '{}', searching by name '{}'",
                             metadata.getId(),
                             metadata.getName());
-                    return modelManager.findModelDirByName(metadata.getName()).orElse(metadata.getId());
+                    return modelManager.findModelDirByName(metadata.getName()).orElse(null);
                 });
+        if (modelDirPath == null || !Files.isDirectory(Path.of(modelDirPath))) {
+            throw new ModelFilesMissingException(metadata.getName(), metadata.getId());
+        }
 
         try {
             this.sharedTempDir = Files.createTempDirectory("dl-overlay-");
@@ -664,15 +701,28 @@ public class DLPixelClassifier implements PixelClassifier {
             if (errorCount >= MAX_CONSECUTIVE_ERRORS && errorNotified.compareAndSet(false, true)) {
                 logger.error(
                         "Classification overlay disabled after {} consecutive errors: {}", errorCount, e.getMessage());
+                // Take the overlay down rather than leaving it in place to
+                // fail on every repaint. QuPath logs a stack trace for each
+                // failed tile request from its own code, which this class
+                // cannot suppress, so the only way to stop the flood is to
+                // stop being asked.
+                shuttingDown = true;
                 Platform.runLater(() -> {
+                    OverlayService.getInstance().removeOverlay();
                     var alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR);
                     alert.setTitle("Classification Error");
-                    alert.setHeaderText("Classification overlay has been disabled");
-                    alert.setContentText("The server returned repeated errors:\n" + lastErrorMessage + "\n\n"
-                            + "Remove the overlay and check the server connection.");
+                    alert.setHeaderText("Classification overlay has been removed");
+                    alert.setContentText("Inference failed repeatedly and the overlay was removed:\n"
+                            + lastErrorMessage + "\n\nCheck the classifier and the Python environment, "
+                            + "then apply it again.");
                     DialogOwner.own(alert);
                     alert.show();
                 });
+            }
+            // Past the breaker every further tile is answered blank rather
+            // than thrown, so the log records the failure once.
+            if (consecutiveErrors.get() >= MAX_CONSECUTIVE_ERRORS) {
+                return createEmptyClassificationImage(request);
             }
             throw e;
         }

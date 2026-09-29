@@ -31,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.service.ModelManager;
+import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 
@@ -684,12 +685,20 @@ public class ModelManagementWorkflow {
 
         List<String> deleted = new ArrayList<>();
         List<String> failed = new ArrayList<>();
+        boolean overlayCleared = false;
         for (ClassifierMetadata m : selected) {
             // One failure must not abandon the rest of the selection.
             try {
                 if (modelManager.deleteClassifier(m.getId())) {
                     logger.info("Deleted classifier: {}", m.getId());
                     deleted.add(m.getName());
+                    // Drop any overlay still holding it. Without this the
+                    // overlay keeps a path that no longer exists and every
+                    // tile request fails -- one deleted classifier produced
+                    // over a thousand stack traces before this.
+                    if (OverlayService.getInstance().forgetClassifier(m.getId())) {
+                        overlayCleared = true;
+                    }
                 } else {
                     logger.warn("Could not delete classifier: {}", m.getId());
                     failed.add(m.getName());
@@ -702,6 +711,9 @@ public class ModelManagementWorkflow {
 
         refreshClassifierList();
         String message = summariseDeletion(deleted, failed);
+        if (overlayCleared) {
+            message += ". Its overlay was removed";
+        }
         if (failed.isEmpty()) {
             Dialogs.showInfoNotification("Deleted", message);
         } else {

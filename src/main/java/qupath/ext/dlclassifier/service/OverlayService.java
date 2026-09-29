@@ -10,6 +10,7 @@ import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
+import qupath.fx.dialogs.Dialogs;
 import qupath.lib.classifiers.pixel.PixelClassifier;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.viewer.QuPathViewer;
@@ -211,10 +212,58 @@ public class OverlayService {
             return false;
         }
 
-        DLPixelClassifier pixelClassifier =
-                new DLPixelClassifier(selectedMetadata, selectedChannelConfig, config, imageData);
+        DLPixelClassifier pixelClassifier;
+        try {
+            pixelClassifier = new DLPixelClassifier(selectedMetadata, selectedChannelConfig, config, imageData);
+        } catch (ModelFilesMissingException e) {
+            // The selection outlived its files -- deleting a classifier while
+            // it was still chosen for the overlay is the usual way. Say so
+            // once and forget the selection, rather than building an overlay
+            // whose every tile will fail.
+            logger.warn("Cannot create overlay: {}", e.getMessage());
+            String name = e.getClassifierName();
+            clearSelectedModel();
+            Platform.runLater(() -> Dialogs.showWarningNotification(
+                    "Classifier not found",
+                    "'" + name + "' is no longer on disk, so the overlay was not created. "
+                            + "Choose another classifier, or train a new one."));
+            return false;
+        }
         applyClassifierOverlay(imageData, pixelClassifier, selectedMetadata, selectedChannelConfig);
         return true;
+    }
+
+    /**
+     * Forgets the stored model selection.
+     * <p>
+     * Called when the selected classifier turns out to be gone, and by
+     * {@code ModelManagementWorkflow} when the user deletes it, so a deleted
+     * classifier cannot be re-selected by the overlay toggle.
+     */
+    public void clearSelectedModel() {
+        this.selectedMetadata = null;
+        this.selectedChannelConfig = null;
+    }
+
+    /**
+     * Drops the overlay and the stored selection when {@code id} is the
+     * classifier currently in use.
+     *
+     * @param id classifier id that has just been deleted
+     * @return true when this service was holding that classifier
+     */
+    public boolean forgetClassifier(String id) {
+        if (id == null) {
+            return false;
+        }
+        boolean held = (selectedMetadata != null && id.equals(selectedMetadata.getId()))
+                || (currentMetadata != null && id.equals(currentMetadata.getId()));
+        if (held) {
+            logger.info("Classifier {} was deleted; removing its overlay and selection", id);
+            removeOverlay();
+            clearSelectedModel();
+        }
+        return held;
     }
 
     /**
@@ -299,8 +348,15 @@ public class OverlayService {
                 .outputType(InferenceConfig.OutputType.OVERLAY)
                 .build();
 
-        DLPixelClassifier pixelClassifier =
-                new DLPixelClassifier(currentMetadata, currentChannelConfig, newConfig, currentImageData);
+        DLPixelClassifier pixelClassifier;
+        try {
+            pixelClassifier = new DLPixelClassifier(currentMetadata, currentChannelConfig, newConfig, currentImageData);
+        } catch (ModelFilesMissingException e) {
+            logger.warn("Cannot recreate overlay: {}", e.getMessage());
+            removeOverlay();
+            clearSelectedModel();
+            return false;
+        }
         applyClassifierOverlay(currentImageData, pixelClassifier, currentMetadata, currentChannelConfig);
         return true;
     }
