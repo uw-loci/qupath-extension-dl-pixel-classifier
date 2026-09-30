@@ -28,14 +28,33 @@ Pick the full [UNet](TRAINING_GUIDE.md) when:
 
 ## Encoders
 
-Fast Pretrained ships with two encoder choices via the "Backbone" combo:
+Fast Pretrained ships with six encoder choices via the "Backbone" combo.
+All six carry ImageNet weights.
 
-| Encoder                          | Params | ImageNet top-1 | When to pick |
-| -------------------------------- | ------ | -------------- | ------------ |
-| `timm-tf_efficientnet_lite0`     | ~4.2M  | 75.1%          | Default, best balance. No SE blocks or hard-swish means it compiles and exports cleanly. |
-| `timm-mobilenetv3_small_100`     | ~2.0M  | 67.7%          | Smallest, fastest. Pick when VRAM or inference latency is tight. |
+Both columns are measured, not quoted: each encoder was built through SMP
+with `encoder_weights="imagenet"` and run at every tile size the handler
+offers (128 to 512), and the parameters counted from the resulting module.
+The whole-U-Net figure is the one that costs VRAM and time, and it is what
+the dropdown shows.
 
-Decoder channels are fixed at `[128, 64, 32, 16, 8]` for both encoders
+| Encoder                          | Encoder | Whole U-Net | When to pick |
+| -------------------------------- | ------- | ----------- | ------------ |
+| `timm-tf_efficientnet_lite0`     | 3.37M   | 5.62M       | Default, best balance. No SE blocks or hard-swish, so it compiles and exports cleanly. |
+| `tu-repghostnet_050`             | 0.15M   | 1.64M       | Smallest on offer. Reach for this before Tiny UNet when the data is RGB. |
+| `tu-efficientvit_b0`             | 0.68M   | 2.35M       | Very small, with attention in the deeper stages. |
+| `timm-mobilenetv3_small_100`     | 0.93M   | 3.59M       | Small and widely used, a safe pick when VRAM or latency is tight. |
+| `tu-mobilenetv4_conv_small`      | 1.26M   | 4.98M       | Newer design; worth a try when lite0 underfits. |
+| `timm-mobilenetv3_large_100`     | 2.97M   | 6.69M       | Largest here, still well under ResNet-18's 14.3M. |
+
+An earlier version of this table gave 4.2M and 2.0M for the first two. Those
+were encoder-ish figures that matched neither the encoder nor the U-Net.
+
+Several appealing candidates did not make the list, and the reason is worth
+recording so nobody re-adds them: `ghostnet_050` and `lcnet_035` have no
+published ImageNet weights, and `efficientvit_m1` and `xcit_nano_12_p16_224`
+reject the downsampling pattern a U-Net decoder needs.
+
+Decoder channels are fixed at `[128, 64, 32, 16, 8]` for every encoder
 -- see decoder sizing note below.
 
 ## Decoder sizing

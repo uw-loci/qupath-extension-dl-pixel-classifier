@@ -264,8 +264,17 @@ public final class VramEstimator {
             case "densenet121" -> 32.0;
             case "densenet169" -> 56.0;
             case "densenet201" -> 80.0;
-            case "mobilenet_v2" -> 14.0;
-            case "timm-mobilenetv3_large_100" -> 22.0;
+            case "mobilenet_v2" -> 25.3;
+            // Fast Pretrained encoders, from the measured parameter count of
+            // the whole U-Net times four bytes. Without explicit entries the
+            // default branch below matches "50" inside a width suffix and
+            // sizes repghostnet_050 -- 1.6M params -- as a ResNet-50.
+            case "timm-tf_efficientnet_lite0" -> 21.4;
+            case "tu-repghostnet_050" -> 6.3;
+            case "tu-efficientvit_b0" -> 9.0;
+            case "timm-mobilenetv3_small_100" -> 13.7;
+            case "tu-mobilenetv4_conv_small" -> 19.0;
+            case "timm-mobilenetv3_large_100" -> 25.5;
             case "resnet50_lunit-swav", "resnet50_lunit-bt", "resnet50_kather100k", "resnet50_tcga-brca" -> 100.0;
             case "h-optimus-0", "midnight" -> 4400.0;
             case "virchow" -> 2500.0;

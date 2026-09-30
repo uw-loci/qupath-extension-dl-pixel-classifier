@@ -196,6 +196,20 @@ public interface ClassifierHandler {
     }
 
     /**
+     * Whether this architecture can start from weights someone else trained.
+     *
+     * <p>Architectures without it train from scratch every time, which needs
+     * far more labelled data to reach the same quality. The training dialog
+     * offers this as a filter, because "small and fast" and "starts from
+     * pretrained weights" are easy to confuse in a list of names.
+     *
+     * @return true when a pretrained backbone can be loaded
+     */
+    default boolean offersPretrainedWeights() {
+        return getSupportedWeightInitStrategies().contains(WeightInitStrategy.BACKBONE_PRETRAINED);
+    }
+
+    /**
      * Returns the default weight initialization strategy for this handler.
      *
      * @return default strategy

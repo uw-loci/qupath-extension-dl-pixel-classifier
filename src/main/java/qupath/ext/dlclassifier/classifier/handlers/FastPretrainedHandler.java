@@ -51,12 +51,30 @@ import qupath.ext.dlclassifier.model.TrainingConfig;
  */
 public class FastPretrainedHandler implements ClassifierHandler {
 
-    /** Small pretrained encoders. Order matters: index 0 is the default. */
-    public static final List<String> BACKBONES = List.of("timm-tf_efficientnet_lite0", "timm-mobilenetv3_small_100");
+    /**
+     * Small pretrained encoders. Order matters: index 0 is the default.
+     *
+     * <p>Sizes are the whole U-Net, encoder plus decoder, which is what costs
+     * VRAM and time -- not the encoder alone. Every entry was built with
+     * ImageNet weights and run at each of {@link #TILE_SIZES} before being
+     * listed, because several otherwise-appealing timm encoders either have no
+     * ImageNet weights published or reject a tile size (2026-09-30).
+     */
+    public static final List<String> BACKBONES = List.of(
+            "timm-tf_efficientnet_lite0",
+            "tu-repghostnet_050",
+            "tu-efficientvit_b0",
+            "timm-mobilenetv3_small_100",
+            "tu-mobilenetv4_conv_small",
+            "timm-mobilenetv3_large_100");
 
     private static final Map<String, String> BACKBONE_DISPLAY_NAMES = Map.of(
-            "timm-tf_efficientnet_lite0", "EfficientNet-Lite0 (ImageNet, ~4.2M params, recommended)",
-            "timm-mobilenetv3_small_100", "MobileNetV3-Small (ImageNet, ~2.0M params, fastest)");
+            "timm-tf_efficientnet_lite0", "EfficientNet-Lite0 (ImageNet, 5.6M params, recommended)",
+            "tu-repghostnet_050", "RepGhostNet-0.5 (ImageNet, 1.6M params, smallest)",
+            "tu-efficientvit_b0", "EfficientViT-B0 (ImageNet, 2.4M params)",
+            "timm-mobilenetv3_small_100", "MobileNetV3-Small (ImageNet, 3.6M params)",
+            "tu-mobilenetv4_conv_small", "MobileNetV4-Conv-Small (ImageNet, 5.0M params)",
+            "timm-mobilenetv3_large_100", "MobileNetV3-Large (ImageNet, 6.7M params)");
 
     /** Most SMP encoders need tile sizes divisible by 32. */
     public static final List<Integer> TILE_SIZES = List.of(128, 192, 256, 384, 512);

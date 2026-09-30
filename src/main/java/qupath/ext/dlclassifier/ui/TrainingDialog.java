@@ -188,6 +188,53 @@ public class TrainingDialog {
 
         // Model architecture
         private ComboBox<String> architectureCombo;
+        private CheckBox pretrainedOnlyCheck;
+
+        /**
+         * The architecture types to offer.
+         *
+         * @param pretrainedOnly true to drop architectures that always train from scratch
+         * @return the types to show, in registry order
+         */
+        static List<String> architectureChoices(boolean pretrainedOnly) {
+            List<String> all = new ArrayList<>(ClassifierRegistry.getAllTypes());
+            if (!pretrainedOnly) {
+                return all;
+            }
+            List<String> kept = all.stream()
+                    .filter(t -> ClassifierRegistry.getHandler(t)
+                            .map(ClassifierHandler::offersPretrainedWeights)
+                            .orElse(false))
+                    .collect(java.util.stream.Collectors.toList());
+            // Never hand back an empty dropdown: a registry where nothing
+            // advertises pretrained weights would otherwise leave the user
+            // unable to pick anything at all.
+            return kept.isEmpty() ? all : kept;
+        }
+
+        /**
+         * Re-populates the architecture dropdown when the filter is toggled.
+         *
+         * <p>Keeps the current selection when it survives the filter, so ticking
+         * the box next to an already-pretrained architecture changes nothing.
+         *
+         * @param pretrainedOnly the new filter state
+         */
+        private void applyPretrainedArchitectureFilter(boolean pretrainedOnly) {
+            DLClassifierPreferences.setPretrainedArchitecturesOnly(pretrainedOnly);
+            if (architectureCombo == null) {
+                return;
+            }
+            String current = architectureCombo.getValue();
+            List<String> choices = architectureChoices(pretrainedOnly);
+            architectureCombo.setItems(FXCollections.observableArrayList(choices));
+            if (current != null && choices.contains(current)) {
+                architectureCombo.setValue(current);
+            } else if (!choices.isEmpty()) {
+                architectureCombo.setValue(choices.get(0));
+            }
+        }
+
         private ComboBox<String> backboneCombo;
 
         // Handler-specific UI (populated dynamically from ClassifierHandler.createTrainingUI())
@@ -3014,7 +3061,7 @@ public class TrainingDialog {
             int row = 0;
 
             // Architecture selection
-            List<String> architectures = new ArrayList<>(ClassifierRegistry.getAllTypes());
+            List<String> architectures = architectureChoices(DLClassifierPreferences.isPretrainedArchitecturesOnly());
             architectureCombo = new ComboBox<>(FXCollections.observableArrayList(architectures));
             architectureCombo.setMaxWidth(Double.MAX_VALUE);
             // Restore last used architecture from preferences, falling back to first in list
@@ -3061,6 +3108,27 @@ public class TrainingDialog {
             grid.add(archLabel, 0, row);
             grid.add(architectureCombo, 1, row);
             grid.add(archHelpBtn, 2, row);
+            row++;
+
+            // "Small and fast" and "starts from pretrained weights" are easy to
+            // confuse in a list of names, and picking a scratch-only
+            // architecture without enough labelled tiles is the expensive
+            // mistake. This hides that whole class rather than explaining it.
+            pretrainedOnlyCheck = new CheckBox("Only architectures with pretrained weights");
+            pretrainedOnlyCheck.setSelected(DLClassifierPreferences.isPretrainedArchitecturesOnly());
+            TooltipHelper.install(
+                    pretrainedOnlyCheck,
+                    "Hides architectures that always train from scratch.\n\n"
+                            + "A pretrained architecture starts from weights learned on a large\n"
+                            + "image set, so it reaches usable quality from far fewer labelled\n"
+                            + "tiles. Scratch-only architectures can still win on fluorescence or\n"
+                            + "multi-channel data, where those weights do not transfer.");
+            pretrainedOnlyCheck
+                    .selectedProperty()
+                    .addListener((obs, was, now) -> applyPretrainedArchitectureFilter(now));
+            grid.add(pretrainedOnlyCheck, 1, row);
+            pretrainedOnlyCheck.visibleProperty().bind(advancedMode);
+            pretrainedOnlyCheck.managedProperty().bind(advancedMode);
             row++;
 
             // Backbone selection

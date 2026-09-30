@@ -117,6 +117,13 @@ public final class DLClassifierPreferences {
     private static final StringProperty lastArchitecture =
             PathPrefs.createPersistentPreference("dlclassifier.lastArchitecture", "unet");
 
+    /**
+     * Whether the architecture list hides architectures that always train from
+     * scratch. Off by default, so the list is unchanged until asked.
+     */
+    private static final BooleanProperty pretrainedArchitecturesOnly =
+            PathPrefs.createPersistentPreference("dlclassifier.pretrainedArchitecturesOnly", false);
+
     private static final StringProperty lastBackbone =
             PathPrefs.createPersistentPreference("dlclassifier.lastBackbone", "resnet34");
 
@@ -986,6 +993,18 @@ public final class DLClassifierPreferences {
     }
 
     // ==================== Training Dialog Preferences ====================
+
+    public static boolean isPretrainedArchitecturesOnly() {
+        return pretrainedArchitecturesOnly.get();
+    }
+
+    public static void setPretrainedArchitecturesOnly(boolean value) {
+        pretrainedArchitecturesOnly.set(value);
+    }
+
+    public static BooleanProperty pretrainedArchitecturesOnlyProperty() {
+        return pretrainedArchitecturesOnly;
+    }
 
     public static String getLastArchitecture() {
         return lastArchitecture.get();
