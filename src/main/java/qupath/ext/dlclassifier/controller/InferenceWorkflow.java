@@ -268,7 +268,8 @@ public class InferenceWorkflow {
                         config.getTileSize(),
                         2 * effectivePadding,
                         config.getBlendMode(),
-                        config.getMaxTilesInMemory());
+                        config.getMaxTilesInMemory(),
+                        classifier.getDownsample());
 
                 ClassifierBackend backend = BackendFactory.getBackend();
 
@@ -519,7 +520,8 @@ public class InferenceWorkflow {
                         inferenceConfig.getTileSize(),
                         effectiveOverlap,
                         inferenceConfig.getBlendMode(),
-                        inferenceConfig.getMaxTilesInMemory());
+                        inferenceConfig.getMaxTilesInMemory(),
+                        metadata.getDownsample());
 
                 // Get appropriate backend (Appose or HTTP)
                 progress.setStatus("Connecting to backend...");
@@ -1074,6 +1076,23 @@ public class InferenceWorkflow {
                     break;
 
                 case OBJECTS:
+                    // GUARD -- same coordinate-space mismatch as the rendered
+                    // overlay above: createObjectsFromTiles takes regionX from
+                    // the parent ROI in full-resolution pixels and subtracts it
+                    // from tile coordinates that are now downsampled.
+                    //
+                    // Unreachable today: OBJECTS routes to classifyRegionUnified
+                    // before processRegionCore at both entry points, and that
+                    // path threads downsample correctly. The guard is here so a
+                    // change to that routing fails visibly.
+                    if (metadata.getDownsample() > 1.0) {
+                        throw new IOException(String.format(
+                                "This OBJECTS path does not support downsample %.1f "
+                                        + "(it maps tiles in full-resolution coordinates). It should "
+                                        + "not have been reached -- OBJECTS output is handled by "
+                                        + "classifyRegionUnified. Please report this.",
+                                metadata.getDownsample()));
+                    }
                     // Use the new merged-map approach for proper cross-tile object handling
                     int numClasses = metadata.getClasses().size();
                     List<PathObject> objects = outputGenerator.createObjectsFromTiles(
@@ -1140,6 +1159,27 @@ public class InferenceWorkflow {
             ImageData<BufferedImage> imageData,
             ProgressMonitorController progress)
             throws IOException {
+
+        // GUARD -- see the note on TileProcessor.generateTiles(ROI, ...).
+        // Tile coordinates are now in the model's DOWNSAMPLED space, but the
+        // merge below computes `outX = (spec.x() + tx) - regionX` against a
+        // FULL-RESOLUTION regionX, and PrecomputedPixelClassifier indexes its
+        // class map one entry per full-res pixel. At downsample 1 the two spaces
+        // coincide and this path is correct; above it, every tile would be
+        // placed at 1/downsample of its true offset -- silently.
+        //
+        // This path is currently unreachable (RENDERED_OVERLAY is not offered in
+        // the Apply dialog), so rather than rewrite a dormant coordinate chain
+        // we fail loudly if it is ever revived at a real downsample.
+        if (metadata.getDownsample() > 1.0) {
+            throw new IOException(String.format(
+                    "Rendered-overlay output is not implemented for downsample %.1f. "
+                            + "Its tile merge maps tiles in full-resolution coordinates, while tiling "
+                            + "now runs in the model's downsampled space, so every tile would be "
+                            + "placed at 1/%.1f of its true position. Use a downsample-1 model, or "
+                            + "choose a different output type.",
+                    metadata.getDownsample(), metadata.getDownsample()));
+        }
 
         // Resolve classifier ID to filesystem path
         ModelManager modelManager = new ModelManager();

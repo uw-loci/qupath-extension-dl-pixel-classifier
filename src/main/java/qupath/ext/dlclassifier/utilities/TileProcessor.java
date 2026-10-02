@@ -41,47 +41,29 @@ public class TileProcessor {
     /**
      * Creates a new tile processor.
      *
-     * @param config inference configuration
+     * @param tileSize         tile size, in the model's own (downsampled) pixels
+     * @param overlap          TOTAL overlap between neighbouring tiles, in the
+     *                         same space -- not the per-side padding
+     * @param blendMode        blend mode for boundaries
+     * @param maxTilesInMemory max tiles to keep in memory
+     * @param downsample       the model's downsample factor; tile geometry is
+     *                         computed in this space, so a full-resolution region
+     *                         must be divided by it on the way in
      */
-    public TileProcessor(InferenceConfig config) {
-        this(config, 1.0);
-    }
+    public TileProcessor(
+            int tileSize, int overlap, InferenceConfig.BlendMode blendMode, int maxTilesInMemory, double downsample) {
+        this.tileSize = tileSize;
+        this.overlap = overlap;
+        this.downsample = downsample > 0 ? downsample : 1.0;
+        this.blendMode = blendMode;
+        this.maxTilesInMemory = maxTilesInMemory;
 
-    /**
-     * Creates a new tile processor with a specific downsample factor.
-     *
-     * @param config     inference configuration
-     * @param downsample downsample factor (1.0 = full resolution)
-     */
-    public TileProcessor(InferenceConfig config, double downsample) {
-        this.tileSize = config.getTileSize();
-        this.overlap = config.getOverlap();
-        this.downsample = downsample;
-        this.blendMode = config.getBlendMode();
-        this.maxTilesInMemory = config.getMaxTilesInMemory();
-
-        logger.info(
+        logger.debug(
                 "TileProcessor initialized: size={}, overlap={}, downsample={}, blend={}",
                 tileSize,
                 overlap,
-                downsample,
+                this.downsample,
                 blendMode);
-    }
-
-    /**
-     * Creates a new tile processor with explicit parameters.
-     *
-     * @param tileSize         tile size in pixels
-     * @param overlap          overlap in pixels
-     * @param blendMode        blend mode for boundaries
-     * @param maxTilesInMemory max tiles to keep in memory
-     */
-    public TileProcessor(int tileSize, int overlap, InferenceConfig.BlendMode blendMode, int maxTilesInMemory) {
-        this.tileSize = tileSize;
-        this.overlap = overlap;
-        this.downsample = 1.0;
-        this.blendMode = blendMode;
-        this.maxTilesInMemory = maxTilesInMemory;
     }
 
     /**
@@ -92,11 +74,20 @@ public class TileProcessor {
      * @return list of tile specifications
      */
     public List<TileSpec> generateTiles(ROI roi, ImageServer<BufferedImage> server) {
+        // A ROI is in FULL-RESOLUTION pixels; everything below works in the
+        // model's downsampled space (note the server dimensions are divided by
+        // downsample there too). This is the only place the two meet, so it is
+        // the only place the conversion belongs.
+        //
+        // Without it a model trained at downsample=4 with tileSize=256 read
+        // tiles covering 256 full-res px instead of 1024 -- content at 4x the
+        // magnification it trained on -- and advanced the grid by 154 px instead
+        // of 616, so it also made 16x the tiles. Wrong, slow, and silent.
         return generateTiles(
-                (int) roi.getBoundsX(),
-                (int) roi.getBoundsY(),
-                (int) roi.getBoundsWidth(),
-                (int) roi.getBoundsHeight(),
+                (int) (roi.getBoundsX() / downsample),
+                (int) (roi.getBoundsY() / downsample),
+                (int) (roi.getBoundsWidth() / downsample),
+                (int) (roi.getBoundsHeight() / downsample),
                 server);
     }
 

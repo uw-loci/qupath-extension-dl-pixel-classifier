@@ -37,7 +37,7 @@ class TileProcessorCenterCropTest {
     }
 
     private static TileProcessor centerCrop(int tileSize, int overlap) {
-        return new TileProcessor(tileSize, overlap, InferenceConfig.BlendMode.CENTER_CROP, 16);
+        return new TileProcessor(tileSize, overlap, InferenceConfig.BlendMode.CENTER_CROP, 16, 1.0);
     }
 
     @Test
