@@ -657,6 +657,48 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             clearThread.start();
         });
 
+        // Download Pretrained Encoders - the weights live in the shared
+        // HuggingFace cache, outside the Appose environment, so a rebuilt
+        // environment leaves them behind and the next training run needs the
+        // network to fetch them again. At a workshop venue that is a live
+        // failure mode, and it is the kind that looks like a broken extension.
+        MenuItem prewarmOption = new MenuItem("Download Pretrained Encoders...");
+        TooltipHelper.installOnMenuItem(
+                prewarmOption,
+                "Downloads the pretrained encoder weights now, so training works without a network.\n"
+                        + "Also reports whether any cached weights have been superseded on the hub.\n"
+                        + "Safe to re-run: anything already downloaded is left alone.");
+        BooleanProperty prewarmRunning = new SimpleBooleanProperty(false);
+        prewarmOption.disableProperty().bind(prewarmRunning.or(environmentReady.not()));
+        prewarmOption.setOnAction(e -> {
+            prewarmRunning.set(true);
+            Thread t = new Thread(
+                    () -> {
+                        String result;
+                        try {
+                            result = BackendFactory.getBackend().encoderCache("prewarm");
+                        } catch (Exception ex) {
+                            logger.error("Encoder pre-warm failed", ex);
+                            result = null;
+                        }
+                        String message = result;
+                        Platform.runLater(() -> {
+                            prewarmRunning.set(false);
+                            if (message != null) {
+                                Dialogs.showInfoNotification(EXTENSION_NAME, message);
+                            } else {
+                                Dialogs.showErrorNotification(
+                                        EXTENSION_NAME,
+                                        "Could not download the pretrained encoders. "
+                                                + "Check the network and the Python Console.");
+                            }
+                        });
+                    },
+                    "DLClassifier-PrewarmEncoders");
+            t.setDaemon(true);
+            t.start();
+        });
+
         // MAE Pretrain Encoder - visible when environment ready
         MenuItem maePretrainOption = new MenuItem("MAE Pretrain Encoder...");
         TooltipHelper.installOnMenuItem(
@@ -767,6 +809,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             systemInfoOption,
                             new SeparatorMenuItem(),
                             freeGpuOption,
+                            prewarmOption,
                             maePretrainOption,
                             sslPretrainOption,
                             calibrateBNOption,
@@ -784,6 +827,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             systemInfoOption,
                             new SeparatorMenuItem(),
                             freeGpuOption,
+                            prewarmOption,
                             maePretrainOption,
                             calibrateBNOption,
                             cleanUpOption,

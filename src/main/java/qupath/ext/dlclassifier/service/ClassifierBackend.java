@@ -248,6 +248,21 @@ public interface ClassifierBackend {
      * @return list of per-tile evaluation results sorted by loss descending
      * @throws IOException if evaluation fails
      */
+    /**
+     * Downloads the pretrained encoder weights into the shared cache, or just
+     * reports what is there.
+     *
+     * <p>The weights live in the HuggingFace cache, outside the Appose
+     * environment, so rebuilding that environment leaves them behind and the
+     * next training run needs the network to get them again.
+     *
+     * @param action {@code "prewarm"} to download, {@code "status"} to only report
+     * @return a sentence for the user, or null when the backend could not be reached
+     */
+    default String encoderCache(String action) {
+        return null;
+    }
+
     List<ClassifierClient.TileEvaluationResult> evaluateTiles(
             Path modelPath,
             Path trainingDataPath,

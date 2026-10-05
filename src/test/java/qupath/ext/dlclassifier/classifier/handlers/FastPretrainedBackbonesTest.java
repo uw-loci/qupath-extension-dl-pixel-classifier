@@ -2,6 +2,12 @@ package qupath.ext.dlclassifier.classifier.handlers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 import qupath.ext.dlclassifier.utilities.VramEstimator;
 
@@ -17,6 +23,30 @@ import qupath.ext.dlclassifier.utilities.VramEstimator;
 class FastPretrainedBackbonesTest {
 
     private final FastPretrainedHandler handler = new FastPretrainedHandler();
+
+    @Test
+    void thePreWarmListMatchesWhatTheDialogOffers() throws Exception {
+        // encoder_cache.py downloads these ahead of time so a first training
+        // run works without the network. An encoder offered here but absent
+        // there re-opens exactly the hole that pre-warming closes, and the two
+        // lists sit in different languages where nothing else would notice.
+        Path py = Path.of("python_server/dlclassifier_server/services/encoder_cache.py");
+        if (!Files.exists(py)) {
+            return; // running from a packaged jar, not the source tree
+        }
+        String src = Files.readString(py);
+        Matcher block = Pattern.compile("OFFERED_ENCODERS = \\[(.*?)\\]", Pattern.DOTALL)
+                .matcher(src);
+        assertThat(block.find()).as("OFFERED_ENCODERS in encoder_cache.py").isTrue();
+        List<String> fromPython = new ArrayList<>();
+        Matcher each = Pattern.compile("\"([^\"]+)\"").matcher(block.group(1));
+        while (each.find()) {
+            fromPython.add(each.group(1));
+        }
+        assertThat(fromPython)
+                .as("encoder_cache.py OFFERED_ENCODERS vs FastPretrainedHandler.BACKBONES")
+                .containsExactlyElementsOf(FastPretrainedHandler.BACKBONES);
+    }
 
     @Test
     void everyBackboneHasADisplayNameWithItsSize() {

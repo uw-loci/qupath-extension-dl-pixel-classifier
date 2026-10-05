@@ -57,6 +57,48 @@ reject the downsampling pattern a U-Net decoder needs.
 Decoder channels are fixed at `[128, 64, 32, 16, 8]` for every encoder
 -- see decoder sizing note below.
 
+## Where the weights come from, and working offline
+
+Every pretrained encoder is fetched from the HuggingFace Hub on first use and
+cached in `~/.cache/huggingface/hub`. That cache sits **outside the Appose
+environment**, so rebuilding the environment does not carry the weights with
+it, and the next training run needs the network to fetch them again. At a
+workshop venue, or on a machine behind a proxy, that is a live failure mode --
+and it presents as the extension being broken rather than as a download.
+
+**Extensions > DL Pixel Classifier > Utilities > Download Pretrained
+Encoders...** fetches all six ahead of time. It is safe to re-run: anything
+already present is left alone. It also reports how many cached repositories
+have newer weights published.
+
+The same thing from a shell, inside the environment's Python:
+
+```bash
+python -m dlclassifier_server.services.encoder_cache prewarm   # download
+python -m dlclassifier_server.services.encoder_cache status    # what is cached, what is stale
+python -m dlclassifier_server.services.encoder_cache refresh   # replace stale weights
+```
+
+`status` exits non-zero when something is stale, so it can gate a build.
+
+### How staleness is decided
+
+On the **weight file**, not the repository. A repository's commit sha moves
+when its README changes, and treating that as stale reports encoders as out of
+date whenever an author edits a model card -- on one real cache that was three
+repositories whose weights had not changed at all. The LFS sha256 of the
+weights is the thing that matters, and the cache stores each blob under that
+same sha256, so the two compare directly without downloading anything.
+
+`status` checks **every** repository in the cache rather than a recorded
+encoder-to-repository mapping, which also covers the histology and foundation
+encoders. A mapping was tried first and abandoned: encoder names do not
+resolve reliably to repositories (`timm-mobilenetv3_large_100` resolves by
+name to `timm/mobilenetv3_large_100.ra_in1k`, but actually loads
+`timm/tf_mobilenetv3_large_100.in1k`), watching the cache grow learns nothing
+about an encoder that is already cached, and the cache's recorded access time
+does not advance on a cache hit.
+
 ## Decoder sizing
 
 SMP's default U-Net decoder uses `[256, 128, 64, 32, 16]` channels. That

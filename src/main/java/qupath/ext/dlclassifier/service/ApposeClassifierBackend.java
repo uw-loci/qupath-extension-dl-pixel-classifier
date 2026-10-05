@@ -154,6 +154,19 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     }
 
     @Override
+    public String encoderCache(String action) {
+        try {
+            Task task = ApposeService.getInstance().runTask("encoder_cache", Map.of("action", action));
+            boolean success = Boolean.TRUE.equals(task.outputs.get("success"));
+            String message = String.valueOf(task.outputs.get("message"));
+            return success ? message : null;
+        } catch (Exception e) {
+            logger.error("Appose encoder cache {} failed: {}", action, e.getMessage());
+            return null;
+        }
+    }
+
+    @Override
     public String clearGPUMemory() {
         try {
             Task task = ApposeService.getInstance().runTask("clear_gpu", Map.of());
