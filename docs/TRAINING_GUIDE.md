@@ -40,7 +40,7 @@ Go to **Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**
 
 The dialog opens in **Basic mode** by default, showing only the essentials: Training Data Source, Annotation Classes, and Classifier Name. Click **"Show All Settings"** in the header to reveal all configuration options. The mode is remembered across sessions.
 
-![Configure Classifier Training dialog: Training Data Source list with per-image Train/Val role dropdowns, Model Architecture (unet + ResNet-50 Kather100K encoder), and Weight Initialization radio options](images/train-dialog-configure-classifier.png)
+![Configure Classifier Training dialog in its advanced view. Training Data Source lists the project images, each with a checkbox and a Train/Val role dropdown, above Select All, Select None, Auto-Distribute and All Both buttons and a Load Classes from Selected Images button. Model Architecture holds an Architecture dropdown set to unet, a checkbox reading Only architectures with pretrained weights, and an Encoder dropdown set to ResNet-34. Weight Initialization offers Train from scratch, Use pretrained backbone weights (selected), Use MAE pretrained encoder, Use SSL pretrained encoder and Continue training from saved model, followed by a Transfer Learning Configuration panel with a Retraining preset dropdown and a scrolling list of encoder blocks with per-block freeze checkboxes and parameter counts. The remaining sections are collapsed, and a button row runs along the bottom](images/train-dialog-configure-classifier.png)
 
 In advanced mode, the dialog has collapsible titled pane sections:
 
