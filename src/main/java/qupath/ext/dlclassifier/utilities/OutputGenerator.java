@@ -507,13 +507,15 @@ public class OutputGenerator {
         if (config.isSeparateTouchingObjects()) {
             boolean[] splitMask =
                     watershedForeground(classMap, targetClass, width, height, config.getWatershedTolerance());
-            classImage = createClassImageFromMask(splitMask, targetClass, width, height);
+            classImage = createClassImageFromMask(splitMask, width, height);
         } else {
             classImage = createClassImage(classMap, targetClass, width, height);
         }
 
         // Use ContourTracing to trace geometries for this class value
-        Geometry geometry = ContourTracing.createTracedGeometry(classImage, targetClass, targetClass, region);
+        // Trace the mask's foreground value, NOT the class index -- see
+        // MASK_FOREGROUND and GitHub issue #29.
+        Geometry geometry = ContourTracing.createTracedGeometry(classImage, MASK_FOREGROUND, MASK_FOREGROUND, region);
 
         if (geometry == null || geometry.isEmpty()) {
             return objects;
@@ -561,28 +563,71 @@ public class OutputGenerator {
     }
 
     /**
-     * Creates a SimpleImage from the classification map for a specific class.
-     * Pixels matching the target class are set to the class value; others are 0.
+     * Mask value that contour tracing treats as foreground.
+     * <p>
+     * The constant matters: it must NOT vary with the class index. These masks
+     * used to label foreground with the class index itself, which left class 0
+     * writing 0 for its own pixels -- the same value as the background -- so
+     * every pixel of the mask read as 0 and tracing the range [0,0] returned
+     * the whole region. The first class came out as a single object covering
+     * the entire inference ROI (GitHub issue #29), with coordinates identical
+     * to the ROI's own.
+     * <p>
+     * Any non-zero value works; the mask is binary and carries no class
+     * identity, which {@code traceClassContours} supplies separately.
      */
-    private SimpleImage createClassImage(int[][] classMap, int targetClass, int width, int height) {
+    static final int MASK_FOREGROUND = 1;
+
+    /**
+     * Mask value meaning "not this class".
+     * <p>
+     * Named for the same reason as {@link #MASK_FOREGROUND}: the defect in
+     * issue #29 was these two values colliding, and an invariant between two
+     * named constants can be stated and tested, while one between a constant
+     * and a bare literal cannot.
+     */
+    static final int MASK_BACKGROUND = 0;
+
+    /**
+     * Builds the binary mask for one class: {@link #MASK_FOREGROUND} where the
+     * classification map holds {@code targetClass}, {@link #MASK_BACKGROUND}
+     * everywhere else.
+     *
+     * @param classMap    argmax classification map [height][width]
+     * @param targetClass class index to isolate
+     * @param width       map width
+     * @param height      map height
+     * @return row-major mask of {@code width * height} values
+     */
+    static float[] classMaskValues(int[][] classMap, int targetClass, int width, int height) {
         float[] data = new float[width * height];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                data[y * width + x] = classMap[y][x] == targetClass ? targetClass : 0;
+                data[y * width + x] = classMap[y][x] == targetClass ? MASK_FOREGROUND : MASK_BACKGROUND;
             }
         }
-        return SimpleImages.createFloatImage(data, width, height);
+        return data;
+    }
+
+    /**
+     * Creates a SimpleImage from the classification map for a specific class.
+     * Pixels matching the target class are set to {@link #MASK_FOREGROUND};
+     * others to {@link #MASK_BACKGROUND}.
+     */
+    private SimpleImage createClassImage(int[][] classMap, int targetClass, int width, int height) {
+        return SimpleImages.createFloatImage(classMaskValues(classMap, targetClass, width, height), width, height);
     }
 
     /**
      * Creates a SimpleImage from a boolean foreground mask (already watershed-cut).
-     * Foreground pixels take the class value; everything else is 0, so the ridge
-     * lines removed by the watershed become background and split the traced blob.
+     * Foreground pixels take {@link #MASK_FOREGROUND}, everything else
+     * {@link #MASK_BACKGROUND}, so the ridge lines removed by the watershed
+     * become background and split the traced blob.
      */
-    private SimpleImage createClassImageFromMask(boolean[] mask, int targetClass, int width, int height) {
+    private SimpleImage createClassImageFromMask(boolean[] mask, int width, int height) {
         float[] data = new float[width * height];
         for (int i = 0; i < data.length; i++) {
-            data[i] = mask[i] ? targetClass : 0;
+            data[i] = mask[i] ? MASK_FOREGROUND : MASK_BACKGROUND;
         }
         return SimpleImages.createFloatImage(data, width, height);
     }
