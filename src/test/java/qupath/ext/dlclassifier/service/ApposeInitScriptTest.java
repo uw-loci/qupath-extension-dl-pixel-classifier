@@ -17,6 +17,11 @@ import org.junit.jupiter.api.Test;
  *       are enabled. It repoints the worker's fd 0 / fd 1, so switching it on by
  *       default would change stdio for every user to fix a problem only worker
  *       processes have.</li>
+ *   <li>{@code _DLC_HOST_PID} must carry THIS JVM's PID. The worker cannot
+ *       derive it: its process tree is {@code java -> pixi -> python}, so
+ *       {@code os.getppid()} returns pixi. A wrong value here is a watcher
+ *       that kills a healthy worker, or one that never kills an orphan
+ *       (GitHub issue #30).</li>
  * </ul>
  */
 class ApposeInitScriptTest {
@@ -41,6 +46,67 @@ class ApposeInitScriptTest {
         // to be set before that file's body runs.
         assertThat(script.indexOf("_DLC_PROTOCOL_FD_SEPARATION = True"))
                 .isLessThan(script.indexOf("dlclassifier.appose"));
+    }
+
+    @Test
+    void theHostPidIsThisJvmsOwnPid() throws IOException {
+        String script = ApposeService.getInstance().buildInitScript(false);
+
+        // Assert the IDENTITY, not a literal: the only correct value is the
+        // PID of the process that wrote the script. Anything else -- pixi, the
+        // worker, a stale constant -- points the watcher at the wrong process.
+        assertThat(hostPidIn(script)).hasValue(ProcessHandle.current().pid());
+    }
+
+    @Test
+    void theHostPidIsSetWhicheverWayTheWorkerStarts() throws IOException {
+        // The separation flag is conditional; the host PID is not. A worker
+        // started for a run with DataLoader workers needs the watcher just as
+        // much as one started without.
+        assertThat(hostPidIn(ApposeService.getInstance().buildInitScript(true)))
+                .hasValue(ProcessHandle.current().pid());
+    }
+
+    @Test
+    void theHostPidIsSetBeforeTheInitBodyRuns() throws IOException {
+        String script = ApposeService.getInstance().buildInitScript(false);
+
+        // Read via globals() at import time, so assigning it later would leave
+        // the watcher silently falling back to getppid().
+        assertThat(script.indexOf("_DLC_HOST_PID = ")).isLessThan(script.indexOf("dlclassifier.appose"));
+    }
+
+    @Test
+    void thePythonSideReadsTheHostPidAndStillHasAFallback() throws IOException {
+        // Guards against the PID being plumbed while the Python that consumes
+        // it is edited away, and against the fallback being dropped (which
+        // would leave a hand-run script with no watcher at all).
+        String script = ApposeService.getInstance().buildInitScript(false);
+
+        assertThat(script).contains("globals().get(\"_DLC_HOST_PID\")");
+        assertThat(script).contains("host_pid = os.getppid()");
+    }
+
+    @Test
+    void theExitPathWritesItsReasonToAFileDescriptor() throws IOException {
+        // os._exit() flushes nothing, so a logger call alone can be lost
+        // between emit and death -- which is how issue #30 arrived as
+        // "exit code 1" with no reason attached. The os.write must come
+        // FIRST, because after os._exit there is no "later".
+        String script = ApposeService.getInstance().buildInitScript(false);
+
+        assertThat(script).contains("os.write(2, ");
+        assertThat(script.indexOf("os.write(2, ")).isLessThan(script.indexOf("os._exit(1)"));
+    }
+
+    /** The {@code _DLC_HOST_PID} the script assigns, if it assigns one. */
+    private static java.util.OptionalLong hostPidIn(String script) {
+        return script.lines()
+                .map(String::strip)
+                .filter(line -> line.startsWith("_DLC_HOST_PID = "))
+                .mapToLong(line -> Long.parseLong(
+                        line.substring("_DLC_HOST_PID = ".length()).strip()))
+                .findFirst();
     }
 
     /** True when a line of the script actually assigns the flag. */

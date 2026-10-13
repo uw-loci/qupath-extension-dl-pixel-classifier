@@ -980,6 +980,13 @@ public class ApposeService {
 
     /**
      * Builds the Python init script the Appose worker runs at startup.
+     * <p>
+     * The script is prefixed with {@code _DLC_HOST_PID}, this JVM's own PID,
+     * which the worker's parent watcher polls. The watcher cannot discover it
+     * on its own: the worker's process tree is {@code java -> pixi -> python},
+     * so {@code os.getppid()} returns pixi, a launcher whose lifetime is not
+     * QuPath's. Handing the PID down is what makes "exit when QuPath dies"
+     * mean QuPath.
      *
      * @param separateProtocolStreams move Appose's JSON protocol off fd 0 / fd 1
      *                                so DataLoader worker processes cannot inherit
@@ -991,6 +998,7 @@ public class ApposeService {
         // numpy MUST be imported before the Appose stdin reader thread starts,
         // or it deadlocks on Windows. See numpy#24290 / Appose#23.
         StringBuilder script = new StringBuilder("import numpy\n");
+        script.append("_DLC_HOST_PID = ").append(ProcessHandle.current().pid()).append("\n");
         if (separateProtocolStreams) {
             script.append("_DLC_PROTOCOL_FD_SEPARATION = True\n");
         }
@@ -1378,7 +1386,7 @@ public class ApposeService {
      * </ol>
      */
     /** Extension version. Used for pip URL construction and script generation. */
-    public static final String DL_SERVER_VERSION = "0.9.25";
+    public static final String DL_SERVER_VERSION = "0.9.26";
 
     private static final boolean IS_DEV_BUILD = DL_SERVER_VERSION.contains("-dev");
     private static final String DL_SERVER_PIP_URL;

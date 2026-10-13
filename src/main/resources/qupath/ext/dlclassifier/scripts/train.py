@@ -32,6 +32,15 @@ import logging
 
 logger = logging.getLogger("dlclassifier.appose.train")
 
+# Breadcrumbs. Everything from here to "Training device:" near the bottom of
+# this file used to run without logging a single line -- several hundred lines
+# including a heavy import and the TrainingService constructor. A worker that
+# died in there produced "exit code 1" and an empty stderr, which is how GitHub
+# issue #30 arrived: unreadable, and indistinguishable from a dozen other
+# failures. Each breadcrumb below marks a step that can fail or hang, so the
+# last line in the log names the step rather than the file.
+logger.info("train.py: task entered (pid %d)", os.getpid())
+
 if inference_service is None:
     raise RuntimeError("Services not initialized: " + globals().get("init_error", "unknown"))
 
@@ -69,10 +78,16 @@ try:
 except NameError:
     classifier_name = None
 
-# Import training service (heavier import, done here rather than init)
+# Import training service (heavier import, done here rather than init).
+# This pulls in torch's training stack and is the slowest step before training
+# starts, so it is bracketed: a log that stops at "importing" says the import
+# itself is the problem.
+logger.info("train.py: importing TrainingService")
 from dlclassifier_server.services.training_service import TrainingService
 import dlclassifier_server.services.training_service as _tsm
 import numpy as _np
+
+logger.info("train.py: TrainingService imported")
 
 # Fix: np.frombuffer returns read-only arrays; ensure _load_patch always
 # returns writable arrays so normalization can modify in-place.
@@ -688,7 +703,9 @@ if _dl_workers_pref > 0:
             "(installed pip package may still hardcode num_workers=0)",
             _dl_workers_pref)
 
+logger.info("train.py: constructing TrainingService")
 training_service = TrainingService(gpu_manager=gpu_manager)
+logger.info("train.py: TrainingService ready")
 
 # Redirect model and checkpoint saving to project directory when specified.
 # This calls the original pip package methods (ONNX export, metadata writing, etc.)

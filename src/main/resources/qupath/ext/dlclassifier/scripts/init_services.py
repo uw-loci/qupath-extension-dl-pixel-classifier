@@ -75,7 +75,7 @@ if globals().get("_DLC_PROTOCOL_FD_SEPARATION", False):
 # Both sides MUST be in sync. This version MUST match pyproject.toml and
 # __init__.py exactly. When EITHER side is updated, ALL THREE version
 # locations must be bumped together (see memory/feedback_version_sync.md).
-_REQUIRED_PYTHON_VERSION = "0.9.25"
+_REQUIRED_PYTHON_VERSION = "0.9.26"
 
 
 def _parse_version(v):
@@ -217,7 +217,18 @@ else:
 # --- Parent process watcher ---
 # Safety net: if QuPath is force-killed (Task Manager, kill -9), the JVM
 # shutdown hook never runs, so stdin never closes and this process lives
-# forever. This daemon thread polls the parent PID and exits if it dies.
+# forever. This daemon thread polls the host process and exits if it dies.
+#
+# WATCH THE JVM, NOT os.getppid(). The worker's real process tree is
+# `java -> pixi -> python`, so os.getppid() returns PIXI, a launcher whose
+# lifetime is not QuPath's. Measured 2026-10-12 on Windows: the worker logged
+# parent PID 11284, which Win32_Process reported as pixi.exe, while QuPath was
+# PID 2820. Watching pixi is wrong in both directions -- the worker outlives a
+# force-killed QuPath whose pixi happens to persist, and a worker whose pixi
+# exits on its own is killed although QuPath is alive and still talking to it
+# over the Appose pipes. Java therefore prepends `_DLC_HOST_PID` (see
+# ApposeService.buildInitScript); os.getppid() is only the fallback for an
+# older JAR or a script run by hand.
 
 
 def _get_process_create_time_win32(pid):
@@ -249,12 +260,37 @@ def _get_process_create_time_win32(pid):
         kernel32.CloseHandle(handle)
 
 
-def _parent_alive(pid, expected_create_time=None):
-    """Check if the *original* parent process is still running.
+def _get_process_create_time_linux(pid):
+    """Get process start time (clock ticks since boot) on Linux, or None.
 
-    On Windows, PIDs are recycled quickly -- a different process may
-    reuse the same PID after QuPath dies.  We compare the process
-    creation time to detect recycled PIDs.
+    Field 22 of /proc/<pid>/stat. The comm field (2) may itself contain
+    spaces and parentheses, so split after the last ')'.
+    """
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            data = fh.read().decode("utf-8", "replace")
+        fields = data[data.rindex(")") + 1 :].split()
+        return int(fields[19])  # field 22 overall, 20th after the comm field
+    except Exception:
+        return None
+
+
+def _get_process_create_time(pid):
+    """Process creation time on this platform, or None if unavailable."""
+    if sys.platform == "win32":
+        return _get_process_create_time_win32(pid)
+    if sys.platform.startswith("linux"):
+        return _get_process_create_time_linux(pid)
+    return None
+
+
+def _parent_alive(pid, expected_create_time=None):
+    """Check whether the *original* host process is still running.
+
+    PIDs are recycled -- quickly on Windows, eventually anywhere -- so a
+    process at the same PID is not necessarily the same process. When a
+    creation time was captured at startup, it has to match; a PID that is
+    alive with a different creation time counts as dead.
     """
     if sys.platform == "win32":
         create_time = _get_process_create_time_win32(pid)
@@ -263,47 +299,76 @@ def _parent_alive(pid, expected_create_time=None):
         if expected_create_time is not None and create_time != expected_create_time:
             return False  # PID was recycled -- different process
         return True
-    else:
-        try:
-            os.kill(pid, 0)  # Signal 0 = existence check (Unix only)
-            return True
-        except PermissionError:
-            return True  # Process exists but no permission
-        except OSError:
-            return False  # Process does not exist
+    try:
+        os.kill(pid, 0)  # Signal 0 = existence check (Unix only)
+    except PermissionError:
+        pass  # Process exists but no permission to signal it
+    except OSError:
+        return False  # Process does not exist
+    if expected_create_time is not None:
+        create_time = _get_process_create_time_linux(pid)
+        # Only a *known, different* start time proves recycling; an
+        # unreadable /proc entry must not be read as "the host died".
+        if create_time is not None and create_time != expected_create_time:
+            return False
+    return True
+
+
+def _die(reason):
+    """Write a reason to fd 2 and leave immediately.
+
+    os._exit() runs no atexit handlers and flushes no buffers, so a
+    logger call alone can be lost between emit and process death. An
+    os.write() to fd 2 has already reached the pipe when it returns, so
+    the reason survives -- which matters because "exit code 1, no output"
+    is otherwise indistinguishable from a dozen other failures (GitHub
+    issue #30).
+    """
+    try:
+        os.write(2, ("DLCLASSIFIER WORKER EXIT: " + reason + "\n").encode("utf-8", "replace"))
+    except Exception:
+        pass  # Nothing left to try; still exit.
+    logger.warning("Worker exiting: %s", reason)
+    os._exit(1)
 
 
 def _watch_parent():
-    """Exit if parent process (Java/QuPath) dies."""
-    ppid = os.getppid()
-    if ppid <= 1:
-        return  # No meaningful parent to watch (already orphaned or init)
+    """Exit if the host process (the QuPath JVM) dies."""
+    host_pid = globals().get("_DLC_HOST_PID")
+    watching_jvm = isinstance(host_pid, int) and host_pid > 1
+    if not watching_jvm:
+        # Fallback for an older JAR or a hand-run script: the immediate
+        # parent, which is pixi rather than the JVM. See the banner above.
+        host_pid = os.getppid()
+    if host_pid <= 1:
+        return  # No meaningful host to watch (already orphaned or init)
 
-    # Capture the parent's creation time at startup so we can detect
-    # PID recycling on Windows (where a killed process's PID may be
-    # reused by an unrelated process within seconds).
-    parent_create_time = None
-    if sys.platform == "win32":
-        parent_create_time = _get_process_create_time_win32(ppid)
+    # Capture the host's creation time at startup so a recycled PID is not
+    # mistaken for a live host.
+    host_create_time = _get_process_create_time(host_pid)
 
-    logger.info("Parent process watcher started (parent PID: %d)", ppid)
+    logger.info(
+        "Parent process watcher started (host PID: %d, source: %s, start time: %s)",
+        host_pid,
+        "jvm" if watching_jvm else "getppid",
+        host_create_time if host_create_time is not None else "unavailable",
+    )
     while True:
         time.sleep(1)
         try:
-            # Check 1: parent PID changed (Linux reparents to init/systemd)
-            current_ppid = os.getppid()
-            if current_ppid != ppid:
-                logger.warning(
-                    "Parent process changed (%d -> %d), exiting", ppid, current_ppid
-                )
-                os._exit(1)
-            # Check 2: parent PID no longer exists (or was recycled)
-            if not _parent_alive(ppid, parent_create_time):
-                logger.warning("Parent process %d no longer exists, exiting", ppid)
-                os._exit(1)
+            # Reparenting only means anything when host_pid IS the parent.
+            # Watching the JVM, a changed getppid() just means pixi exited,
+            # which says nothing about whether QuPath is still running.
+            if not watching_jvm and os.getppid() != host_pid:
+                _die("parent process changed (%d -> %d)" % (host_pid, os.getppid()))
+            alive = _parent_alive(host_pid, host_create_time)
         except Exception as e:
-            # Never crash the thread -- log and keep watching
+            # Never crash the thread -- a failed check is not a dead host.
             logger.debug("Parent watcher check error: %s", e)
+            continue
+        if not alive:
+            _die("host process %d is gone (watching %s)"
+                 % (host_pid, "jvm" if watching_jvm else "getppid"))
 
 
 _parent_watcher = threading.Thread(target=_watch_parent, daemon=True)
