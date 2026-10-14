@@ -4,6 +4,7 @@ import javafx.beans.property.*;
 import javafx.collections.ObservableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.service.ApposeGpu;
 import qupath.ext.dlclassifier.service.warnings.InteractionWarningService;
 import qupath.fx.dialogs.Dialogs;
 import qupath.fx.prefs.controlsfx.PropertyItemBuilder;
@@ -505,6 +506,14 @@ public final class DLClassifierPreferences {
                         + "GPU. Switching builds a separate environment and re-downloads "
                         + "several GB. 'Use GPU for Inference' below only has an effect once "
                         + "the GPU environment is installed.")
+                .build());
+
+        items.add(new PropertyItemBuilder<>(ApposeGpu.preferenceProperty(), String.class)
+                .propertyType(PropertyItemBuilder.PropertyType.CHOICE)
+                .choices(ApposeGpu.preferenceChoices())
+                .name("Python environment: " + ApposeGpu.PREFERENCE_NAME)
+                .category(CATEGORY)
+                .description(ApposeGpu.preferenceDescription())
                 .build());
 
         items.add(new PropertyItemBuilder<>(useGPU, Boolean.class)

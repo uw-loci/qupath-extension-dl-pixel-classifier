@@ -2,14 +2,12 @@ package qupath.ext.dlclassifier.service;
 
 import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 import org.apposed.appose.Appose;
 import org.apposed.appose.Environment;
 import org.apposed.appose.Service;
@@ -213,7 +211,7 @@ public class ApposeService {
 
         // Restart Python service
         report(statusCallback, "Restarting Python service...");
-        pythonService = environment.python();
+        pythonService = ApposeGpu.pinned(environment).python();
         pythonService.debug(msg -> {
             try {
                 DebugLine line = condenseDebugLine(msg);
@@ -306,7 +304,7 @@ public class ApposeService {
             // Manifest and lock come from the same variant, so they cannot be
             // paired wrongly (lockResource() is derived from tomlResource()).
             var computeVariant = variant();
-            String pixiToml = loadResource(RESOURCE_BASE + computeVariant.tomlResource());
+            String pixiToml = ApposeSupport.loadResource(RESOURCE_BASE + computeVariant.tomlResource());
 
             // Optionally strip ONNX dependencies to reduce download size.
             // The bundled lock matches the UNMODIFIED manifest, so we only
@@ -317,7 +315,8 @@ public class ApposeService {
                 pixiToml = stripOnnxDependencies(pixiToml);
                 logger.info("ONNX dependencies excluded from environment (lock disabled; will re-resolve)");
             }
-            String pixiLock = useLock ? loadResource(RESOURCE_BASE + computeVariant.lockResource()) : null;
+            String pixiLock =
+                    useLock ? ApposeSupport.loadResource(RESOURCE_BASE + computeVariant.lockResource()) : null;
 
             // ALL Appose operations require the extension classloader as TCCL.
             // Appose and its dependencies (Groovy JSON) use ServiceLoader internally:
@@ -375,7 +374,7 @@ public class ApposeService {
                 report(statusCallback, "Starting Python service...");
 
                 // Create Python service (lazy - subprocess starts on first task)
-                pythonService = environment.python();
+                pythonService = ApposeGpu.pinned(environment).python();
 
                 // Register debug output handler -- log Python stderr at INFO level
                 // so diagnostic messages (device info, training config) are visible
@@ -464,6 +463,7 @@ public class ApposeService {
 
                 // Log version header for provenance tracking
                 String extVersion = GeneralTools.getPackageVersion(ApposeService.class);
+                ApposeGpu.checkWorker(pythonService, "DL Pixel Classifier", logger);
                 logger.info("=== DL Pixel Classifier Environment ===");
                 logger.info("  Extension version: {}", extVersion != null ? extVersion : "dev");
                 logger.info("  QuPath version: {}", GeneralTools.getVersion());
@@ -517,14 +517,14 @@ public class ApposeService {
             // Match failure signatures against the full cause chain -- pixi's
             // BuildException only says "pixi build failed" at the top; the
             // actionable Windows file-lock text lives in a nested cause.
-            String fullMsg = collectCauseMessages(e);
+            String fullMsg = ApposeSupport.collectCauseMessages(e);
             initError = e.getMessage();
             initialized = false;
             logger.error("Failed to initialize Appose: {}", e.getMessage(), e);
-            if (looksLikeWindowsFileLock(fullMsg)) {
+            if (ApposeSupport.looksLikeWindowsFileLock(fullMsg)) {
                 logger.warn(
                         "Pixi env install hit a Windows file lock; manual recovery required\n{}",
-                        windowsFileLockAdvice(ENV_NAME));
+                        ApposeSupport.windowsFileLockAdvice(getEnvironmentPath()));
                 report(statusCallback, "Pixi env install failed: Windows file lock. See recovery steps.");
                 try {
                     qupath.fx.dialogs.Dialogs.showWarningNotification(
@@ -824,36 +824,19 @@ public class ApposeService {
         Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
         try {
             // Tear down the existing worker (close stdin -> clean exit, then kill).
-            if (pythonService != null) {
-                try {
-                    pythonService.close();
-                    long deadline = System.currentTimeMillis() + 3000;
-                    while (pythonService.isAlive() && System.currentTimeMillis() < deadline) {
-                        Thread.sleep(50);
-                    }
-                    if (pythonService.isAlive()) {
-                        pythonService.kill();
-                    }
-                } catch (Exception e) {
-                    logger.warn("Error tearing down stale worker: {}", e.getMessage());
-                    try {
-                        pythonService.kill();
-                    } catch (Exception ignored) {
-                        // best effort
-                    }
-                }
-            }
+            long start = System.nanoTime();
+            ApposeSupport.stopWorker(pythonService, 3000, logger);
             // Recreate the worker subprocess from the already-built environment.
             // The subprocess starts lazily on the next task; init_services.py is
             // queued here so the fresh worker initializes its services first.
-            pythonService = environment.python();
+            pythonService = ApposeGpu.pinned(environment).python();
             pythonService.debug(msg -> {
                 logger.info("[Appose Python] {}", msg);
                 qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(msg);
             });
             String initScript = buildInitScript();
             pythonService.init(initScript);
-            logger.info("Appose worker restarted (fresh Python subprocess)");
+            logger.info("Appose worker restarted in {} ms (fresh Python subprocess)", ApposeSupport.elapsedMs(start));
         } catch (IOException e) {
             throw e;
         } catch (Exception e) {
@@ -922,36 +905,10 @@ public class ApposeService {
      * if the process doesn't exit within 5 seconds.
      */
     public synchronized void shutdown() {
-        if (pythonService != null) {
-            try {
-                logger.info("Shutting down Appose Python service...");
-                pythonService.close(); // closes stdin -> Python gets EOFError
-
-                // Poll up to 5 seconds for graceful exit, then force kill
-                if (pythonService.isAlive()) {
-                    long deadline = System.currentTimeMillis() + 5000;
-                    while (pythonService.isAlive() && System.currentTimeMillis() < deadline) {
-                        try {
-                            Thread.sleep(200);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                    }
-                }
-                if (pythonService.isAlive()) {
-                    logger.warn("Python service did not exit gracefully, force-killing");
-                    pythonService.kill();
-                }
-            } catch (Exception e) {
-                // Last resort: force kill
-                try {
-                    pythonService.kill();
-                } catch (Exception ignored) {
-                    // nothing more we can do
-                }
-                logger.warn("Error during Python service shutdown: {}", e.getMessage());
-            }
+        Service service = pythonService;
+        if (service != null) {
+            logger.info("Shutting down Appose Python service...");
+            ApposeSupport.stopWorker(service, 5000, logger);
             pythonService = null;
         }
         initialized = false;
@@ -1078,31 +1035,9 @@ public class ApposeService {
         Path envPath = getEnvironmentPath();
         if (Files.exists(envPath)) {
             logger.info("Deleting environment directory: {}", envPath);
-            deleteDirectoryRecursively(envPath);
+            ApposeSupport.deleteDirectoryRecursively(envPath);
             logger.info("Environment directory deleted");
         }
-    }
-
-    /**
-     * Recursively deletes a directory and all its contents.
-     */
-    private static void deleteDirectoryRecursively(Path directory) throws IOException {
-        java.nio.file.FileVisitor<Path> visitor = new java.nio.file.SimpleFileVisitor<>() {
-            @Override
-            public java.nio.file.FileVisitResult visitFile(Path file, java.nio.file.attribute.BasicFileAttributes attrs)
-                    throws IOException {
-                Files.delete(file);
-                return java.nio.file.FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public java.nio.file.FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                if (exc != null) throw exc;
-                Files.delete(dir);
-                return java.nio.file.FileVisitResult.CONTINUE;
-            }
-        };
-        Files.walkFileTree(directory, visitor);
     }
 
     /**
@@ -1113,43 +1048,12 @@ public class ApposeService {
      */
     private void registerShutdownHook() {
         if (shutdownHook != null) return;
-        shutdownHook = new Thread(
-                () -> {
-                    logger.info("JVM shutdown hook: cleaning up Python subprocess");
-                    // Don't call shutdown() here (it tries to remove the hook)
-                    Service svc = pythonService;
-                    if (svc != null) {
-                        try {
-                            svc.close();
-                            // Brief wait, then force kill
-                            if (svc.isAlive()) {
-                                Thread.sleep(2000);
-                            }
-                            if (svc.isAlive()) {
-                                svc.kill();
-                            }
-                        } catch (Exception e) {
-                            try {
-                                svc.kill();
-                            } catch (Exception ignored) {
-                            }
-                        }
-                    }
-                },
-                "DLClassifier-ShutdownHook");
-        shutdownHook.setDaemon(false);
-        Runtime.getRuntime().addShutdownHook(shutdownHook);
+        shutdownHook = ApposeSupport.registerShutdownHook("DLClassifier-ShutdownHook", () -> pythonService, logger);
     }
 
     private void removeShutdownHook() {
-        if (shutdownHook != null) {
-            try {
-                Runtime.getRuntime().removeShutdownHook(shutdownHook);
-            } catch (IllegalStateException e) {
-                // JVM is already shutting down -- expected if called from hook
-            }
-            shutdownHook = null;
-        }
+        ApposeSupport.removeShutdownHook(shutdownHook);
+        shutdownHook = null;
     }
 
     /**
@@ -1252,13 +1156,7 @@ public class ApposeService {
      * @throws Exception if the callable throws
      */
     public static <T> T withExtensionClassLoader(java.util.concurrent.Callable<T> callable) throws Exception {
-        ClassLoader original = Thread.currentThread().getContextClassLoader();
-        Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
-        try {
-            return callable.call();
-        } finally {
-            Thread.currentThread().setContextClassLoader(original);
-        }
+        return ApposeSupport.withExtensionClassLoader(callable);
     }
 
     /**
@@ -1269,13 +1167,7 @@ public class ApposeService {
      * @throws Exception if the runnable throws
      */
     public static void runWithExtensionClassLoader(ThrowingRunnable runnable) throws Exception {
-        ClassLoader original = Thread.currentThread().getContextClassLoader();
-        Thread.currentThread().setContextClassLoader(ApposeService.class.getClassLoader());
-        try {
-            runnable.run();
-        } finally {
-            Thread.currentThread().setContextClassLoader(original);
-        }
+        ApposeSupport.runWithExtensionClassLoader(runnable::run);
     }
 
     /**
@@ -1291,50 +1183,6 @@ public class ApposeService {
     /**
      * Sends a status message to the callback, if present.
      */
-    /** Concatenate the message of a throwable and its entire cause chain.
-     *  pixi's BuildException only says "pixi build failed" at the top; the
-     *  actionable "failed to link ... os error 32" text lives in a nested
-     *  cause, so failure-signature detection must see the whole chain. */
-    private static String collectCauseMessages(Throwable t) {
-        StringBuilder sb = new StringBuilder();
-        int guard = 0;
-        for (Throwable c = t; c != null && guard < 20; c = c.getCause(), guard++) {
-            if (c.getMessage() != null) {
-                sb.append(c.getMessage()).append('\n');
-            }
-        }
-        return sb.toString();
-    }
-
-    /** True when the Pixi build failed because Windows held an exclusive lock
-     *  on a file the conda link step needed to replace (canonical signature:
-     *  "failed to link" + "os error 32" / "being used by another process").
-     *  Do NOT auto-wipe -- the blocking process may still be writing. */
-    private static boolean looksLikeWindowsFileLock(String message) {
-        if (message == null) return false;
-        return message.contains("failed to link")
-                && (message.contains("os error 32") || message.contains("being used by another process"));
-    }
-
-    /** Recovery instructions for the Windows file-lock failure mode during the
-     *  Pixi env install. Surfaced to the log; a short notification points here. */
-    private static String windowsFileLockAdvice(String envName) {
-        return "The Python environment could not finish building because another"
-                + " process is holding a file open inside the env directory.\n\n"
-                + "RECOVERY STEPS (Windows):\n"
-                + "  1. Close QuPath completely (File -> Quit).\n"
-                + "  2. Open Task Manager -- end any leftover java.exe or python.exe"
-                + " running under your user.\n"
-                + "  3. In PowerShell:\n"
-                + "       Remove-Item -Recurse -Force \"$env:USERPROFILE\\.local\\share\\appose\\"
-                + envName + "\\.pixi\"\n"
-                + "  4. (If step 3 fails: reboot Windows -- guaranteed to release every file handle.)\n"
-                + "  5. (Optional) Add an antivirus exclusion for"
-                + " %USERPROFILE%\\.local\\share\\appose\\ to prevent repeat occurrences.\n"
-                + "  6. Relaunch QuPath. The env will rebuild from the bundled lock and the"
-                + " link step will succeed.";
-    }
-
     private static void report(Consumer<String> callback, String message) {
         if (callback != null) {
             callback.accept(message);
@@ -1431,7 +1279,7 @@ public class ApposeService {
         boolean frozen = Files.exists(envBase.resolve("pixi.lock"));
 
         // Find pixi binary -- Appose downloads it to ~/.local/share/appose/.pixi/bin/
-        Path pixi = findPixiBinary();
+        Path pixi = ApposeSupport.findPixiBinary();
         if (pixi == null) {
             throw new IOException("Cannot find pixi binary. "
                     + "The Appose environment may not have been set up correctly. "
@@ -1445,9 +1293,9 @@ public class ApposeService {
         logger.info("Running pixi install{} to resolve dependencies...", frozen ? " --frozen" : "");
         report(statusCallback, "Installing Python dependencies (this may take several minutes on first run)...");
         if (frozen) {
-            runPixiCommand(pixi, envBase, manifestPath, "install", "--frozen");
+            ApposeSupport.runPixiCommand(pixi, envBase, manifestPath, null, "install", "--frozen");
         } else {
-            runPixiCommand(pixi, envBase, manifestPath, "install");
+            ApposeSupport.runPixiCommand(pixi, envBase, manifestPath, null, "install");
         }
 
         // Now install dlclassifier-server via "pixi run pip install ..."
@@ -1523,157 +1371,51 @@ public class ApposeService {
     }
 
     /**
-     * Runs a pixi command (e.g. "install") and waits for completion.
-     * Logs all output and throws on non-zero exit code.
-     */
-    private void runPixiCommand(Path pixi, Path workDir, Path manifestPath, String... args) throws IOException {
-        java.util.List<String> command = new java.util.ArrayList<>();
-        command.add(pixi.toString());
-        for (String arg : args) {
-            command.add(arg);
-        }
-        command.add("--manifest-path");
-        command.add(manifestPath.toString());
-
-        logger.info("Running: {}", command);
-        ProcessBuilder pb = new ProcessBuilder(command);
-        pb.directory(workDir.toFile());
-        pb.redirectErrorStream(true);
-        Process process = pb.start();
-
-        StringBuilder output = new StringBuilder();
-        try (BufferedReader reader =
-                new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
-                logger.info("[pixi] {}", line);
-            }
-        }
-
-        int exitCode;
-        try {
-            exitCode = process.waitFor();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("pixi command interrupted", e);
-        }
-
-        if (exitCode != 0) {
-            throw new IOException("pixi " + args[0] + " failed (exit code " + exitCode + "):\n" + output);
-        }
-    }
-
-    /**
-     * Finds the pixi binary. Appose downloads pixi to
-     * {@code ~/.local/share/appose/.pixi/bin/pixi[.exe]}.
-     * Also checks if pixi is available on the system PATH.
-     *
-     * @return path to pixi, or null if not found
-     */
-    private Path findPixiBinary() {
-        // Appose's default install location
-        Path apposeDir = Path.of(System.getProperty("user.home"), ".local", "share", "appose");
-        String pixiName = GeneralTools.isWindows() ? "pixi.exe" : "pixi";
-        Path pixi = apposeDir.resolve(".pixi").resolve("bin").resolve(pixiName);
-        if (Files.isRegularFile(pixi)) return pixi;
-
-        // Check if pixi is on the system PATH
-        try {
-            Process p = new ProcessBuilder(pixiName, "--version")
-                    .redirectErrorStream(true)
-                    .start();
-            int exit = p.waitFor();
-            if (exit == 0) {
-                return Path.of(pixiName); // Available on PATH
-            }
-        } catch (IOException | InterruptedException ignored) {
-            // Not on PATH
-        }
-
-        return null;
-    }
-
-    /**
-     * Sync the on-disk pixi.toml (and, when locking, pixi.lock) with the bundled
-     * versions. When {@code expectedLock} is non-null the lock pins the full
-     * dependency tree and is staged so the install can run --frozen; on change
-     * both files are rewritten and .pixi/ wiped for a clean reinstall, and the
-     * lock is re-staged if a prior wipe removed it. When {@code expectedLock} is
-     * null (ONNX stripped: the bundled lock would not match the manifest) this
-     * falls back to the legacy behavior -- delete pixi.lock so pixi re-resolves.
+     * Stages the bundled pixi.toml (and, when locking, pixi.lock) into the
+     * environment directory. With a lock this is {@link ApposeSupport#syncManifest};
+     * without one (ONNX stripped: the bundled lock would not match the manifest)
+     * the manifest alone is compared, and on a change the lock is deleted so pixi
+     * re-resolves and {@code .pixi/} is wiped for a clean reinstall.
      */
     private void syncManifest(String expectedToml, String expectedLock) {
+        if (expectedLock != null) {
+            ApposeSupport.syncManifest(getEnvironmentPath(), expectedToml, expectedLock, logger);
+            return;
+        }
         try {
             Path envDir = getEnvironmentPath();
             Path pixiTomlFile = envDir.resolve("pixi.toml");
-            Path lockFile = envDir.resolve("pixi.lock");
-
             if (!Files.exists(pixiTomlFile)) {
-                // First-time install. Stage the lock when locking; otherwise
-                // let Appose/pixi create the manifest + resolve.
-                if (expectedLock != null) {
-                    Files.createDirectories(envDir);
-                    Files.writeString(lockFile, expectedLock, StandardCharsets.UTF_8);
-                }
+                return; // first install: Appose writes the manifest and pixi resolves
+            }
+            String existing = Files.readString(pixiTomlFile, StandardCharsets.UTF_8)
+                    .replace("\r\n", "\n")
+                    .strip();
+            if (existing.equals(expectedToml.replace("\r\n", "\n").strip())) {
                 return;
             }
-            String existingContent = Files.readString(pixiTomlFile, StandardCharsets.UTF_8);
-            // Normalize line endings for comparison
-            String normalizedExisting = existingContent.replace("\r\n", "\n").strip();
-            String normalizedExpected = expectedToml.replace("\r\n", "\n").strip();
-            String onLock = Files.exists(lockFile)
-                    ? Files.readString(lockFile, StandardCharsets.UTF_8)
-                            .replace("\r\n", "\n")
-                            .strip()
-                    : "";
-            String exLock =
-                    expectedLock != null ? expectedLock.replace("\r\n", "\n").strip() : "";
-            boolean tomlSame = normalizedExisting.equals(normalizedExpected);
-            boolean lockSame = expectedLock == null || onLock.equals(exLock);
-            if (tomlSame && lockSame) {
-                // Unchanged -- ensure the lock is present for --frozen.
-                if (expectedLock != null && !Files.exists(lockFile)) {
-                    Files.writeString(lockFile, expectedLock, StandardCharsets.UTF_8);
-                }
-                return; // No sync needed
-            }
-            logger.info("pixi manifest/lock changed - updating and forcing environment rebuild");
+            logger.info("pixi manifest changed (no lock for this variant) - updating and forcing a rebuild");
             Files.writeString(pixiTomlFile, expectedToml, StandardCharsets.UTF_8);
-            if (expectedLock != null) {
-                // Stage the bundled lock so the rebuild installs --frozen from it.
-                Files.writeString(lockFile, expectedLock, StandardCharsets.UTF_8);
-            } else {
-                // No lock for this manifest variant -- delete so pixi re-resolves.
-                Files.deleteIfExists(lockFile);
-            }
-            // Delete .pixi/ so Appose doesn't skip the build.
-            // On Windows, files inside .pixi/ may be locked by OS caching even
-            // after QuPath restarts, preventing deletion. Try rename-then-delete
-            // as a fallback since Windows allows renaming locked directories.
+            Files.deleteIfExists(envDir.resolve("pixi.lock"));
             Path pixiDir = envDir.resolve(".pixi");
             if (Files.isDirectory(pixiDir)) {
                 try {
-                    deleteDirectoryRecursively(pixiDir);
+                    ApposeSupport.deleteDirectoryRecursively(pixiDir);
                 } catch (IOException e) {
-                    // Rename as fallback -- Windows often allows renaming locked dirs
                     Path renamed = envDir.resolve(".pixi_old_" + System.currentTimeMillis());
                     try {
                         Files.move(pixiDir, renamed);
                         logger.info("Could not delete .pixi/ (locked files), renamed to {}", renamed.getFileName());
                     } catch (IOException e2) {
                         logger.warn(
-                                "Could not delete or rename .pixi/ -- "
-                                        + "environment may not rebuild automatically. "
-                                        + "Use Utilities > Rebuild DL Environment to force a rebuild. "
-                                        + "Error: {}",
+                                "Could not delete or rename .pixi/ -- use Utilities > Rebuild DL Environment "
+                                        + "to force a rebuild. Error: {}",
                                 e2.getMessage());
                     }
                 }
             }
-            logger.info("Environment sync complete - next build will install from the bundled lock or re-resolve");
         } catch (IOException e) {
-            logger.warn("Failed to sync pixi manifest/lock (will attempt build anyway): {}", e.getMessage());
+            logger.warn("Failed to sync pixi manifest (will attempt build anyway): {}", e.getMessage());
         }
     }
 
@@ -1693,21 +1435,7 @@ public class ApposeService {
      * @throws IOException if the script is not found
      */
     String loadScript(String scriptFileName) throws IOException {
-        return loadResource(SCRIPTS_BASE + scriptFileName);
-    }
-
-    /**
-     * Loads a text resource from the JAR.
-     */
-    private static String loadResource(String resourcePath) throws IOException {
-        try (InputStream is = ApposeService.class.getClassLoader().getResourceAsStream(resourcePath)) {
-            if (is == null) {
-                throw new IOException("Resource not found: " + resourcePath);
-            }
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
-                return reader.lines().collect(Collectors.joining("\n"));
-            }
-        }
+        return ApposeSupport.loadResource(SCRIPTS_BASE + scriptFileName);
     }
 
     /**

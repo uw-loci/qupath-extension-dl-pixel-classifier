@@ -1859,28 +1859,15 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 IOException lastError = null;
 
                 for (int attempt = 0; attempt < MAX_THREAD_DEATH_RETRIES; attempt++) {
-                    // Create shared memory NDArray for input tile (fresh per attempt)
-                    NDArray.Shape shape =
-                            new NDArray.Shape(NDArray.Shape.Order.C_ORDER, tileHeight, tileWidth, numChannels);
-                    NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
+                    // Shared-memory (H, W, C) float32 input tile, fresh per attempt.
+                    // uint8 values are kept in [0, 255] (not divided by 255) because
+                    // normalization expects raw pixel values matching training stats.
+                    NDArray inputNd = "uint8".equals(dtype)
+                            ? ApposeArrays.float32FromUint8Bytes(rawTileBytes, tileHeight, tileWidth, numChannels)
+                            : ApposeArrays.float32FromLittleEndianBytes(
+                                    rawTileBytes, tileHeight, tileWidth, numChannels);
 
                     try {
-                        // Copy raw bytes into shared memory, converting dtype if needed.
-                        // uint8 values are kept in [0, 255] range (not divided by 255)
-                        // because normalization expects raw pixel values matching training stats.
-                        FloatBuffer fbuf =
-                                inputNd.buffer().order(ByteOrder.nativeOrder()).asFloatBuffer();
-                        if ("uint8".equals(dtype)) {
-                            for (byte b : rawTileBytes) {
-                                fbuf.put((float) (b & 0xFF));
-                            }
-                        } else {
-                            // float32: copy raw bytes directly
-                            FloatBuffer srcBuf = ByteBuffer.wrap(rawTileBytes)
-                                    .order(ByteOrder.LITTLE_ENDIAN)
-                                    .asFloatBuffer();
-                            fbuf.put(srcBuf);
-                        }
 
                         // Build input config dict
                         Map<String, Object> inputConfig = buildInputConfig(channelConfig);

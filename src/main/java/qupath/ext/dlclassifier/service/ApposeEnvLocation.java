@@ -12,26 +12,21 @@ import qupath.fx.dialogs.Dialogs;
  * Where an Appose environment is built, and what happens to the old one when
  * that changes.
  *
- * <h2>DUPLICATED ACROSS THE APPOSE EXTENSIONS -- change all five together</h2>
+ * <h2>COPIED BETWEEN REPOS -- keep the copies identical</h2>
  *
- * The same file lives in:
- * <ul>
- *   <li>{@code qupath-extension-cell-analysis-tools}</li>
- *   <li>{@code qupath-extension-cellAPpose}</li>
- *   <li>{@code qupath-extension-fiber-analysis}</li>
- *   <li>{@code qupath-extension-ppm}</li>
- * </ul>
- * differing only in the package and the preference prefix. There is no shared
- * library yet; the intent to build one is recorded in
- * {@code claude-reports/TODO_LIST.md} ("shared Appose env-location library").
+ * The same file lives in {@code qupath-extension-cell-analysis-tools},
+ * {@code -dl-pixel-classifier}, {@code -cellAPpose}, {@code -ppm} and
+ * {@code -fiber-analysis}, differing only in the package line and the
+ * {@link #TITLE} constant. {@code tools/check_appose_copies.py} compares the
+ * copies by meaning, {@code --sync --from <repo>} pushes a change to the
+ * others, and the pre-push hook refuses a push that leaves them apart. Record
+ * why each change was made in {@code claude-reports/design/appose/SHARED_COPIES.md}.
  *
- * <p>Until then this is a copy, and copies drift. The project has already paid
- * for that once: the bug reporter lives as three separate copies, and a single
- * path-scrubber defect leaked usernames from all three at the same time. This
- * code decides where multi-gigabyte installs land and, in
- * {@link #promptCleanup}, what gets deleted -- a divergence here removes the
- * wrong directory on somebody's cluster. If you change anything below, change
- * it in all five.
+ * <p>Copies drift, and the project has paid for that: the bug reporter lives as
+ * three separate copies, and a single path-scrubber defect leaked usernames
+ * from all three at once. This code decides where multi-gigabyte installs land
+ * and, in {@link #promptCleanup}, what gets deleted -- a divergence here
+ * removes the wrong directory on somebody's cluster.
  *
  * <h2>Why the location is configurable</h2>
  *
