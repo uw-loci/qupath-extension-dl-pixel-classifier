@@ -203,6 +203,8 @@ The extension has **two separate Python environments**. The setup wizard asks wh
 
 Each variant installs as a separate environment (~2-4 GB) under its own name, so both can be installed at once. The first switch to a variant downloads it; switching back to one you already have does not. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for GPU detection issues or if your GPU is not being used.
 
+**Choosing a GPU on a multi-GPU machine.** The Python worker runs on one NVIDIA card. The preference **Edit > Preferences > Extensions > DL Pixel Classifier > "Python environment: GPU device (all Appose extensions)"** chooses which one. `auto` (the default) picks the card with the most free memory when the first worker starts; a number is the index `nvidia-smi` shows. The setting is shared with the other Appose extensions and applies to workers started after the change (restart QuPath to apply it to a running worker). If QuPath was started by a cluster scheduler that sets `CUDA_VISIBLE_DEVICES`, `auto` keeps that allocation. The cards found and the one chosen are written to the QuPath log when a worker starts.
+
 ## Supported Image Types
 
 | Image Type | Channels | Bit Depth | Strategy |
