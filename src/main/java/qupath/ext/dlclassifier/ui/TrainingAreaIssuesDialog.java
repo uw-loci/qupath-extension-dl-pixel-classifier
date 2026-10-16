@@ -1039,7 +1039,7 @@ public class TrainingAreaIssuesDialog {
      */
     private void saveCurrentSession() {
         if (classifierMetadata == null || modelDir == null) {
-            Dialogs.showErrorMessage("Save Session", "Sessions require a classifier and model directory.");
+            UserErrors.show(logger, "Save Session", "Sessions require a classifier and model directory.");
             return;
         }
         // Save the CURRENT (filtered+sorted) or FULL result set? Use the full
@@ -1088,7 +1088,7 @@ public class TrainingAreaIssuesDialog {
             applyLoadedSession(loaded);
         } catch (Exception e) {
             logger.error("Failed to load session {}", info.dir(), e);
-            Dialogs.showErrorMessage("Load Session", "Failed to load session: " + e.getMessage());
+            UserErrors.show(logger, "Load Session", "Failed to load session: " + e.getMessage());
         }
     }
 
@@ -1140,7 +1140,7 @@ public class TrainingAreaIssuesDialog {
      */
     public static boolean openSavedSessionFromDisk(ClassifierMetadata metadata, Path modelDir) {
         if (metadata == null || modelDir == null) {
-            Dialogs.showErrorMessage("Load Session", "Classifier metadata and model directory are required.");
+            UserErrors.show(logger, "Load Session", "Classifier metadata and model directory are required.");
             return false;
         }
         List<TrainingIssuesSessionStore.SessionInfo> sessions =
@@ -1190,7 +1190,7 @@ public class TrainingAreaIssuesDialog {
             return true;
         } catch (Exception e) {
             logger.error("Failed to load session {}", info.dir(), e);
-            Dialogs.showErrorMessage("Load Session", "Failed to load session: " + e.getMessage());
+            UserErrors.show(logger, "Load Session", "Failed to load session: " + e.getMessage());
             return false;
         }
     }

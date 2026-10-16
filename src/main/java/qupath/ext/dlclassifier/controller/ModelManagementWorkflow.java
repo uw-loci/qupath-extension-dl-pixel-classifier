@@ -32,6 +32,7 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
+import qupath.ext.dlclassifier.ui.UserErrors;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 
@@ -624,7 +625,7 @@ public class ModelManagementWorkflow {
 
         } catch (Exception e) {
             logger.error("Failed to load classifiers", e);
-            Dialogs.showErrorMessage("Error", "Failed to load classifiers: " + e.getMessage());
+            UserErrors.show(logger, "Error", "Failed to load classifiers: " + e.getMessage());
         }
     }
 
@@ -779,14 +780,14 @@ public class ModelManagementWorkflow {
 
         Optional<Path> modelPathOpt = modelManager.getModelPath(selected.getId());
         if (modelPathOpt.isEmpty()) {
-            Dialogs.showErrorMessage("Export Error", "Could not find model files for this classifier.");
+            UserErrors.show(logger, "Export Error", "Could not find model files for this classifier.");
             return;
         }
 
         Path classifierDir = modelPathOpt.get().getParent();
         Path metadataFile = classifierDir.resolve("metadata.json");
         if (!Files.exists(metadataFile)) {
-            Dialogs.showErrorMessage("Export Error", "metadata.json not found for this classifier.");
+            UserErrors.show(logger, "Export Error", "metadata.json not found for this classifier.");
             return;
         }
 
@@ -808,7 +809,7 @@ public class ModelManagementWorkflow {
                     "Export Complete", "Classifier descriptor exported to:\n" + saveFile.getName());
         } catch (IOException e) {
             logger.error("Failed to export classifier descriptor", e);
-            Dialogs.showErrorMessage("Export Error", "Failed to export classifier descriptor: " + e.getMessage());
+            UserErrors.show(logger, "Export Error", "Failed to export classifier descriptor: " + e.getMessage());
         }
     }
 
@@ -823,7 +824,7 @@ public class ModelManagementWorkflow {
 
         Optional<Path> modelPathOpt = modelManager.getModelPath(selected.getId());
         if (modelPathOpt.isEmpty()) {
-            Dialogs.showErrorMessage("Export Error", "Could not find model files for this classifier.");
+            UserErrors.show(logger, "Export Error", "Could not find model files for this classifier.");
             return;
         }
 
@@ -862,7 +863,7 @@ public class ModelManagementWorkflow {
 
         } catch (IOException e) {
             logger.error("Failed to export classifier", e);
-            Dialogs.showErrorMessage("Export Error", "Failed to export classifier: " + e.getMessage());
+            UserErrors.show(logger, "Export Error", "Failed to export classifier: " + e.getMessage());
         }
     }
 
@@ -905,7 +906,7 @@ public class ModelManagementWorkflow {
             // Validate: metadata.json must exist
             Path metadataFile = tempDir.resolve("metadata.json");
             if (!Files.exists(metadataFile)) {
-                Dialogs.showErrorMessage("Import Error", "Invalid classifier archive: metadata.json not found.");
+                UserErrors.show(logger, "Import Error", "Invalid classifier archive: metadata.json not found.");
                 return;
             }
 
@@ -920,7 +921,7 @@ public class ModelManagementWorkflow {
 
         } catch (IOException e) {
             logger.error("Failed to import classifier", e);
-            Dialogs.showErrorMessage("Import Error", "Failed to import classifier: " + e.getMessage());
+            UserErrors.show(logger, "Import Error", "Failed to import classifier: " + e.getMessage());
         } finally {
             // Clean up temp directory
             if (tempDir != null) {

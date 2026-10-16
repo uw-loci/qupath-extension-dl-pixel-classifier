@@ -822,8 +822,8 @@ public class TrainingDialog {
                     try {
                         java.nio.file.Files.deleteIfExists(orphan.file());
                     } catch (java.io.IOException ex) {
-                        Dialogs.showErrorNotification(
-                                "DL Pixel Classifier", "Could not delete checkpoint: " + ex.getMessage());
+                        UserErrors.notify(
+                                logger, "DL Pixel Classifier", "Could not delete checkpoint: " + ex.getMessage());
                     }
                     refreshCheckpointRecoveryBanner();
                 }
@@ -7129,7 +7129,8 @@ public class TrainingDialog {
                     && getSelectedWeightInitStrategy() == ClassifierHandler.WeightInitStrategy.MAE_ENCODER) {
                 int selectedChannels = channelConfig.getNumChannels();
                 if (selectedChannels != maeEncoderInputChannels) {
-                    Dialogs.showErrorMessage(
+                    UserErrors.show(
+                            logger,
                             "Channel Mismatch",
                             String.format(
                                     "The MAE encoder was pretrained with %d channels "

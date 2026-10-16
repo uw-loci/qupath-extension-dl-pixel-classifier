@@ -39,6 +39,7 @@ import qupath.ext.dlclassifier.service.ood.OutOfDistributionPreflight;
 import qupath.ext.dlclassifier.ui.DialogOwner;
 import qupath.ext.dlclassifier.ui.InferenceDialog;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
+import qupath.ext.dlclassifier.ui.UserErrors;
 import qupath.ext.dlclassifier.utilities.ChannelSelection;
 import qupath.ext.dlclassifier.utilities.ImageCompat;
 import qupath.ext.dlclassifier.utilities.OutputGenerator;
@@ -1731,6 +1732,7 @@ public class InferenceWorkflow {
             alert.setHeaderText(null);
             alert.setContentText(message);
             DialogOwner.own(alert);
+            UserErrors.logAlert(logger, alert);
             alert.showAndWait();
         });
     }

@@ -54,6 +54,7 @@ import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
 import qupath.ext.dlclassifier.ui.TrainingAreaIssuesDialog;
 import qupath.ext.dlclassifier.ui.TrainingDialog;
+import qupath.ext.dlclassifier.ui.UserErrors;
 import qupath.ext.dlclassifier.utilities.AnnotationExtractor;
 import qupath.ext.dlclassifier.utilities.ImageClassCoverageSplitter;
 import qupath.fx.dialogs.Dialogs;
@@ -739,7 +740,8 @@ public class TrainingWorkflow {
 
         // Prevent concurrent training across QuPath instances
         if (!acquireTrainingLock()) {
-            Dialogs.showErrorMessage(
+            UserErrors.show(
+                    logger,
                     "Training In Progress",
                     "Another QuPath instance is already training a DL classifier.\n\n"
                             + "Only one training session can run at a time.\n"
@@ -3581,6 +3583,7 @@ public class TrainingWorkflow {
             alert.setHeaderText(null);
             alert.setContentText(message);
             DialogOwner.own(alert);
+            UserErrors.logAlert(logger, alert);
             alert.showAndWait();
         });
     }

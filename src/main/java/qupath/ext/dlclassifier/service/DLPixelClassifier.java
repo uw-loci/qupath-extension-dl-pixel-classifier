@@ -22,6 +22,7 @@ import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.service.ClassifierClient.PixelInferenceResult;
 import qupath.ext.dlclassifier.service.ood.OutOfDistributionPreflight;
 import qupath.ext.dlclassifier.ui.DialogOwner;
+import qupath.ext.dlclassifier.ui.UserErrors;
 import qupath.ext.dlclassifier.utilities.ImageCompat;
 import qupath.ext.dlclassifier.utilities.TileEncoder;
 import qupath.lib.classifiers.pixel.PixelClassifier;
@@ -716,6 +717,7 @@ public class DLPixelClassifier implements PixelClassifier {
                             + lastErrorMessage + "\n\nCheck the classifier and the Python environment, "
                             + "then apply it again.");
                     DialogOwner.own(alert);
+                    UserErrors.logAlert(logger, alert);
                     alert.show();
                 });
             }

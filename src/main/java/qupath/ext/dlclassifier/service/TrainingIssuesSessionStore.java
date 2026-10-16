@@ -23,6 +23,7 @@ import javafx.stage.Window;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
+import qupath.ext.dlclassifier.ui.UserErrors;
 import qupath.fx.dialogs.Dialogs;
 
 /**
@@ -120,8 +121,8 @@ public final class TrainingIssuesSessionStore {
             int patchSize,
             List<ClassifierClient.TileEvaluationResult> results) {
         if (metadata == null || modelDir == null || results == null || results.isEmpty()) {
-            Dialogs.showErrorMessage(
-                    "Save Session", "Cannot save: missing classifier metadata, model directory, or results.");
+            UserErrors.show(
+                    logger, "Save Session", "Cannot save: missing classifier metadata, model directory, or results.");
             return null;
         }
 
@@ -158,7 +159,7 @@ public final class TrainingIssuesSessionStore {
             return dir;
         } catch (Exception e) {
             logger.error("Failed to save Training Area Issues session", e);
-            Dialogs.showErrorMessage("Save Session", "Failed to save session: " + e.getMessage());
+            UserErrors.show(logger, "Save Session", "Failed to save session: " + e.getMessage());
             return null;
         }
     }

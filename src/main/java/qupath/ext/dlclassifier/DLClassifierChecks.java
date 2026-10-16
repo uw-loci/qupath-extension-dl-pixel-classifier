@@ -7,7 +7,7 @@ import qupath.ext.dlclassifier.preferences.DLClassifierPreferences;
 import qupath.ext.dlclassifier.service.ApposeClassifierBackend;
 import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
-import qupath.fx.dialogs.Dialogs;
+import qupath.ext.dlclassifier.ui.UserErrors;
 
 /**
  * Validation utilities for the DL Pixel Classifier extension.
@@ -125,7 +125,8 @@ public final class DLClassifierChecks {
         String warning = ApposeClassifierBackend.getVersionWarning();
         if (warning != null && !warning.isEmpty()) {
             versionWarningShown = true;
-            Platform.runLater(() -> Dialogs.showErrorNotification(
+            Platform.runLater(() -> UserErrors.notify(
+                    logger,
                     "DL Pixel Classifier - Update Required",
                     "Python environment is out of date.\n"
                             + "Go to DL Pixel Classifier > Utilities > Rebuild DL Environment to update.\n"

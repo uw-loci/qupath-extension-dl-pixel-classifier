@@ -53,6 +53,7 @@ import qupath.ext.dlclassifier.ui.SSLPretrainingDialog;
 import qupath.ext.dlclassifier.ui.SetupEnvironmentDialog;
 import qupath.ext.dlclassifier.ui.TooltipHelper;
 import qupath.ext.dlclassifier.ui.TrainingAreaIssuesDialog;
+import qupath.ext.dlclassifier.ui.UserErrors;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner.OrphanedCheckpoint;
 import qupath.fx.dialogs.Dialogs;
@@ -421,7 +422,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                         logger.error("Auto-rebuild completed but health check still fails");
                                         Platform.runLater(() -> {
                                             environmentReady.set(false);
-                                            Dialogs.showErrorNotification(
+                                            UserErrors.notify(
+                                                    logger,
                                                     EXTENSION_NAME,
                                                     "Auto-rebuild failed. Use Utilities >\n"
                                                             + "Rebuild DL Environment manually.");
@@ -431,7 +433,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                     logger.error("Auto-rebuild failed: {}", rebuildEx.getMessage());
                                     Platform.runLater(() -> {
                                         environmentReady.set(false);
-                                        Dialogs.showErrorNotification(
+                                        UserErrors.notify(
+                                                logger,
                                                 EXTENSION_NAME,
                                                 "Auto-rebuild failed: " + rebuildEx.getMessage()
                                                         + "\nUse Utilities > Rebuild DL Environment manually.");
@@ -445,7 +448,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                 logger.error("Environment version mismatch: {}", message);
                                 Platform.runLater(() -> {
                                     environmentReady.set(false);
-                                    Dialogs.showErrorNotification(
+                                    UserErrors.notify(
+                                            logger,
                                             EXTENSION_NAME,
                                             "Python package version mismatch.\n" + "Go to Extensions > "
                                                     + EXTENSION_NAME
@@ -639,16 +643,18 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                                 if (result != null) {
                                     Dialogs.showInfoNotification(EXTENSION_NAME, result);
                                 } else {
-                                    Dialogs.showErrorNotification(
-                                            EXTENSION_NAME, "Failed to clear GPU memory. Is the backend available?");
+                                    UserErrors.notify(
+                                            logger,
+                                            EXTENSION_NAME,
+                                            "Failed to clear GPU memory. Is the backend available?");
                                 }
                             });
                         } catch (Exception ex) {
                             logger.error("GPU memory clear failed", ex);
                             Platform.runLater(() -> {
                                 freeGpuRunning.set(false);
-                                Dialogs.showErrorNotification(
-                                        EXTENSION_NAME, "Error clearing GPU memory: " + ex.getMessage());
+                                UserErrors.notify(
+                                        logger, EXTENSION_NAME, "Error clearing GPU memory: " + ex.getMessage());
                             });
                         }
                     },
@@ -687,7 +693,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             if (message != null) {
                                 Dialogs.showInfoNotification(EXTENSION_NAME, message);
                             } else {
-                                Dialogs.showErrorNotification(
+                                UserErrors.notify(
+                                        logger,
                                         EXTENSION_NAME,
                                         "Could not download the pretrained encoders. "
                                                 + "Check the network and the Python Console.");
@@ -874,7 +881,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
      */
     public static void recoverFromCheckpoint(QuPathGUI qupath, Path checkpointPath) {
         if (checkpointPath == null || !Files.isRegularFile(checkpointPath)) {
-            Dialogs.showErrorNotification(EXTENSION_NAME, "Checkpoint file not found: " + checkpointPath);
+            UserErrors.notify(logger, EXTENSION_NAME, "Checkpoint file not found: " + checkpointPath);
             return;
         }
 
@@ -948,8 +955,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         });
                     } catch (Exception ex) {
                         logger.error("Failed to recover from checkpoint", ex);
-                        Platform.runLater(() -> Dialogs.showErrorNotification(
-                                EXTENSION_NAME, "Failed to recover model: " + ex.getMessage()));
+                        Platform.runLater(() -> UserErrors.notify(
+                                logger, EXTENSION_NAME, "Failed to recover model: " + ex.getMessage()));
                     }
                 },
                 "DLClassifier-RecoverCheckpoint");
@@ -1271,7 +1278,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             Path modelDir =
                     manager.getModelPath(metadata.getId()).map(Path::getParent).orElse(null);
             if (modelDir == null) {
-                Dialogs.showErrorMessage(
+                UserErrors.show(
+                        logger,
                         EXTENSION_NAME,
                         "Could not locate model directory for classifier '" + metadata.getName() + "'.");
                 return;
@@ -1279,7 +1287,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             TrainingAreaIssuesDialog.openSavedSessionFromDisk(metadata, modelDir);
         } catch (Exception e) {
             logger.error("Failed to open saved Training Area Issues session", e);
-            Dialogs.showErrorMessage(EXTENSION_NAME, "Failed to open saved session: " + e.getMessage());
+            UserErrors.show(logger, EXTENSION_NAME, "Failed to open saved session: " + e.getMessage());
         }
     }
 
@@ -1466,7 +1474,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         } catch (Exception e) {
             logger.error("Storage cleanup failed", e);
-            Dialogs.showErrorMessage("Clean Up Storage", "Cleanup failed: " + e.getMessage());
+            UserErrors.show(logger, "Clean Up Storage", "Cleanup failed: " + e.getMessage());
         }
     }
 
@@ -1819,7 +1827,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             ApposeService.getInstance().deleteEnvironment();
         } catch (Exception e) {
             logger.error("Failed to delete environment", e);
-            Dialogs.showErrorNotification(EXTENSION_NAME, "Failed to delete environment: " + e.getMessage());
+            UserErrors.notify(logger, EXTENSION_NAME, "Failed to delete environment: " + e.getMessage());
             return;
         }
 
@@ -1843,12 +1851,14 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             } else {
                                 String versionWarning = ApposeClassifierBackend.getVersionWarning();
                                 if (versionWarning != null && !versionWarning.isEmpty()) {
-                                    Dialogs.showErrorNotification(
+                                    UserErrors.notify(
+                                            logger,
                                             EXTENSION_NAME,
                                             "Python environment is out of date.\n"
                                                     + "Go to Utilities > Rebuild DL Environment to update.");
                                 } else {
-                                    Dialogs.showErrorNotification(
+                                    UserErrors.notify(
+                                            logger,
                                             EXTENSION_NAME,
                                             "Cannot connect to classification backend.\n\n"
                                                     + "If this is the first launch, the Python environment\n"
@@ -1873,7 +1883,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         try {
             Files.createDirectories(config.outputDir());
         } catch (IOException e) {
-            Dialogs.showErrorNotification(EXTENSION_NAME, "Cannot create output directory: " + e.getMessage());
+            UserErrors.notify(logger, EXTENSION_NAME, "Cannot create output directory: " + e.getMessage());
             return;
         }
 
@@ -1892,7 +1902,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                     projectTempTileDir = Files.createTempDirectory("mae-patches-");
                 }
             } catch (IOException e) {
-                Dialogs.showErrorNotification(EXTENSION_NAME, "Cannot create temp tile directory: " + e.getMessage());
+                UserErrors.notify(logger, EXTENSION_NAME, "Cannot create temp tile directory: " + e.getMessage());
                 return;
             }
         } else {
@@ -1902,7 +1912,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         // Get Appose backend (MAE pretraining is Appose-only)
         ClassifierBackend backend = BackendFactory.getBackend();
         if (!(backend instanceof ApposeClassifierBackend apposeBackend)) {
-            Dialogs.showErrorNotification(EXTENSION_NAME, "MAE pretraining requires the Appose backend.");
+            UserErrors.notify(logger, EXTENSION_NAME, "MAE pretraining requires the Appose backend.");
             return;
         }
 
@@ -2021,8 +2031,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             logger.error("MAE pretraining failed", e);
                             progress.log("ERROR: " + e.getMessage());
                             progress.complete(false, "MAE pretraining failed: " + e.getMessage());
-                            Platform.runLater(() -> Dialogs.showErrorNotification(
-                                    EXTENSION_NAME, "MAE pretraining failed: " + e.getMessage()));
+                            Platform.runLater(() -> UserErrors.notify(
+                                    logger, EXTENSION_NAME, "MAE pretraining failed: " + e.getMessage()));
                         }
                     } finally {
                         OverlayService.getInstance().resumeAfterTraining();
@@ -2160,12 +2170,14 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             } else {
                                 String versionWarning = ApposeClassifierBackend.getVersionWarning();
                                 if (versionWarning != null && !versionWarning.isEmpty()) {
-                                    Dialogs.showErrorNotification(
+                                    UserErrors.notify(
+                                            logger,
                                             EXTENSION_NAME,
                                             "Python environment is out of date.\n"
                                                     + "Go to Utilities > Rebuild DL Environment to update.");
                                 } else {
-                                    Dialogs.showErrorNotification(
+                                    UserErrors.notify(
+                                            logger,
                                             EXTENSION_NAME,
                                             "Cannot connect to classification backend.\n\n"
                                                     + "If this is the first launch, the Python environment\n"
@@ -2186,7 +2198,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         try {
             Files.createDirectories(config.outputDir());
         } catch (IOException e) {
-            Dialogs.showErrorNotification(EXTENSION_NAME, "Cannot create output directory: " + e.getMessage());
+            UserErrors.notify(logger, EXTENSION_NAME, "Cannot create output directory: " + e.getMessage());
             return;
         }
 
@@ -2204,7 +2216,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                     projectTempTileDir = Files.createTempDirectory("ssl-patches-");
                 }
             } catch (IOException e) {
-                Dialogs.showErrorNotification(EXTENSION_NAME, "Cannot create temp tile directory: " + e.getMessage());
+                UserErrors.notify(logger, EXTENSION_NAME, "Cannot create temp tile directory: " + e.getMessage());
                 return;
             }
         } else {
@@ -2213,7 +2225,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         ClassifierBackend backend = BackendFactory.getBackend();
         if (!(backend instanceof ApposeClassifierBackend apposeBackend)) {
-            Dialogs.showErrorNotification(EXTENSION_NAME, "SSL pretraining requires the Appose backend.");
+            UserErrors.notify(logger, EXTENSION_NAME, "SSL pretraining requires the Appose backend.");
             return;
         }
 
@@ -2360,8 +2372,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             logger.error("SSL pretraining failed", e);
                             progress.log("ERROR: " + e.getMessage());
                             progress.complete(false, "SSL pretraining failed: " + e.getMessage());
-                            Platform.runLater(() -> Dialogs.showErrorNotification(
-                                    EXTENSION_NAME, "SSL pretraining failed: " + e.getMessage()));
+                            Platform.runLater(() -> UserErrors.notify(
+                                    logger, EXTENSION_NAME, "SSL pretraining failed: " + e.getMessage()));
                         }
                     } finally {
                         OverlayService.getInstance().resumeAfterTraining();
@@ -2463,20 +2475,20 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
         ClassifierBackend backend = BackendFactory.getBackend();
         if (!(backend instanceof ApposeClassifierBackend apposeBackend)) {
-            Dialogs.showErrorNotification(EXTENSION_NAME, "AdaBN requires the Appose backend.");
+            UserErrors.notify(logger, EXTENSION_NAME, "AdaBN requires the Appose backend.");
             return;
         }
 
         ModelManager modelManager = new ModelManager();
         ClassifierMetadata classifier = modelManager.loadClassifier(adaConfig.classifierId());
         if (classifier == null) {
-            Dialogs.showErrorNotification(
-                    EXTENSION_NAME, "Could not load classifier metadata for " + adaConfig.classifierId());
+            UserErrors.notify(
+                    logger, EXTENSION_NAME, "Could not load classifier metadata for " + adaConfig.classifierId());
             return;
         }
         java.util.Optional<Path> modelFile = modelManager.getModelPath(adaConfig.classifierId());
         if (modelFile.isEmpty()) {
-            Dialogs.showErrorNotification(EXTENSION_NAME, "Could not locate model files for " + classifier.getName());
+            UserErrors.notify(logger, EXTENSION_NAME, "Could not locate model files for " + classifier.getName());
             return;
         }
         Path sourceModelDir = modelFile.get().getParent();
@@ -2486,7 +2498,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 ? classifier.getTrainingTileSizePx()
                 : classifier.getInputWidth();
         if (tileSize <= 0) {
-            Dialogs.showErrorNotification(EXTENSION_NAME, "Classifier metadata has no usable tile size.");
+            UserErrors.notify(logger, EXTENSION_NAME, "Classifier metadata has no usable tile size.");
             return;
         }
 
@@ -2530,7 +2542,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 tempTileDir = Files.createTempDirectory("adabn-tiles-");
             }
         } catch (IOException ex) {
-            Dialogs.showErrorNotification(EXTENSION_NAME, "Cannot create temp tile directory: " + ex.getMessage());
+            UserErrors.notify(logger, EXTENSION_NAME, "Cannot create temp tile directory: " + ex.getMessage());
             return;
         }
 
@@ -2615,8 +2627,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         logger.info("AdaBN saved to {}", savedPath);
                     } catch (Exception ex) {
                         logger.error("AdaBN calibration failed", ex);
-                        Platform.runLater(() ->
-                                Dialogs.showErrorNotification(EXTENSION_NAME, "AdaBN failed: " + ex.getMessage()));
+                        Platform.runLater(
+                                () -> UserErrors.notify(logger, EXTENSION_NAME, "AdaBN failed: " + ex.getMessage()));
                     } finally {
                         try {
                             deleteRecursive(tempTileDir);
