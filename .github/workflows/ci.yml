@@ -60,4 +60,8 @@ jobs:
       # same way a screenshot can. This needs no imaging stack -- it only reads
       # the spec and greps the sources.
       - name: Check workflow-map labels against the source
+        # always(): the screenshot-freshness step above is chronically red on
+        # accumulated figure drift, and without this the label check never runs
+        # at all -- it reported "skipped" on the commit that introduced it.
+        if: always()
         run: python3 tools/render_workflow_map.py --check
