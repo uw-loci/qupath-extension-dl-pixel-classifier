@@ -15,6 +15,7 @@ This file tracks the relationship between documentation screenshots and the Java
 | Screenshot | Java Source File(s) | Last Verified | Status |
 |------------|--------------------|---------------|--------|
 | `menu-dl-pixel-classifier.png` | `SetupDLClassifier.java` | 2026-09-09 | OK |
+| `workflow-map.png` | drawn from `workflow-map.spec` -- not a screenshot, so this check skips it; `tools/render_workflow_map.py --check` verifies its labels instead, in CI | 2026-10-16 | OK |
 | `train-dialog-configure-classifier.png` | `ui/TrainingDialog.java` | 2026-07-22 | OK |
 | `train-dialog-tiles-resolution-preview.png` | `ui/TrainingDialog.java` | 2026-07-22 | OK |
 | `train-dialog-transfer-learning-layers.png` | `ui/TrainingDialog.java`, `ui/LayerFreezePanel.java` | 2026-07-22 | OK |

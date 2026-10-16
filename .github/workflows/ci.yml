@@ -55,3 +55,9 @@ jobs:
 
       - name: Check documentation screenshots freshness
         run: bash tools/check-doc-images.sh --ci
+
+      # The workflow map is drawn from a spec, so its labels can go stale the
+      # same way a screenshot can. This needs no imaging stack -- it only reads
+      # the spec and greps the sources.
+      - name: Check workflow-map labels against the source
+        run: python3 tools/render_workflow_map.py --check

@@ -2,6 +2,14 @@
 
 Get from zero to your first trained pixel classifier in about 10 minutes.
 
+![Map of the extension's entry and exit points: three starting situations (unlabeled images, a few annotations, an existing classifier) feeding the Train DL Pixel Classifier dialog's five weight-initialization choices, then a trained classifier and the three Apply output types, with a separate amber route from an existing classifier through Calibrate model to current image straight to Apply without retraining](docs/images/workflow-map.png)
+
+*Five ways into training, one route that skips it, and three ways out. Rendered from
+[`docs/images/workflow-map.spec`](docs/images/workflow-map.spec) by
+`tools/render_workflow_map.py` -- edit the spec, not the PNG.*
+
+This guide walks the most common route through that map: a few annotations, **Use pretrained backbone weights**, then **Apply DL Pixel Classifier...**. The other routes are described in the [Training Guide](docs/TRAINING_GUIDE.md) and the [Domain Adaptation Guide](docs/DOMAIN_ADAPTATION_GUIDE.md).
+
 ---
 
 ## Prerequisites
