@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -620,37 +621,47 @@ public class DLPixelClassifier implements PixelClassifier {
 
             // Multi-pass averaging: run inference at additional offsets and
             // average the probability maps to eliminate tile boundary artifacts.
+            //
+            // Each shifted pass is trusted ONLY where this tile overlaps the
+            // shifted tile's own stride (its center crop). Everywhere else this
+            // tile lies in the shifted tile's halo, where the model has little
+            // or no context -- exactly the margin center-crop exists to throw
+            // away. Averaging those pixels in as well (the earlier behaviour)
+            // let two context-starved passes outvote two good ones; on a
+            // two-class tissue model the 2-2 tie went to class 0, and the
+            // overlay showed background stripes on the tile grid across solid
+            // tissue. Every pixel is now divided by the passes that covered it.
             if (inferenceConfig.isMultiPassAveraging() && strideW > 0 && strideH > 0) {
                 int halfStride = Math.max(32, strideW / 2);
                 int numClasses = strideProbMap[0][0].length;
                 // Offsets: shift by half-stride in X, Y, and both (2x2 grid = 4 passes total)
                 int[][] offsets = {{halfStride, 0}, {0, halfStride}, {halfStride, halfStride}};
-                int passCount = 1; // already have the primary pass
+                int[][] coverage = new int[strideH][strideW];
+                for (int[] row : coverage) {
+                    Arrays.fill(row, 1); // the primary pass covers every pixel
+                }
                 for (int[] off : offsets) {
                     try {
-                        float[][][] extraPass = runInferenceAtOffset(request, server, channelCfg, off[0], off[1]);
-                        if (extraPass != null && extraPass.length == strideH && extraPass[0].length == strideW) {
-                            // Accumulate into strideProbMap
-                            for (int y = 0; y < strideH; y++) {
-                                for (int x = 0; x < strideW; x++) {
-                                    for (int c = 0; c < numClasses; c++) {
-                                        strideProbMap[y][x][c] += extraPass[y][x][c];
-                                    }
+                        ShiftedPass pass = runInferenceAtOffset(request, server, channelCfg, off[0], off[1]);
+                        if (pass == null) continue;
+                        for (int y = pass.y0(); y < pass.y1(); y++) {
+                            for (int x = pass.x0(); x < pass.x1(); x++) {
+                                for (int c = 0; c < numClasses; c++) {
+                                    strideProbMap[y][x][c] += pass.probMap()[y][x][c];
                                 }
+                                coverage[y][x]++;
                             }
-                            passCount++;
                         }
                     } catch (IOException ex) {
                         logger.debug("Multi-pass offset ({},{}) failed: {}", off[0], off[1], ex.getMessage());
                     }
                 }
-                // Average
-                if (passCount > 1) {
-                    float invCount = 1.0f / passCount;
-                    for (int y = 0; y < strideH; y++) {
-                        for (int x = 0; x < strideW; x++) {
+                for (int y = 0; y < strideH; y++) {
+                    for (int x = 0; x < strideW; x++) {
+                        if (coverage[y][x] > 1) {
+                            float inv = 1.0f / coverage[y][x];
                             for (int c = 0; c < numClasses; c++) {
-                                strideProbMap[y][x][c] *= invCount;
+                                strideProbMap[y][x][c] *= inv;
                             }
                         }
                     }
@@ -1069,9 +1080,10 @@ public class DLPixelClassifier implements PixelClassifier {
      * @param channelCfg      channel config with normalization stats
      * @param offsetX         pixel offset in X (at model resolution)
      * @param offsetY         pixel offset in Y (at model resolution)
-     * @return stride-sized probability map for the original request's region, or null on failure
+     * @return the pass, with the rectangle of the original stride it may be
+     *     trusted on, or null on failure or when that rectangle is empty
      */
-    private float[][][] runInferenceAtOffset(
+    private ShiftedPass runInferenceAtOffset(
             RegionRequest originalRequest,
             ImageServer<BufferedImage> server,
             ChannelConfiguration channelCfg,
@@ -1187,28 +1199,64 @@ public class DLPixelClassifier implements PixelClassifier {
         int shiftedExpX = Math.max(0, shifted.getX() - padFullRes);
         int shiftedExpY = Math.max(0, shifted.getY() - padFullRes);
 
-        // Position of the original request within the shifted expanded tile
+        // Positions, within the shifted expanded tile, of the original request
+        // and of the shifted request's own stride (its trustworthy center)
         int origInShiftedX = (int) ((originalRequest.getX() - shiftedExpX) / ds);
         int origInShiftedY = (int) ((originalRequest.getY() - shiftedExpY) / ds);
+        int shiftedInShiftedX = (int) ((shifted.getX() - shiftedExpX) / ds);
+        int shiftedInShiftedY = (int) ((shifted.getY() - shiftedExpY) / ds);
         int strideW = (int) (originalRequest.getWidth() / ds);
         int strideH = (int) (originalRequest.getHeight() / ds);
 
-        // Bounds check
-        if (origInShiftedX < 0
-                || origInShiftedY < 0
-                || origInShiftedX + strideW > probMap[0].length
-                || origInShiftedY + strideH > probMap.length) {
-            return null; // Original region not fully covered
+        int[] xs = trustedSpan(origInShiftedX, shiftedInShiftedX, strideW, probMap[0].length);
+        int[] ys = trustedSpan(origInShiftedY, shiftedInShiftedY, strideH, probMap.length);
+        if (xs == null || ys == null) {
+            return null;
         }
 
         int nClasses = probMap[0][0].length;
         float[][][] cropped = new float[strideH][strideW][nClasses];
-        for (int y = 0; y < strideH; y++) {
-            for (int x = 0; x < strideW; x++) {
+        for (int y = ys[0]; y < ys[1]; y++) {
+            for (int x = xs[0]; x < xs[1]; x++) {
                 System.arraycopy(probMap[y + origInShiftedY][x + origInShiftedX], 0, cropped[y][x], 0, nClasses);
             }
         }
-        return cropped;
+        return new ShiftedPass(cropped, xs[0], xs[1], ys[0], ys[1]);
+    }
+
+    /**
+     * One multi-pass inference, mapped onto the original tile.
+     *
+     * @param probMap stride-sized map; zero outside the trusted rectangle
+     * @param x0      first trusted column, inclusive
+     * @param x1      last trusted column, exclusive
+     * @param y0      first trusted row, inclusive
+     * @param y1      last trusted row, exclusive
+     */
+    record ShiftedPass(float[][][] probMap, int x0, int x1, int y0, int y1) {}
+
+    /**
+     * The span of the original tile, along one axis, on which a shifted pass
+     * can be trusted: where the original stride overlaps the shifted tile's
+     * own stride, and the map actually has pixels.
+     * <p>
+     * Everything outside that span is the shifted tile's halo. The model sees
+     * little or no image beyond it, which is why center-crop discards it.
+     *
+     * @param origOffset    where the original stride starts in the shifted map
+     * @param shiftedOffset where the shifted stride starts in the shifted map
+     * @param stride        stride length (both tiles share it)
+     * @param mapLength     length of the shifted map along this axis
+     * @return {start, end} in ORIGINAL-tile coordinates, end exclusive, or
+     *     null when the span is empty
+     */
+    static int[] trustedSpan(int origOffset, int shiftedOffset, int stride, int mapLength) {
+        int lo = Math.max(Math.max(origOffset, shiftedOffset), 0);
+        int hi = Math.min(Math.min(origOffset + stride, shiftedOffset + stride), mapLength);
+        if (hi <= lo) {
+            return null;
+        }
+        return new int[] {lo - origOffset, hi - origOffset};
     }
 
     /**
