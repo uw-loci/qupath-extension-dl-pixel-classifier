@@ -279,6 +279,35 @@ The following optimizations are applied automatically, no configuration needed:
 - **LR Finder**: When using the One Cycle scheduler on a new training run (not resuming from checkpoint), an automatic learning rate range test runs before training to find the optimal max learning rate. The suggested LR is logged and used as the OneCycleLR max_lr.
 - **BF16 auto-detection**: On Ampere+ GPUs (RTX 3000 series and newer), training and inference automatically use BF16 mixed precision instead of FP16. BF16 has a larger dynamic range and does not require gradient scaling, improving stability.
 
+### Training HUD: see what a change did
+
+Click **Training HUD** in the dialog's button row to open a small instrument panel beside the
+dialog. Change any setting and the panel shows what that change did, without you having to set
+it back to compare:
+
+- **LAST CHANGE** names what you changed, for example `Resolution 1x -> 8x`.
+- Every gauge the change moved keeps a faint mark where it was and gets a chip with the size of
+  the move (`▼ ×9 faster`). **Blue** means better for you, **orange** means worse. Gauges it did
+  not move stay pale yellow and step back.
+- The highlight stays until your next change, so you can look away and come back.
+- **Pin baseline** compares every later change against the settings you have now, rather than
+  against the previous edit.
+
+The gauges are **relative**. They tell you which way and by how much a run moves, not how many
+minutes it will take: that depends on your machine. The memory bars show the share of your GPU
+and of free RAM, with the point where the GPU gets tight and where the in-memory cache's `auto`
+mode stops caching (50% of free RAM) marked on them.
+
+**Time per epoch and learning steps sit side by side on purpose.** A coarser resolution makes
+each epoch faster only because there are fewer patches to learn from: the panel shows time per
+epoch in blue and learning steps in orange, and both are true. A configuration that is fast
+because it is starved is the one that cannot learn.
+
+Two things it will not do. Time cannot be compared across architectures or encoders (the panel
+shows `?` rather than guess). And patch counts are estimated from your annotations before any
+pixel is read, so they run a little high; the exact numbers appear in the training log after
+export.
+
 ## Step 7: Select Channels and Classes
 
 ### Channel Configuration

@@ -45,9 +45,15 @@ import qupath.ext.dlclassifier.service.BackendFactory;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ClassifierClient;
 import qupath.ext.dlclassifier.service.ModelManager;
+import qupath.ext.dlclassifier.ui.hud.ChangeTracker;
+import qupath.ext.dlclassifier.ui.hud.HudInputs;
+import qupath.ext.dlclassifier.ui.hud.TrainingHudView;
+import qupath.ext.dlclassifier.ui.hud.TrainingHudWindow;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner.OrphanedCheckpoint;
 import qupath.ext.dlclassifier.utilities.ImageClassCoverageSplitter;
+import qupath.ext.dlclassifier.utilities.PatchCountEstimator;
+import qupath.ext.dlclassifier.utilities.PatchSampler;
 import qupath.ext.dlclassifier.utilities.VramEstimator;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
@@ -434,7 +440,9 @@ public class TrainingDialog {
 
         // Pre-training tile/time estimate
         private Label tileEstimateLabel;
-        private double cachedTotalAnnotationArea = 0;
+        // Annotation geometry of the images classes were loaded from, so the
+        // patch count can be recomputed by the exporter's own sampler
+        private List<HudImage> hudImages = List.of();
         private int lastLoadedClassCount = 0;
         private int lastLoadedImageCount = 0;
 
@@ -504,6 +512,9 @@ public class TrainingDialog {
                     contextPreviewManager = null;
                     contextPreviewStage = null;
                 }
+                if (hudWindow != null) {
+                    hudWindow.hide();
+                }
                 if (activeDialog == dialog) {
                     activeDialog = null;
                 }
@@ -553,11 +564,22 @@ public class TrainingDialog {
                             + "per-image train/val roles are not touched.");
             loadProfileButton.setOnAction(e -> loadProfileFromFile(loadProfileButton));
 
+            hudToggle = new ToggleButton("Training HUD");
+            TooltipHelper.install(
+                    hudToggle,
+                    "Open a live instrument panel beside this dialog.\n"
+                            + "Change any option and it shows what that change did:\n"
+                            + "blue where it helps you, orange where it costs you.\n"
+                            + "Speed is always shown beside learning steps, because\n"
+                            + "a run can be fast only because it is learning less.");
+            hudToggle.selectedProperty().addListener((obs, was, on) -> setHudVisible(on));
+
             Region spacer = new Region();
             HBox.setHgrow(spacer, Priority.ALWAYS);
             HBox buttonBar = new HBox(
                     8,
                     copyScriptButton,
+                    hudToggle,
                     saveProfileButton,
                     loadProfileButton,
                     resetDefaultsButton,
@@ -612,6 +634,7 @@ public class TrainingDialog {
             TitledPane lossSection = createLossSection();
             TitledPane performanceSection = createPerformanceSection();
             TitledPane augmentationSection = createAugmentationSection();
+            wireHudInputListeners();
 
             gatedSections.addAll(List.of(
                     basicInfoSection,
@@ -2380,10 +2403,12 @@ public class TrainingDialog {
                             updateWholeImageInfoLabel();
                             updateValidationSplitSpinnerState();
                             updateBasicSplitStatusLabel();
+                            hudInputsChanged();
                         });
                         item.splitRole.addListener((obs, old, newVal) -> {
                             updateValidationSplitSpinnerState();
                             updateBasicSplitStatusLabel();
+                            hudInputsChanged();
                             // Any manual override clears the auto-distribute
                             // highlight; auto-distribute itself runs inside
                             // its own guard so it doesn't trip this.
@@ -5720,10 +5745,14 @@ public class TrainingDialog {
 
                 // Collect pixel sizes from all selected images for spatial info display
                 Set<Double> pixelSizes = new LinkedHashSet<>();
+                // Annotation geometry per image, so patch counts can be
+                // recomputed live by the exporter's own sampler
+                List<HudImage> captured = new ArrayList<>();
 
                 for (ImageSelectionItem selItem : selectedItems) {
                     try {
                         ImageData<BufferedImage> data = selItem.entry.readImageData();
+                        List<PatchCountEstimator.ClassedRoi> rois = new ArrayList<>();
 
                         // Keep the first image's data for channel initialization
                         if (firstImageData == null) {
@@ -5748,6 +5777,7 @@ public class TrainingDialog {
                             PathClass pathClass = annotation.getPathClass();
                             if (pathClass != null && !pathClass.isDerivedClass()) {
                                 classMap.putIfAbsent(pathClass.getName(), pathClass);
+                                rois.add(new PatchCountEstimator.ClassedRoi(pathClass.getName(), annotation.getROI()));
 
                                 // Estimate effective pixel coverage:
                                 // - Line/polyline ROIs have getArea()=0, so use
@@ -5765,6 +5795,13 @@ public class TrainingDialog {
                                 classAreas.merge(pathClass.getName(), coverage, Double::sum);
                             }
                         }
+                        captured.add(new HudImage(
+                                selItem,
+                                new PatchCountEstimator.ImageAnnotations(
+                                        selItem.entry.getImageName(),
+                                        data.getServer().getWidth(),
+                                        data.getServer().getHeight(),
+                                        rois)));
 
                         // Close server for all images except the first
                         // (ChannelSelectionPanel stores currentServer for lazy bit depth lookup)
@@ -5785,6 +5822,7 @@ public class TrainingDialog {
                 final Map<String, Double> finalClassAreas = classAreas;
                 final Set<Double> finalPixelSizes = new LinkedHashSet<>(pixelSizes);
                 final boolean finalHasLineAnnotations = foundLineAnnotations;
+                final List<HudImage> finalCaptured = List.copyOf(captured);
 
                 Platform.runLater(() -> {
                     // Track whether selected images contain line annotations
@@ -5833,18 +5871,16 @@ public class TrainingDialog {
                         classItem.selected().addListener((obs, old, newVal) -> {
                             refreshPieChart();
                             updateValidation();
+                            hudInputsChanged();
                         });
                         classListView.getItems().add(classItem);
                     }
 
-                    // Compute tile estimate from annotation areas
-                    double totalArea = finalClassAreas.values().stream()
-                            .mapToDouble(d -> d)
-                            .sum();
-                    cachedTotalAnnotationArea = totalArea;
+                    hudImages = finalCaptured;
                     lastLoadedClassCount = finalClassMap.size();
                     lastLoadedImageCount = selectedItems.size();
                     updateTileEstimateLabel(finalClassMap.size(), selectedItems.size());
+                    hudDataLoaded();
 
                     refreshPieChart();
 
@@ -5888,7 +5924,7 @@ public class TrainingDialog {
 
         /** Updates the tile estimate label shown after classes are loaded. */
         private void updateTileEstimateLabel(int classCount, int imageCount) {
-            if (tileEstimateLabel == null || cachedTotalAnnotationArea <= 0) return;
+            if (tileEstimateLabel == null || hudImages.isEmpty()) return;
             int est = estimateTileCount();
             StringBuilder sb = new StringBuilder();
             sb.append(String.format(
@@ -5928,30 +5964,11 @@ public class TrainingDialog {
             } catch (Exception ignored) {
                 // Pre-selection: fall back to RGB 8-bit defaults
             }
-            // AnnotationExtractor.savePatch exports as uint8 TIFF only when
-            // numBands <= 4 AND dataType == TYPE_BYTE; otherwise float32 .raw
-            // at 4 bytes per channel per pixel.
-            int bytesPerPixel = (chs <= 4 && bitDepth == 8) ? 1 : 4;
             int ctxScale = contextScaleCombo != null ? parseContextScale(contextScaleCombo.getValue()) : 1;
-            boolean hasContext = ctxScale > 1;
-            long perImage = (long) tile * tile * chs * bytesPerPixel;
-            if (hasContext) perImage *= 2L;
-            // Masks are always int indexed PNGs on disk but cached as uint8
-            // in RAM (class index fits in a byte for <=256 classes).
-            long perMask = (long) tile * tile;
-            long totalBytes = (long) tileEst * (perImage + perMask);
+            long totalBytes = PatchCountEstimator.cacheBytes(tileEst, tile, chs, bitDepth, ctxScale > 1);
             double estGb = totalBytes / 1e9;
 
-            long availableBytes = -1L;
-            try {
-                java.lang.management.OperatingSystemMXBean osBean =
-                        java.lang.management.ManagementFactory.getOperatingSystemMXBean();
-                if (osBean instanceof com.sun.management.OperatingSystemMXBean sun) {
-                    availableBytes = sun.getFreeMemorySize();
-                }
-            } catch (Throwable ignored) {
-                // com.sun.* unavailable on some JVMs
-            }
+            long availableBytes = freeRamBytes();
 
             if (availableBytes <= 0) {
                 sb.append(String.format(" In-memory cache: ~%.2f GB (mode=%s).", estGb, mode));
@@ -5962,12 +5979,24 @@ public class TrainingDialog {
 
             String color = "#2a7a2a"; // green
             String verdict;
+            // Thresholds are the training script's own, shared with the HUD.
+            // This label said 25% for the auto ceiling after train.py moved to
+            // 50%, so it warned of a declined cache that would in fact load.
+            double autoPct = PatchCountEstimator.AUTO_CACHE_FRACTION * 100;
+            double boundedPct = PatchCountEstimator.BOUNDED_CACHE_FRACTION * 100;
             if ("auto".equals(mode)) {
-                if (totalBytes < 0.25 * availableBytes) {
+                if (totalBytes < PatchCountEstimator.AUTO_CACHE_FRACTION * availableBytes) {
                     verdict = "auto -> will enable";
                 } else {
-                    verdict = "auto -> will decline (>25% of free); set to 'on' to force";
+                    verdict = String.format("auto -> will decline (>=%.0f%% of free); set to 'on' to force", autoPct);
                     color = "#cc6600"; // orange
+                }
+            } else if ("bounded".equals(mode)) {
+                if (totalBytes <= PatchCountEstimator.BOUNDED_CACHE_FRACTION * availableBytes) {
+                    verdict = "bounded -> whole dataset fits";
+                } else {
+                    verdict = String.format("bounded -> caches %.0f%% of free RAM and trains on a subset", boundedPct);
+                    color = "#cc6600";
                 }
             } else { // "on"
                 if (totalBytes > availableBytes) {
@@ -5984,15 +6013,194 @@ public class TrainingDialog {
             tileEstimateLabel.setStyle("-fx-text-fill: " + color + "; -fx-font-size: 11px;");
         }
 
-        /** Estimates tile count from cached annotation area and current settings. */
+        // ---- Training HUD ------------------------------------------------
+        // See claude-reports/design/2026-10-19_dl-classifier-training-hud.md.
+        // The HUD reads a snapshot of these controls; it never writes them.
+
+        /** How long the inputs must be still before an edit counts as one change. */
+        private static final long HUD_SETTLE_MS = 350;
+
+        private ChangeTracker hudTracker;
+        private TrainingHudWindow hudWindow;
+        private ToggleButton hudToggle;
+        // Free RAM is read once per data load, not per snapshot: it drifts by
+        // itself, and a gauge that twitches while nobody touched anything
+        // would teach the user to ignore it.
+        private long hudFreeRamBytes = -1L;
+
+        /** Registers one listener per control the HUD reads. Call once all sections exist. */
+        private void wireHudInputListeners() {
+            List<javafx.beans.Observable> inputs = new ArrayList<>(List.of(
+                    architectureCombo.valueProperty(),
+                    backboneCombo.valueProperty(),
+                    tileSizeSpinner.valueProperty(),
+                    overlapSpinner.valueProperty(),
+                    wholeImageCheck.selectedProperty(),
+                    downsampleCombo.valueProperty(),
+                    contextScaleCombo.valueProperty(),
+                    batchSizeSpinner.valueProperty(),
+                    gradientAccumulationSpinner.valueProperty(),
+                    epochsSpinner.valueProperty(),
+                    mixedPrecisionCheck.selectedProperty(),
+                    validationSplitSpinner.valueProperty(),
+                    earlyStoppingEnabledCheck.selectedProperty()));
+            if (inMemoryDatasetCombo != null) {
+                inputs.add(inMemoryDatasetCombo.valueProperty());
+            }
+            for (javafx.beans.Observable o : inputs) {
+                o.addListener(obs -> hudInputsChanged());
+            }
+        }
+
+        /**
+         * Opens or closes the HUD. The tracker exists only while the panel is
+         * open, so a closed HUD costs nothing on each edit; reopening starts
+         * at rest rather than replaying a change made while nobody watched.
+         */
+        private void setHudVisible(boolean visible) {
+            if (!visible) {
+                hudTracker = null;
+                if (hudWindow != null && hudWindow.isShowing()) {
+                    hudWindow.hide();
+                }
+                return;
+            }
+            if (hudWindow == null) {
+                hudWindow = new TrainingHudWindow(dialog);
+                hudWindow.setOnHidden(() -> hudToggle.setSelected(false));
+            }
+            TrainingHudView view = hudWindow.view();
+            ChangeTracker.Scheduler fxClock = (task, delayMs) -> {
+                PauseTransition wait = new PauseTransition(Duration.millis(delayMs));
+                wait.setOnFinished(e -> task.run());
+                wait.play();
+                return wait::stop;
+            };
+            if (hudFreeRamBytes <= 0) {
+                hudFreeRamBytes = freeRamBytes();
+            }
+            hudTracker = new ChangeTracker(
+                    this::snapshotHudInputs, fxClock, HUD_SETTLE_MS, TrainingHudView.MIN_POSITION_STEP, view::show);
+            ChangeTracker tracker = hudTracker;
+            view.setOnPin(tracker::pin);
+            view.setOnUnpin(tracker::unpin);
+            hudWindow.show();
+        }
+
+        private void hudInputsChanged() {
+            if (hudTracker != null) {
+                hudTracker.inputsChanged();
+            }
+        }
+
+        /** Classes (re)loaded or the GPU size arrived: every gauge may move, and the user did not move it. */
+        private void hudDataLoaded() {
+            hudFreeRamBytes = freeRamBytes();
+            if (hudTracker != null) {
+                hudTracker.reset();
+            }
+        }
+
+        /** The dialog's current settings, as the HUD reads them. */
+        private HudInputs snapshotHudInputs() {
+            PatchCountEstimator.Counts counts = estimatePatchCounts();
+            int channels = 3;
+            int bitDepth = 8;
+            try {
+                if (channelPanel != null && channelPanel.isValid()) {
+                    ChannelConfiguration cc = channelPanel.getChannelConfiguration();
+                    channels = Math.max(1, cc.getNumChannels());
+                    bitDepth = cc.getBitDepth();
+                }
+            } catch (Exception e) {
+                // Pre-selection: the same RGB 8-bit default the cache estimate uses
+            }
+            String cacheMode = inMemoryDatasetCombo != null && inMemoryDatasetCombo.getValue() != null
+                    ? inMemoryDatasetCombo.getValue()
+                    : DLClassifierPreferences.getDefaultInMemoryDataset();
+            return new HudInputs(
+                    architectureCombo.getValue(),
+                    backboneCombo.getValue(),
+                    tileSizeSpinner.getValue(),
+                    overlapSpinner.getValue(),
+                    wholeImageCheck.isSelected(),
+                    parseDownsample(downsampleCombo.getValue()),
+                    parseContextScale(contextScaleCombo.getValue()),
+                    batchSizeSpinner.getValue(),
+                    gradientAccumulationSpinner.getValue(),
+                    epochsSpinner.getValue(),
+                    mixedPrecisionCheck.isSelected(),
+                    validationSplitSpinner.getValue(),
+                    earlyStoppingEnabledCheck.isSelected(),
+                    cacheMode,
+                    channels,
+                    bitDepth,
+                    hudDataSelectionKey(),
+                    !hudImages.isEmpty(),
+                    counts.train(),
+                    counts.val(),
+                    gpuTotalMb,
+                    hudFreeRamBytes);
+        }
+
+        /** Selected classes and selected images with their roles, as one comparable string. */
+        private String hudDataSelectionKey() {
+            String classes = classListView.getItems().stream()
+                    .filter(c -> c.selected().get())
+                    .map(ClassItem::name)
+                    .collect(Collectors.joining(","));
+            String images = hudImages.stream()
+                    .filter(h -> h.item().selected.get())
+                    .map(h -> h.item().entry.getImageName() + ":"
+                            + h.item().splitRole.get())
+                    .collect(Collectors.joining(","));
+            return classes + "|" + images;
+        }
+
+        /** Candidate patches for the current settings; see {@link #estimatePatchCounts()}. */
         private int estimateTileCount() {
-            if (cachedTotalAnnotationArea <= 0) return 0;
-            double tileSize = tileSizeSpinner.getValue();
-            double downsample = parseDownsample(downsampleCombo.getValue());
-            double coveragePerTile = tileSize * downsample;
-            // PatchSampler uses ~50% overlap between patches
-            double stepSize = coveragePerTile * 0.75;
-            return Math.max(1, (int) (cachedTotalAnnotationArea / (stepSize * stepSize)));
+            return estimatePatchCounts().total();
+        }
+
+        /**
+         * Candidate train and validation patches for the current settings,
+         * from the exporter's own {@link PatchSampler} run on the loaded
+         * annotation geometry. Moves with tile size, resolution, overlap,
+         * class selection, image roles and the validation split exactly as
+         * the export will; reads high by the patches the export's coverage
+         * filters later drop.
+         */
+        private PatchCountEstimator.Counts estimatePatchCounts() {
+            if (hudImages.isEmpty() || tileSizeSpinner == null || downsampleCombo == null) {
+                return new PatchCountEstimator.Counts(0, 0);
+            }
+            int tile = tileSizeSpinner.getValue();
+            int overlapPct = overlapSpinner != null ? overlapSpinner.getValue() : 0;
+            // Same rounding buildTrainingConfig uses, so the sampler
+            // sees the overlap the export will.
+            int overlapPx = (int) Math.round(tile * overlapPct / 100.0);
+            Set<String> classes = classListView.getItems().stream()
+                    .filter(c -> c.selected().get())
+                    .map(ClassItem::name)
+                    .collect(Collectors.toSet());
+            List<PatchCountEstimator.RoledImage> images = hudImages.stream()
+                    .filter(h -> h.item().selected.get())
+                    .map(h -> new PatchCountEstimator.RoledImage(
+                            h.annotations(), estimatorRole(h.item().splitRole.get())))
+                    .toList();
+            double split = validationSplitSpinner != null ? validationSplitSpinner.getValue() / 100.0 : 0.2;
+            boolean whole = wholeImageCheck != null && wholeImageCheck.isSelected();
+            return PatchCountEstimator.count(
+                    images, classes, tile, overlapPx, parseDownsample(downsampleCombo.getValue()), split, whole);
+        }
+
+        private static PatchCountEstimator.Role estimatorRole(SplitRole role) {
+            if (role == null) return PatchCountEstimator.Role.BOTH;
+            return switch (role) {
+                case TRAIN_ONLY -> PatchCountEstimator.Role.TRAIN;
+                case VAL_ONLY -> PatchCountEstimator.Role.VAL;
+                case BOTH -> PatchCountEstimator.Role.BOTH;
+            };
         }
 
         /** Visual indicator when images change after classes were already loaded. */
@@ -8602,6 +8810,26 @@ public class TrainingDialog {
     /**
      * Represents a class item in the list.
      */
+    /** One image classes were loaded from: its list row (for the live role) and its annotation geometry. */
+    private record HudImage(ImageSelectionItem item, PatchCountEstimator.ImageAnnotations annotations) {}
+
+    /**
+     * Free system RAM as the JVM sees it, or -1 when it cannot say.
+     * The training script queries the OS itself; this is what the dialog can see.
+     */
+    static long freeRamBytes() {
+        try {
+            java.lang.management.OperatingSystemMXBean osBean =
+                    java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+            if (osBean instanceof com.sun.management.OperatingSystemMXBean sun) {
+                return sun.getFreeMemorySize();
+            }
+        } catch (Throwable ignored) {
+            // com.sun.* unavailable on some JVMs
+        }
+        return -1L;
+    }
+
     private record ClassItem(
             String name,
             Integer color,

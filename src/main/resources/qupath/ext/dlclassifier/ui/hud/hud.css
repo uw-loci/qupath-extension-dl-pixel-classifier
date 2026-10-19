@@ -1,0 +1,87 @@
+/*
+ * Training HUD: the colour tokens, and the only place their values exist.
+ *
+ * The panel keeps a fixed dark surface whatever theme QuPath is running, so the
+ * three change colours are validated once against one background. Measured with
+ * the instrument-panel-ui skill's scripts/cvd_check.py (Machado 2009 at full
+ * severity, OKLab distance x100 against -hud-surface): neutral / better / worse
+ * stay 22.4 apart at worst under colour blindness, against a floor of 8. The
+ * obvious saturated yellow fails that test with an orange, because yellow and
+ * orange differ mostly in hue; keeping the neutral pale and the orange deep
+ * separates them by lightness instead. Changing any value here means
+ * re-measuring, and no red or green belongs in this file: the Train dialog's
+ * own labels already use those for status, and the HUD must not import them.
+ */
+.hud-root {
+    -hud-surface: #12161C;
+    -hud-raised: #1A2029;
+    -hud-tick: #4A5566;
+    -hud-text: #E6EAF0;
+    -hud-text-2: #A3AEBC;
+    -hud-muted: #6E7A8A;
+    -hud-neutral: #F2E39B;
+    -hud-neutral-hot: #FFF4B8;
+    -hud-better: #5AA9FF;
+    -hud-worse: #F26B1D;
+
+    -fx-background-color: -hud-surface;
+}
+
+/*
+ * One probe per token. The gauges draw on a Canvas, which CSS cannot reach, and
+ * JavaFX exposes no way to resolve a looked-up colour by name. So the view adds
+ * these zero-sized regions as children, lets CSS paint them, and reads each
+ * background back once -- which keeps the values above the single source and
+ * leaves nothing for a Java copy to drift from.
+ */
+.hud-probe-surface { -fx-background-color: -hud-surface; }
+.hud-probe-raised { -fx-background-color: -hud-raised; }
+.hud-probe-tick { -fx-background-color: -hud-tick; }
+.hud-probe-text { -fx-background-color: -hud-text; }
+.hud-probe-text-2 { -fx-background-color: -hud-text-2; }
+.hud-probe-muted { -fx-background-color: -hud-muted; }
+.hud-probe-neutral { -fx-background-color: -hud-neutral; }
+.hud-probe-neutral-hot { -fx-background-color: -hud-neutral-hot; }
+.hud-probe-better { -fx-background-color: -hud-better; }
+.hud-probe-worse { -fx-background-color: -hud-worse; }
+
+/* The change strip's baseline control: present, never loud. */
+.hud-root .hud-pin {
+    -fx-background-color: -hud-raised;
+    -fx-background-radius: 3;
+    -fx-background-insets: 0;
+    -fx-border-color: -hud-tick;
+    -fx-border-radius: 3;
+    -fx-text-fill: -hud-text-2;
+    -fx-font-size: 10px;
+    -fx-padding: 3 9 3 9;
+    -fx-cursor: hand;
+}
+
+.hud-root .hud-pin:hover {
+    -fx-text-fill: -hud-text;
+    -fx-border-color: -hud-text-2;
+}
+
+.hud-root .hud-pin:pressed {
+    -fx-background-color: -hud-surface;
+}
+
+.hud-root .hud-pin:focused {
+    -fx-border-color: -hud-text-2;
+}
+
+.hud-root .hud-pin:disabled {
+    -fx-opacity: 0.45;
+    -fx-cursor: default;
+}
+
+/* Notes carry the honesty: why a gauge is hollow, why a change is unknowable. */
+.hud-root .tooltip {
+    -fx-background-color: -hud-raised;
+    -fx-background-radius: 3;
+    -fx-border-color: -hud-tick;
+    -fx-border-radius: 3;
+    -fx-text-fill: -hud-text;
+    -fx-font-size: 11px;
+}

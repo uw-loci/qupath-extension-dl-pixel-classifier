@@ -3316,7 +3316,7 @@ public class TrainingWorkflow {
      * @param stepsPerEpoch  optimizer steps per epoch
      * @param totalSteps     optimizer steps over the whole run
      */
-    record StepBudget(
+    public record StepBudget(
             int trainPatches,
             int batchSize,
             int accumulation,
@@ -3334,7 +3334,7 @@ public class TrainingWorkflow {
          *
          * @return true when each epoch buys fewer than two optimizer steps
          */
-        boolean isUntrainable() {
+        public boolean isUntrainable() {
             return trainPatches > 0 && stepsPerEpoch < 2;
         }
     }
@@ -3358,7 +3358,7 @@ public class TrainingWorkflow {
      * @param epochs       configured epoch count
      * @return the computed budget
      */
-    static StepBudget computeStepBudget(int trainPatches, int batchSize, int accumulation, int epochs) {
+    public static StepBudget computeStepBudget(int trainPatches, int batchSize, int accumulation, int epochs) {
         int batch = Math.max(1, batchSize);
         int accum = Math.max(1, accumulation);
         int batchesPerEpoch = trainPatches <= 0 ? 0 : ceilDiv(trainPatches, batch);
