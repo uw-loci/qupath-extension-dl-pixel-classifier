@@ -353,8 +353,9 @@ abstract class HudGauge extends Region {
         if (f >= 9.95) {
             return String.valueOf(Math.round(f));
         }
-        double rounded = Math.round(f * 10) / 10.0;
-        return rounded == Math.rint(rounded) ? String.valueOf((long) rounded) : String.valueOf(rounded);
+        // Integer tenths, so a whole ratio prints without ".0" and no float is compared for equality
+        long tenths = Math.round(f * 10);
+        return tenths % 10 == 0 ? String.valueOf(tenths / 10) : String.valueOf(tenths / 10.0);
     }
 
     /**
