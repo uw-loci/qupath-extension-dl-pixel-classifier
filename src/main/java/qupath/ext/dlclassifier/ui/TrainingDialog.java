@@ -5929,10 +5929,13 @@ public class TrainingDialog {
             StringBuilder sb = new StringBuilder();
             sb.append(String.format(
                     "Loaded %d classes from %d images. Estimated ~%,d training tiles.", classCount, imageCount, est));
+            // Reset placeholder italic styling now that the real estimate is
+            // shown -- BEFORE the cache estimate, which sets orange or red when
+            // the cache will be declined or overflow RAM. This used to run
+            // after it, so the warning colour was always painted over green.
+            tileEstimateLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
             appendInMemoryCacheEstimate(sb, est);
             tileEstimateLabel.setText(sb.toString());
-            // Reset placeholder italic styling now that the real estimate is shown.
-            tileEstimateLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
             tileEstimateLabel.setVisible(true);
             tileEstimateLabel.setManaged(true);
         }
