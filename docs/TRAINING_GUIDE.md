@@ -317,6 +317,10 @@ to learn from: the speed needle swings right in blue while the learning-steps ne
 in orange, and both are true. A configuration that is fast because it is starved is the one that
 cannot learn.
 
+**Worked example:** the [Training HUD walkthrough](TRAINING_HUD_WALKTHROUGH.md) takes the
+workshop's brightfield tiles through two single changes and two presets, with the panel at each
+step.
+
 Two things it will not do. Time cannot be compared across architectures or encoders (the panel
 shows `?` rather than guess). And patch counts are estimated from your annotations before any
 pixel is read, so they run a little high; the exact numbers appear in the training log after

@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "name": "Brightfield_TissueDetail_Resnet18",
+  "description": "Two-class tissue vs background on the Brightfield demo tiles, ResNet-18 U-Net at downsample 4: the settings of the provided CMU-1_Tissue_ResNet-18 model, for a more detailed but slower run than the quick-overlay preset. Tile 1 trains, Tile 4 validates. Settings only: your classes come from the annotations you import.",
+  "model_type": "unet",
+  "backbone": "resnet18",
+  "input_width": 256,
+  "input_height": 256,
+  "downsample": 4.0,
+  "context_scale": 1,
+  "training_epochs": 40,
+  "training_settings": {
+    "learning_rate": 0.001,
+    "batch_size": 4,
+    "weight_decay": 0.01,
+    "validation_split": 0.2,
+    "overlap": 51,
+    "line_stroke_width": 1,
+    "min_annotation_coverage": 0.15,
+    "min_tile_label_fraction": 0.25,
+    "use_pretrained_weights": true,
+    "freeze_encoder_layers": 0,
+    "frozen_layers": [
+      "encoder.layer1",
+      "encoder.layer2"
+    ],
+    "scheduler_type": "plateau",
+    "loss_function": "ce_dice",
+    "ohem_hard_ratio": 0.3,
+    "ohem_hard_ratio_start": 1.0,
+    "ohem_schedule": "anneal",
+    "ohem_adaptive_floor": true,
+    "data_loader_workers": 0,
+    "in_memory_dataset": "auto",
+    "early_stopping_metric": "disabled",
+    "early_stopping_patience": 8,
+    "marginal_stop_enabled": false,
+    "marginal_stop_min_improvement": 0.01,
+    "marginal_stop_window": 20,
+    "mixed_precision": true,
+    "augmentation_config": {
+      "flip_horizontal": true,
+      "flip_vertical": true,
+      "rotation_90": true,
+      "elastic_deformation": true
+    },
+    "intensity_aug_mode": "brightfield",
+    "class_weight_multipliers": {
+      "Ignore*": 1.0282152867642105,
+      "Other": 0.8766223620012651
+    },
+    "whole_image": false,
+    "gradient_accumulation_steps": 1,
+    "progressive_resize": false,
+    "seed": 1,
+    "discriminative_lr_ratio": 0.1,
+    "use_lr_finder": true,
+    "fused_optimizer": true,
+    "gpu_augmentation": true,
+    "use_torch_compile": false
+  },
+  "selected_classes": [
+    "Ignore*",
+    "Other"
+  ],
+  "channel_config": {
+    "selected_channels": [
+      0,
+      1,
+      2
+    ],
+    "channel_names": [
+      "Red",
+      "Green",
+      "Blue"
+    ],
+    "bit_depth": 8,
+    "normalization_strategy": "PERCENTILE_99"
+  }
+}

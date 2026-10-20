@@ -8203,7 +8203,18 @@ public class TrainingDialog {
             applyProfileChooserDirectory(chooser, false);
             File in = chooser.showOpenDialog(dialog);
             if (in == null) return;
+            applyProfileFile(in, sourceButton);
+        }
 
+        /**
+         * Reads a saved training profile and applies its settings to the dialog.
+         * Separate from the file chooser so the settings path can be driven
+         * without one (the docs' walkthrough figures are rendered this way).
+         *
+         * @param in           the profile file
+         * @param sourceButton the button to anchor feedback on, or null for none
+         */
+        private void applyProfileFile(File in, Button sourceButton) {
             Map<String, Object> profile;
             try {
                 String json = Files.readString(in.toPath(), StandardCharsets.UTF_8);
@@ -8297,6 +8308,9 @@ public class TrainingDialog {
         }
 
         private void showCopyFeedback(Button button, String message) {
+            if (button == null || button.getScene() == null) {
+                return;
+            }
             Tooltip tooltip = new Tooltip(message);
             tooltip.setAutoHide(true);
             tooltip.show(

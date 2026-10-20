@@ -17,6 +17,12 @@ This file tracks the relationship between documentation screenshots and the Java
 | `menu-dl-pixel-classifier.png` | `SetupDLClassifier.java` | 2026-09-09 | OK |
 | `workflow-map.png` | drawn from `workflow-map.spec` -- not a screenshot, so this check skips it; `tools/render_workflow_map.py --check` verifies its labels instead, in CI | 2026-10-16 | OK |
 | `train-dialog-configure-classifier.png` | `ui/TrainingDialog.java` | 2026-10-19 | OK (rendered by `harness/DlTrainingDialogShotScenario.java`; banner above the heading cropped) |
+| `hud-walkthrough-01-at-rest.png` | `ui/hud/TrainingHudView.java` | 2026-10-20 | OK (rendered by `harness/TrainingHudWalkthroughScenario.java` on the workshop's brightfield tiles; re-render rather than re-capture) |
+| `hud-walkthrough-02-preset-a.png` | `ui/hud/TrainingHudView.java` | 2026-10-20 | OK (rendered by `harness/TrainingHudWalkthroughScenario.java` on the workshop's brightfield tiles; re-render rather than re-capture) |
+| `hud-walkthrough-03-resolution-8x-to-4x.png` | `ui/hud/TrainingHudView.java` | 2026-10-20 | OK (rendered by `harness/TrainingHudWalkthroughScenario.java` on the workshop's brightfield tiles; re-render rather than re-capture) |
+| `hud-walkthrough-04-batch-30-to-8.png` | `ui/hud/TrainingHudView.java` | 2026-10-20 | OK (rendered by `harness/TrainingHudWalkthroughScenario.java` on the workshop's brightfield tiles; re-render rather than re-capture) |
+| `hud-walkthrough-05-preset-b.png` | `ui/hud/TrainingHudView.java` | 2026-10-20 | OK (rendered by `harness/TrainingHudWalkthroughScenario.java` on the workshop's brightfield tiles; re-render rather than re-capture) |
+| `hud-walkthrough-06-preset-b-compared-to-a.png` | `ui/hud/TrainingHudView.java` | 2026-10-20 | OK (rendered by `harness/TrainingHudWalkthroughScenario.java` on the workshop's brightfield tiles; re-render rather than re-capture) |
 | `train-dialog-tiles-resolution-preview.png` | `ui/TrainingDialog.java` | 2026-07-22 | OK |
 | `train-dialog-transfer-learning-layers.png` | `ui/TrainingDialog.java`, `ui/LayerFreezePanel.java` | 2026-07-22 | OK |
 | `training-progress-dialog.png` | `ui/ProgressMonitorController.java` | 2026-07-22 | OK |
