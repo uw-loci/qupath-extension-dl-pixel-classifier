@@ -1,16 +1,23 @@
 package qupath.ext.dlclassifier.ui.hud;
 
-import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.function.Consumer;
+import javafx.geometry.Side;
 import javafx.geometry.VPos;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.Button;
+import javafx.scene.control.ContentDisplay;
+import javafx.scene.control.ContextMenu;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.RadioMenuItem;
+import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.Region;
 import javafx.scene.text.Font;
@@ -84,8 +91,22 @@ public final class TrainingHudView extends Region {
     private static final Font FOOT_FONT = Font.font(FAMILY, FontWeight.NORMAL, 8);
     private static final Font CHIP_FONT = Font.font(FAMILY, FontWeight.SEMI_BOLD, 11);
 
-    /** Short, because every pixel it takes comes off the control list beside it. */
-    private static final String PIN_TEXT = "Pin baseline";
+    private static final Font COMPARE_FONT = Font.font(FAMILY, FontWeight.NORMAL, 10);
+
+    /** Every pixel the control takes comes off the control list beside it. */
+    private static final double COMPARE_MAX_W = 142;
+
+    /** Room for the baseline's name inside the control, after "vs " and the chevron. */
+    private static final double COMPARE_NAME_W = 92;
+
+    /** What the control reads when changes are measured against the edit before. */
+    private static final String LAST_CHANGE = "last change";
+
+    /** Matches the menu's font size in hud.css; used only to measure. */
+    private static final Font MENU_FONT = Font.font(FAMILY, FontWeight.NORMAL, 11);
+
+    /** How much of a baseline's name the "Remove" entry spells out. */
+    private static final double REMOVE_NAME_W = 130;
 
     /** MIDDLE DOT, between the controls one burst touched. */
     private static final String SEP = "  " + (char) 0x00B7 + "  ";
@@ -102,7 +123,9 @@ public final class TrainingHudView extends Region {
     private final HudPalette palette = new HudPalette();
     private final Canvas chrome = new Canvas();
     private final Region stripHover = new Region();
-    private final Button pinButton = new Button();
+    private final Button compareButton = new Button();
+    private final ContextMenu compareMenu = new ContextMenu();
+    private final Tooltip compareTip = new Tooltip();
     private final Tooltip stripTip = new Tooltip();
 
     private final Map<Gauge, HudGauge> gauges = new EnumMap<>(Gauge.class);
@@ -113,11 +136,12 @@ public final class TrainingHudView extends Region {
     private boolean animate = true;
     private boolean everShown;
     private boolean dataSeen;
-    private boolean wasPinned;
-    private LocalTime pinnedAt;
     private String sharedNote = "";
-    private Runnable onPin;
-    private Runnable onUnpin;
+    private Consumer<String> onCompareTo;
+    private Runnable onPinCurrent;
+    private Consumer<String> onRemoveBaseline;
+    private List<String> menuBaselines = List.of();
+    private String menuComparedTo;
     private double stripTextWidth = PREF_W - 2 * PAD - 86;
     private double dialsHeight = 134;
 
@@ -143,22 +167,33 @@ public final class TrainingHudView extends Region {
             gauges.put(g, new GaugeBar(g, palette, GaugeBar.Size.MINI));
         }
 
-        pinButton.getStyleClass().add("hud-pin");
-        pinButton.setText(PIN_TEXT);
-        pinButton.setFocusTraversable(false);
-        Tooltip pinTip = new Tooltip();
-        pinTip.setShowDelay(Duration.millis(250));
-        pinTip.setWrapText(true);
-        pinTip.setMaxWidth(300);
-        pinTip.setText("Compare every later change against the current reading, instead of "
-                + "against the last edit. Use it to compare two configurations without "
-                + "passing through the ones in between.");
-        pinButton.setTooltip(pinTip);
-        pinButton.setOnAction(e -> {
-            boolean pinned = state != null && state.pinned();
-            Runnable r = pinned ? onUnpin : onPin;
-            if (r != null) {
-                r.run();
+        Region chevron = new Region();
+        chevron.getStyleClass().add("hud-chevron");
+        compareButton.getStyleClass().add("hud-compare");
+        compareButton.setGraphic(chevron);
+        compareButton.setContentDisplay(ContentDisplay.RIGHT);
+        compareButton.setGraphicTextGap(6);
+        compareButton.setMaxWidth(COMPARE_MAX_W);
+        compareButton.setFocusTraversable(false);
+        // A saved model is called something like Brightfield_TissueDetection,
+        // and a Button eats the first underscore as a mnemonic marker.
+        compareButton.setMnemonicParsing(false);
+        compareTip.setShowDelay(Duration.millis(250));
+        compareTip.setWrapText(true);
+        compareTip.setMaxWidth(300);
+        compareButton.setTooltip(compareTip);
+        compareButton.setOnAction(e -> compareMenu.show(compareButton, Side.BOTTOM, 0, 2));
+
+        compareMenu.getStyleClass().add("hud-menu");
+        // The menu is its own window with its own scene, which inherits nothing
+        // from the panel, so it is handed the stylesheet directly.
+        if (compareMenu.getScene() != null) {
+            compareMenu.getScene().getStylesheets().add(stylesheet());
+        }
+        compareMenu.setOnShowing(e -> {
+            if (compareMenu.getScene() != null
+                    && !compareMenu.getScene().getStylesheets().contains(stylesheet())) {
+                compareMenu.getScene().getStylesheets().add(stylesheet());
             }
         });
 
@@ -173,21 +208,30 @@ public final class TrainingHudView extends Region {
         getChildren().add(chrome);
         getChildren().addAll(palette.probes());
         getChildren().add(stripHover);
-        getChildren().add(pinButton);
+        getChildren().add(compareButton);
         getChildren().addAll(new ArrayList<>(gauges.values()));
-        updatePinButton();
+        rebuildCompareMenu();
     }
 
-    /** @param onPin runs when the user asks to compare against the current reading */
-    public void setOnPin(Runnable onPin) {
-        this.onPin = onPin;
-        updatePinButton();
+    /**
+     * @param onCompareTo runs with the baseline the user chose to measure changes
+     *                    against, or null for "the edit before"
+     */
+    public void setOnCompareTo(Consumer<String> onCompareTo) {
+        this.onCompareTo = onCompareTo;
+        rebuildCompareMenu();
     }
 
-    /** @param onUnpin runs when the user asks to go back to comparing against the last edit */
-    public void setOnUnpin(Runnable onUnpin) {
-        this.onUnpin = onUnpin;
-        updatePinButton();
+    /** @param onPinCurrent runs when the user asks to keep the current settings as a baseline */
+    public void setOnPinCurrent(Runnable onPinCurrent) {
+        this.onPinCurrent = onPinCurrent;
+        rebuildCompareMenu();
+    }
+
+    /** @param onRemoveBaseline runs with the baseline the user asked to forget */
+    public void setOnRemoveBaseline(Consumer<String> onRemoveBaseline) {
+        this.onRemoveBaseline = onRemoveBaseline;
+        rebuildCompareMenu();
     }
 
     /**
@@ -214,11 +258,6 @@ public final class TrainingHudView extends Region {
         boolean rise = !everShown || (hasData && !dataSeen);
         everShown = true;
         dataSeen = dataSeen || hasData;
-        if (newState.pinned() && !wasPinned) {
-            pinnedAt = LocalTime.now();
-        }
-        wasPinned = newState.pinned();
-
         sharedNote = sharedNote(newState);
         // Before the gauges draw, not after: a bar that is handed its hard
         // lines afterwards paints its first frame without them, and the first
@@ -237,16 +276,107 @@ public final class TrainingHudView extends Region {
             boolean suppress = !r.note().isEmpty() && r.note().equals(sharedNote);
             gauges.get(g).show(new HudGauge.Frame(r, c, position, steppedBack, suppress), animate, rise);
         }
-        updatePinButton();
+        rebuildCompareMenu();
         stripTip.setText(stripTooltip(newState));
         requestLayout();
         drawChrome();
     }
 
-    private void updatePinButton() {
-        boolean pinned = state != null && state.pinned();
-        pinButton.setText(pinned ? "Unpin" : PIN_TEXT);
-        pinButton.setDisable(pinned ? onUnpin == null : onPin == null);
+    /**
+     * Rebuilds the "Compare to" menu: one entry per baseline, the current one
+     * ticked, plus the two actions that change the set of baselines.
+     * <p>
+     * Only rebuilt when the baselines or the comparison actually changed, so an
+     * open menu is not rebuilt out from under the pointer.
+     */
+    private void rebuildCompareMenu() {
+        List<String> baselines = state == null ? List.of() : state.baselines();
+        String current = state == null ? null : state.comparedTo();
+        if (compareMenu.getItems().isEmpty()
+                || !Objects.equals(menuBaselines, baselines)
+                || !Objects.equals(menuComparedTo, current)) {
+            menuBaselines = baselines;
+            menuComparedTo = current;
+            compareMenu.getItems().setAll(buildItems(baselines, current));
+        }
+        compareButton.setText("vs " + HudGauge.fit(label(current), COMPARE_FONT, COMPARE_NAME_W));
+        compareTip.setText(compareTooltip(current));
+        compareButton.setDisable(onCompareTo == null && onPinCurrent == null);
+    }
+
+    private List<MenuItem> buildItems(List<String> baselines, String current) {
+        List<MenuItem> items = new ArrayList<>();
+        ToggleGroup group = new ToggleGroup();
+        items.add(baselineItem(null, current, group));
+        for (String name : baselines) {
+            items.add(baselineItem(name, current, group));
+        }
+        items.add(new SeparatorMenuItem());
+
+        MenuItem pin = new MenuItem("Pin current settings");
+        pin.setMnemonicParsing(false);
+        pin.setDisable(onPinCurrent == null);
+        pin.setOnAction(e -> {
+            if (onPinCurrent != null) {
+                onPinCurrent.run();
+            }
+        });
+        items.add(pin);
+
+        // Removing acts on the baseline being compared against rather than
+        // opening a submenu: a submenu is a second popup window, which would
+        // need its own copy of the stylesheet, and this way what the button
+        // says is what the item removes.
+        boolean removable = current != null && !ChangeTracker.START.equals(current) && onRemoveBaseline != null;
+        // The name is shortened here and nowhere else: a menu as wide as a
+        // model name is wider than the panel it belongs to, and the button and
+        // the ticked entry above both show the name in full.
+        MenuItem remove = new MenuItem(
+                removable ? "Remove \"" + HudGauge.fit(current, MENU_FONT, REMOVE_NAME_W) + "\"" : "Remove baseline");
+        remove.setMnemonicParsing(false);
+        remove.setDisable(!removable);
+        remove.setOnAction(e -> {
+            if (onRemoveBaseline != null && current != null) {
+                onRemoveBaseline.accept(current);
+            }
+        });
+        items.add(remove);
+        return items;
+    }
+
+    private RadioMenuItem baselineItem(String name, String current, ToggleGroup group) {
+        RadioMenuItem item = new RadioMenuItem(label(name));
+        item.setMnemonicParsing(false);
+        item.setToggleGroup(group);
+        item.setSelected(Objects.equals(name, current));
+        item.setDisable(onCompareTo == null);
+        item.setOnAction(e -> {
+            if (onCompareTo != null) {
+                onCompareTo.accept(name);
+            }
+        });
+        return item;
+    }
+
+    private static String label(String baseline) {
+        return baseline == null ? LAST_CHANGE : baseline;
+    }
+
+    private String compareTooltip(String current) {
+        if (current == null) {
+            return "Every gauge shows what the last edit did. Choose a baseline here to measure "
+                    + "against a whole configuration instead -- where the session started, a "
+                    + "profile you loaded, or settings you pinned.";
+        }
+        return "Every gauge is measured against " + current
+                + ", however many edits ago that was, so you can compare two configurations "
+                + "without passing through the ones in between.";
+    }
+
+    private String stylesheet() {
+        return TrainingHudView.class
+                .getResource("/qupath/ext/dlclassifier/ui/hud/hud.css")
+                .toExternalForm();
     }
 
     /**
@@ -318,11 +448,11 @@ public final class TrainingHudView extends Region {
         chrome.setWidth(w);
         chrome.setHeight(h);
 
-        double pinW = Math.max(pinButton.prefWidth(-1), 78);
-        double pinH = pinButton.prefHeight(-1);
-        stripTextWidth = w - 2 * PAD - pinW - 10;
+        double btnW = Math.min(COMPARE_MAX_W, Math.max(compareButton.prefWidth(-1), 86));
+        double btnH = compareButton.prefHeight(-1);
+        stripTextWidth = w - 2 * PAD - btnW - 10;
         stripHover.resizeRelocate(PAD, PAD, w - 2 * PAD, STRIP_H);
-        pinButton.resizeRelocate(w - PAD - pinW, PAD + (STRIP_H - pinH) / 2, pinW, pinH);
+        compareButton.resizeRelocate(w - PAD - btnW, PAD + (STRIP_H - btnH) / 2, btnW, btnH);
 
         double dialsH = Math.max(90, h - fixedHeight());
         dialsHeight = dialsH;
@@ -398,34 +528,58 @@ public final class TrainingHudView extends Region {
     }
 
     private String stripLabel() {
-        if (state == null || state.mode() == ChangeTracker.Mode.AT_REST) {
-            return state != null && state.pinned() ? "COMPARED TO PIN" : "READY";
+        if (state == null) {
+            return "READY";
         }
         if (state.mode() == ChangeTracker.Mode.NO_GAUGE_MOVED) {
             return "NO GAUGE MOVED";
         }
-        return state.pinned() ? "COMPARED TO PIN" : "LAST CHANGE";
+        if (state.comparedTo() != null) {
+            return HudGauge.fitTracked(
+                    "COMPARED TO " + state.comparedTo().toUpperCase(),
+                    STRIP_LABEL_FONT,
+                    HudGauge.TRACKING,
+                    stripTextWidth);
+        }
+        return state.mode() == ChangeTracker.Mode.AT_REST ? "READY" : "LAST CHANGE";
     }
 
     private String stripDetail() {
         if (state == null) {
             return "Change any option to see what it does.";
         }
-        String controls = String.join(SEP, state.controls());
         if (state.mode() == ChangeTracker.Mode.AT_REST) {
-            return state.pinned() ? "Back at the pinned settings." : "Change any option to see what it does.";
+            return state.comparedTo() == null
+                    ? "Change any option to see what it does."
+                    : "Same settings as " + state.comparedTo() + ".";
         }
-        return controls;
+        if (state.changeName() != null) {
+            // One action set many controls. Naming the action and counting them
+            // beats a line of "Tile Size 256 -> 512" entries that runs off the
+            // end: a loaded profile can touch a dozen, and the user asked for
+            // the profile, not for the dozen. The list is in the tooltip.
+            //
+            // Joined with the separator the control list uses, so that a long
+            // name takes the first line and the count keeps the second, instead
+            // of the count being the part that falls off the end.
+            int n = state.controls().size();
+            return state.changeName() + SEP + n + (n == 1 ? " setting changed" : " settings changed");
+        }
+        return String.join(SEP, state.controls());
     }
 
     private String stripTooltip(ChangeTracker.State s) {
         StringBuilder sb = new StringBuilder();
-        if (s.pinned()) {
-            sb.append("Every gauge is compared against the reading pinned");
-            if (pinnedAt != null) {
-                sb.append(" at ").append(pinnedAt.format(DateTimeFormatter.ofPattern("HH:mm")));
-            }
-            sb.append(", not against the last edit.\n");
+        if (s.comparedTo() != null) {
+            sb.append("Every gauge is measured against ")
+                    .append(s.comparedTo())
+                    .append(", not against the last edit.\n");
+        }
+        if (s.changeName() != null) {
+            sb.append(s.changeName())
+                    .append(" set ")
+                    .append(s.controls().size())
+                    .append(" settings.\n");
         }
         if (s.controls().isEmpty()) {
             sb.append("Nothing has changed yet.");

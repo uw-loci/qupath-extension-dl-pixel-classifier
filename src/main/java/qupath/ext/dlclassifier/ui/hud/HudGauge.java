@@ -489,6 +489,28 @@ abstract class HudGauge extends Region {
         return metrics.getLayoutBounds().getWidth();
     }
 
+    /**
+     * Same as {@link #fit}, for text drawn with {@link #drawTracked}.
+     *
+     * @param s        the string
+     * @param font     the font
+     * @param tracking letter-spacing in pixels
+     * @param max      the width to fit into
+     * @return the string, shortened with an ellipsis until it fits
+     */
+    protected static String fitTracked(String s, Font font, double tracking, double max) {
+        if (trackedWidth(s, font, tracking) <= max) {
+            return s;
+        }
+        for (int n = s.length() - 1; n > 0; n--) {
+            String candidate = s.substring(0, n) + ELLIPSIS;
+            if (trackedWidth(candidate, font, tracking) <= max) {
+                return candidate;
+            }
+        }
+        return ELLIPSIS;
+    }
+
     /** @return the string, shortened with an ellipsis until it fits */
     protected static String fit(String s, Font font, double max) {
         if (textWidth(s, font) <= max) {

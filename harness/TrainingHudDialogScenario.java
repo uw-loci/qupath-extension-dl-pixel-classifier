@@ -11,6 +11,8 @@ import javafx.scene.control.ToggleButton;
 import javafx.scene.image.WritableImage;
 import javafx.stage.Stage;
 import javafx.stage.Window;
+import qupath.ext.dlclassifier.model.ClassifierMetadata;
+import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.ui.TrainingDialog;
 import qupath.ext.dlclassifier.ui.hud.ChangeTracker;
 import qupath.ext.dlclassifier.ui.hud.Gauge;
@@ -28,6 +30,7 @@ import qupath.lib.projects.Projects;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -48,7 +51,7 @@ import java.util.concurrent.TimeUnit;
  * state the design requires (section 3, the trap: time per epoch BETTER,
  * learning steps WORSE), and writes both windows to PNG.
  *
- * <p>args: workDir outDir tile1.ome.tif tile1.geojson tile4.ome.tif tile4.geojson
+ * <p>args: workDir outDir tile1.ome.tif tile1.geojson tile4.ome.tif tile4.geojson [savedModelDir]
  */
 public final class TrainingHudDialogScenario {
 
@@ -64,7 +67,7 @@ public final class TrainingHudDialogScenario {
         startFx();
         QuPathGUI qupath = onFx(QuPathGUI::createHiddenInstance);
         Project<BufferedImage> project = Projects.createProject(projectDir.toFile(), BufferedImage.class);
-        for (int i = 2; i + 1 < args.length; i += 2) {
+        for (int i = 2; i + 1 < Math.min(args.length, 6); i += 2) {
             var support = ImageServerProvider.getPreferredUriImageSupport(BufferedImage.class, args[i]);
             ProjectImageEntry<BufferedImage> e = project.addImage(support.getBuilders().get(0));
             e.setImageName(Path.of(args[i]).getFileName().toString());
@@ -160,6 +163,35 @@ public final class TrainingHudDialogScenario {
         }
         shot(hudStage, outDir.resolve("hud-after-resolution-change.png"));
         shot(dialog, outDir.resolve("train-dialog-with-hud.png"));
+
+        // A profile load: many controls in one action. Uses the dialog's own
+        // loadSettingsFromModel, which Load profile... and the model picker both
+        // call, with a saved model's metadata (optional 7th argument).
+        if (args.length > 6) {
+            ClassifierMetadata meta = new ModelManager().loadMetadata(Path.of(args[6]));
+            onFx(() -> {
+                ButtonBase loadProfile = (ButtonBase) find(dialog.getScene().getRoot(), n -> n instanceof ButtonBase b
+                        && "Load profile...".equals(b.getText()));
+                Object lambda = loadProfile.getOnAction();
+                Object builder = null;
+                for (Field f : lambda.getClass().getDeclaredFields()) {
+                    f.setAccessible(true);
+                    Object v = f.get(lambda);
+                    if (v != null && v.getClass().getName().endsWith("TrainingDialogBuilder")) builder = v;
+                }
+                Method m = builder.getClass().getDeclaredMethod("loadSettingsFromModel", ClassifierMetadata.class);
+                m.setAccessible(true);
+                m.invoke(builder, meta);
+                return null;
+            });
+            Thread.sleep(1500);
+            ChangeTracker.State p = viewState(hudStage);
+            System.out.println("[note] profile '" + meta.getName() + "': " + (p == null ? "-" : p.controls()));
+            check(p != null && meta.getName().equals(p.changeName()), "a profile load is one change named after the profile");
+            check(p != null && p.controls().size() >= 2, "it lists every control the profile set");
+            check(p != null && p.baselines().contains(meta.getName()), "and it becomes a baseline");
+            shot(hudStage, outDir.resolve("hud-after-profile-load.png"));
+        }
 
         // Closing the HUD window by its own close button untoggles the dialog button
         onFx(() -> {

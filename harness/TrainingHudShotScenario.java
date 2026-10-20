@@ -6,13 +6,21 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.awt.Graphics2D;
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
+import javafx.geometry.Point2D;
+import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.SnapshotParameters;
+import javafx.scene.control.Button;
 import javafx.scene.image.WritableImage;
+import javafx.scene.paint.Color;
 import javafx.scene.transform.Transform;
+import javafx.stage.PopupWindow;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import qupath.ext.dlclassifier.ui.hud.ChangeTracker;
@@ -46,6 +54,9 @@ public final class TrainingHudShotScenario {
 
     /** How long the tracker waits for the inputs to settle. */
     private static final long SETTLE = 350;
+
+    /** A saved model's settings, named the way users actually name them. */
+    private static final String PROFILE = "Brightfield_TissueDetection_Resnet18";
 
     // The Train dialog's control values, as a scenario sets them.
     private static String architecture;
@@ -84,8 +95,12 @@ public final class TrainingHudShotScenario {
         onFx(() -> {
             view = new TrainingHudView();
             view.setAnimate(false);
-            view.setOnPin(() -> {});
-            view.setOnUnpin(() -> {});
+            // Wired to no-ops: the harness drives the tracker directly, but the
+            // menu's items are disabled until the view has these, and a
+            // screenshot of a greyed-out menu proves nothing.
+            view.setOnCompareTo(name -> {});
+            view.setOnPinCurrent(() -> {});
+            view.setOnRemoveBaseline(name -> {});
             stage = new Stage();
             stage.setTitle("Training HUD (harness)");
             stage.setScene(new Scene(view));
@@ -152,7 +167,7 @@ public final class TrainingHudShotScenario {
         written.addAll(shoot(outDir, "f-pinned-after-three-edits", () -> {
             defaults();
             Driver d = new Driver();
-            d.pin();
+            d.pinCurrent();
             epochs = 60;
             d.edit();
             batchSize = 12;
@@ -185,13 +200,44 @@ public final class TrainingHudShotScenario {
             defaults();
             downsample = 4;
             Driver d = new Driver();
-            d.pin();
+            d.pinCurrent();
             downsample = 8;
             d.edit();
             contextScale = 2;
             d.edit();
             epochs = 80;
             return d.edit();
+        }));
+
+        // (i) Baselines, 2026-10-20: one action can set a dozen controls, and a
+        // user asking "how far am I from the profile I loaded?" is not asking
+        // about their last edit. The profile's name is long on purpose -- that
+        // is what a real saved model is called.
+        Driver[] prof = new Driver[1];
+        written.addAll(shoot(outDir, "i1-profile-load-one-named-change", () -> {
+            defaults();
+            prof[0] = new Driver();
+            prof[0].settingsLoaded(PROFILE);
+            tileSize = 512;
+            downsample = 2;
+            overlapPercent = 25;
+            batchSize = 8;
+            epochs = 80;
+            validationSplitPercent = 25;
+            return prof[0].edit();
+        }));
+        written.addAll(shoot(outDir, "i2-two-edits-then-compared-to-start", () -> {
+            batchSize = 12;
+            prof[0].edit();
+            epochs = 120;
+            prof[0].edit();
+            return prof[0].compareTo(ChangeTracker.START);
+        }));
+        ChangeTracker.State[] menuState = new ChangeTracker.State[1];
+        written.addAll(shoot(outDir, "i3-compare-button", () -> {
+            prof[0].pinCurrent();
+            menuState[0] = prof[0].compareTo(PROFILE);
+            return menuState[0];
         }));
 
         written.addAll(shoot(outDir, "g-no-gauge-moved", () -> {
@@ -202,6 +248,12 @@ public final class TrainingHudShotScenario {
         }));
 
         smokeTestPopOut();
+
+        // Last, and on a short leash. Opening the menu means opening a second
+        // window on whatever display the harness found, and when that stalls it
+        // takes the FX thread with it -- so it runs after every other PNG is
+        // safely written, and a stall costs this one figure, not the run.
+        written.addAll(shootMenu(outDir, "i4-compare-menu-open", menuState[0]));
 
         onFx(() -> {
             stage.close();
@@ -356,8 +408,20 @@ public final class TrainingHudShotScenario {
             return tracker.state();
         }
 
-        void pin() {
-            tracker.pin();
+        /** Keeps the current settings as a baseline and compares against it. */
+        String pinCurrent() {
+            return tracker.pinCurrent();
+        }
+
+        /** Names the whole set of settings about to be applied. */
+        void settingsLoaded(String name) {
+            tracker.settingsLoaded(name);
+        }
+
+        /** Measures changes against a baseline, or against the edit before when null. */
+        ChangeTracker.State compareTo(String name) {
+            tracker.compareTo(name);
+            return tracker.state();
         }
 
         ChangeTracker.State state() {
@@ -376,12 +440,150 @@ public final class TrainingHudShotScenario {
         return out;
     }
 
+    /**
+     * The panel with the "Compare to" menu open over it.
+     * <p>
+     * The menu is a popup in its own window, so snapshotting the panel cannot
+     * catch it: it is snapshotted separately and composited where it actually
+     * sits. That is also the only way to see whether the popup picked up the
+     * HUD's stylesheet rather than QuPath's theme.
+     */
+    private static List<Path> shootMenu(Path outDir, String name, ChangeTracker.State state) throws Exception {
+        List<Path> out = new ArrayList<>();
+        if (state == null) {
+            System.out.println("[BAD] no state for " + name);
+            return out;
+        }
+        BufferedImage one = renderWithMenu(state, 1.0);
+        if (one == null) {
+            return out;
+        }
+        out.add(write(outDir, name + "@1x.png", one));
+        BufferedImage onePointFive = renderWithMenu(state, 1.5);
+        if (onePointFive != null) {
+            out.add(write(outDir, name + "@1.5x.png", onePointFive));
+        }
+        out.add(write(outDir, name + "@1x-grey.png", greyscale(one)));
+        return out;
+    }
+
+    /** A popup snapshot and where it sits relative to the panel's top-left. */
+    private record MenuShot(BufferedImage image, double dx, double dy) {}
+
+    private static BufferedImage renderWithMenu(ChangeTracker.State state, double scale) throws Exception {
+        BufferedImage panel = render(state, scale);
+        // Open, snapshot and close inside ONE runnable, on a short timeout:
+        // the popup is a second window, and if the display stalls while it is
+        // coming up there is nothing useful to wait for.
+        MenuShot menu;
+        try {
+            menu = onFxTimed(() -> openGrabHide(scale), 25);
+        } catch (Exception e) {
+            System.out.println("[BAD] the Compare to menu could not be captured: " + e);
+            for (Throwable t = e; t != null; t = t.getCause()) {
+                System.out.println("  " + t);
+                for (StackTraceElement el : t.getStackTrace()) {
+                    System.out.println("    at " + el);
+                }
+            }
+            return null;
+        }
+        if (menu == null) {
+            System.out.println("[BAD] menu popup not found; no menu figure written");
+            return null;
+        }
+        int x = (int) Math.round(menu.dx() * scale);
+        int y = (int) Math.round(menu.dy() * scale);
+        int w = Math.max(panel.getWidth(), x + menu.image().getWidth());
+        int h = Math.max(panel.getHeight(), y + menu.image().getHeight());
+        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = out.createGraphics();
+        g.drawImage(panel, 0, 0, null);
+        g.drawImage(menu.image(), x, y, null);
+        g.dispose();
+        return out;
+    }
+
+    private static MenuShot openGrabHide(double scale) {
+        Node n = view.lookup(".hud-compare");
+        if (!(n instanceof Button b)) {
+            System.out.println("[BAD] no .hud-compare control to open");
+            return null;
+        }
+        b.fire();
+        try {
+            return grabMenu(scale);
+        } finally {
+            hideMenu();
+        }
+    }
+
+    private static MenuShot grabMenu(double scale) {
+        // A popup window's scene root is its own "popup" pane; the menu itself
+        // is a node inside it, so the style class has to be looked up rather
+        // than read off the root.
+        Node menu = findMenuNode();
+        if (menu == null) {
+            return null;
+        }
+        Parent root = menu.getScene().getRoot();
+        root.applyCss();
+        root.layout();
+        SnapshotParameters params = new SnapshotParameters();
+        params.setFill(Color.TRANSPARENT);
+        if (scale != 1.0) {
+            params.setTransform(Transform.scale(scale, scale));
+        }
+        double mw = menu.getLayoutBounds().getWidth();
+        double mh = menu.getLayoutBounds().getHeight();
+        WritableImage img =
+                menu.snapshot(params, new WritableImage((int) Math.ceil(mw * scale), (int) Math.ceil(mh * scale)));
+        Point2D at = view.localToScreen(0, 0);
+        Point2D menuAt = menu.localToScreen(0, 0);
+        return new MenuShot(
+                SwingFXUtils.fromFXImage(img, null), menuAt.getX() - at.getX(), menuAt.getY() - at.getY());
+    }
+
+    private static Node findMenuNode() {
+        for (Window w : Window.getWindows()) {
+            if (!w.isShowing() || w.getScene() == null) {
+                continue;
+            }
+            Node found = w.getScene().getRoot().lookup(".hud-menu");
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    private static void hideMenu() {
+        // Collect first: hiding a window removes it from the live list that
+        // Window.getWindows() hands back, and the iterator does not survive it.
+        List<PopupWindow> open = new ArrayList<>();
+        for (Window w : Window.getWindows()) {
+            if (w.isShowing()
+                    && w.getScene() != null
+                    && w.getScene().getRoot().lookup(".hud-menu") != null
+                    && w instanceof PopupWindow p) {
+                open.add(p);
+            }
+        }
+        for (PopupWindow p : open) {
+            p.hide();
+        }
+    }
+
     /** One line per scenario, so a PNG can be checked against what was asked for. */
     private static void describe(String name, ChangeTracker.State state) {
         StringBuilder sb = new StringBuilder("[note] ").append(name).append("  mode=").append(state.mode());
-        if (state.pinned()) {
-            sb.append(" pinned");
+        if (state.comparedTo() != null) {
+            sb.append("  vs=").append(state.comparedTo());
         }
+        if (state.changeName() != null) {
+            sb.append("  named=").append(state.changeName());
+        }
+        sb.append("  baselines=").append(state.baselines());
         sb.append("  controls=").append(state.controls());
         GaugeReading gpu = state.now().get(Gauge.GPU_MEMORY);
         if (gpu.available()) {
@@ -459,8 +661,12 @@ public final class TrainingHudShotScenario {
     }
 
     private static <T> T onFx(Callable<T> work) throws Exception {
+        return onFxTimed(work, 300);
+    }
+
+    private static <T> T onFxTimed(Callable<T> work, int seconds) throws Exception {
         FutureTask<T> task = new FutureTask<>(work);
         Platform.runLater(task);
-        return task.get(300, TimeUnit.SECONDS);
+        return task.get(seconds, TimeUnit.SECONDS);
     }
 }

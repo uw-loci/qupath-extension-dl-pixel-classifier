@@ -1789,6 +1789,12 @@ public class TrainingDialog {
         }
 
         private void loadSettingsFromModel(ClassifierMetadata metadata) {
+            // A profile or a saved model's settings arrive as one action that
+            // may set a dozen controls: the HUD shows it as one named change
+            // and keeps the result as a baseline to compare against later.
+            if (hudTracker != null) {
+                hudTracker.settingsLoaded(metadata.getName());
+            }
             logger.info("Loading settings from model: {} ({})", metadata.getName(), metadata.getId());
 
             // --- Always available from ClassifierMetadata ---
@@ -6085,8 +6091,9 @@ public class TrainingDialog {
             hudTracker = new ChangeTracker(
                     this::snapshotHudInputs, fxClock, HUD_SETTLE_MS, TrainingHudView.MIN_POSITION_STEP, view::show);
             ChangeTracker tracker = hudTracker;
-            view.setOnPin(tracker::pin);
-            view.setOnUnpin(tracker::unpin);
+            view.setOnCompareTo(tracker::compareTo);
+            view.setOnPinCurrent(tracker::pinCurrent);
+            view.setOnRemoveBaseline(tracker::removeBaseline);
             hudWindow.show();
         }
 

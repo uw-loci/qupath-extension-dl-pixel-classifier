@@ -12,7 +12,13 @@
  * re-measuring, and no red or green belongs in this file: the Train dialog's
  * own labels already use those for status, and the HUD must not import them.
  */
-.hud-root {
+/*
+ * Two selectors, one block. The "Compare to" menu is a popup: its own window,
+ * its own scene, so a looked-up colour declared on the panel cannot reach it.
+ * Declaring the tokens for both roots keeps the values written once.
+ */
+.hud-root,
+.hud-menu {
     -hud-surface: #12161C;
     -hud-raised: #1A2029;
     -hud-tick: #4A5566;
@@ -23,7 +29,9 @@
     -hud-neutral-hot: #FFF4B8;
     -hud-better: #5AA9FF;
     -hud-worse: #F26B1D;
+}
 
+.hud-root {
     -fx-background-color: -hud-surface;
 }
 
@@ -45,8 +53,8 @@
 .hud-probe-better { -fx-background-color: -hud-better; }
 .hud-probe-worse { -fx-background-color: -hud-worse; }
 
-/* The change strip's baseline control: present, never loud. */
-.hud-root .hud-pin {
+/* The change strip's "Compare to" control: present, never loud. */
+.hud-root .hud-compare {
     -fx-background-color: -hud-raised;
     -fx-background-radius: 3;
     -fx-background-insets: 0;
@@ -58,20 +66,34 @@
     -fx-cursor: hand;
 }
 
-.hud-root .hud-pin:hover {
+/* A disclosure chevron, so the control reads as "this opens a list". */
+.hud-root .hud-compare > .hud-chevron {
+    -fx-background-color: -hud-text-2;
+    -fx-min-width: 7;
+    -fx-min-height: 4;
+    -fx-pref-width: 7;
+    -fx-pref-height: 4;
+    -fx-shape: "M 0 0 L 7 0 L 3.5 4 Z";
+}
+
+.hud-root .hud-compare:hover > .hud-chevron {
+    -fx-background-color: -hud-text;
+}
+
+.hud-root .hud-compare:hover {
     -fx-text-fill: -hud-text;
     -fx-border-color: -hud-text-2;
 }
 
-.hud-root .hud-pin:pressed {
+.hud-root .hud-compare:pressed {
     -fx-background-color: -hud-surface;
 }
 
-.hud-root .hud-pin:focused {
+.hud-root .hud-compare:focused {
     -fx-border-color: -hud-text-2;
 }
 
-.hud-root .hud-pin:disabled {
+.hud-root .hud-compare:disabled {
     -fx-opacity: 0.45;
     -fx-cursor: default;
 }
@@ -84,4 +106,59 @@
     -fx-border-radius: 3;
     -fx-text-fill: -hud-text;
     -fx-font-size: 11px;
+}
+
+/*
+ * The "Compare to" popup. It is a separate window with its own scene, so the
+ * view hands it this stylesheet explicitly; without that it would render in
+ * QuPath's theme beside a panel that is deliberately not.
+ */
+.hud-menu {
+    /*
+     * The insets and radii are reset alongside every background override here.
+     * The theme gives a context menu several stacked fills with an inset per
+     * fill; replacing the colours with one and leaving three insets behind
+     * throws IndexOutOfBounds out of the CSS engine the moment the menu opens.
+     */
+    -fx-background-color: -hud-raised;
+    -fx-background-insets: 0;
+    -fx-background-radius: 4;
+    -fx-border-color: -hud-tick;
+    -fx-border-insets: 0;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-padding: 4 0 4 0;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.55), 12, 0, 0, 4);
+}
+
+.hud-menu .menu-item {
+    -fx-padding: 4 14 4 8;
+}
+
+.hud-menu .menu-item .label {
+    -fx-text-fill: -hud-text;
+    -fx-font-size: 11px;
+}
+
+.hud-menu .menu-item:focused {
+    -fx-background-color: -hud-tick;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+}
+
+.hud-menu .menu-item:disabled .label {
+    -fx-text-fill: -hud-muted;
+}
+
+.hud-menu .separator .line {
+    -fx-border-color: -hud-tick transparent transparent transparent;
+    -fx-border-insets: 0;
+    -fx-border-width: 1 0 0 0;
+}
+
+/* The tick beside the baseline currently being compared against. */
+.hud-menu .radio-menu-item:checked > .left-container > .radio {
+    -fx-background-color: -hud-neutral;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
 }
