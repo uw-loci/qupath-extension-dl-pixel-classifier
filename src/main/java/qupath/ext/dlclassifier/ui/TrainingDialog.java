@@ -8664,6 +8664,7 @@ public class TrainingDialog {
 
             if (paperRef != null && paperUrl != null) {
                 Hyperlink link = new Hyperlink("Paper: " + paperRef);
+                link.setMnemonicParsing(false);
                 link.setOnAction(e -> {
                     try {
                         java.awt.Desktop.getDesktop().browse(java.net.URI.create(paperUrl));
@@ -8877,6 +8878,7 @@ public class TrainingDialog {
 
         public ClassListCell(javafx.beans.property.BooleanProperty advancedMode) {
             checkBox = new CheckBox();
+            checkBox.setMnemonicParsing(false); // class names may contain "_"
             colorBox = new javafx.scene.shape.Rectangle(16, 16);
             colorBox.setStroke(javafx.scene.paint.Color.BLACK);
             colorBox.setStrokeWidth(1);
@@ -9053,6 +9055,12 @@ public class TrainingDialog {
 
         private final javafx.beans.property.BooleanProperty advancedMode;
         private final CheckBox checkBox = new CheckBox();
+
+        {
+            // Shows a name the user chose; "_" is not a mnemonic marker here.
+            checkBox.setMnemonicParsing(false);
+        }
+
         private final ComboBox<SplitRole> roleCombo =
                 new ComboBox<>(FXCollections.observableArrayList(SplitRole.values()));
         private final HBox content = new HBox(6);
@@ -9129,6 +9137,11 @@ public class TrainingDialog {
         private final java.util.function.Function<T, javafx.beans.property.BooleanProperty> selectedExtractor;
         private final java.util.function.Function<T, String> textExtractor;
         private final CheckBox checkBox = new CheckBox();
+
+        {
+            // Shows a name the user chose; "_" is not a mnemonic marker here.
+            checkBox.setMnemonicParsing(false);
+        }
 
         private javafx.beans.property.BooleanProperty boundSelectedProperty;
         private javafx.beans.value.ChangeListener<Boolean> itemToCheckboxListener;

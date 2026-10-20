@@ -1851,6 +1851,7 @@ public class TrainingAreaIssuesDialog {
             AnnotationAdjuster.TransitionKey key = e.getKey();
             int pixels = e.getValue();
             CheckBox cb = new CheckBox(String.format("%s -> %s : %,d px", key.fromClass(), key.toClass(), pixels));
+            cb.setMnemonicParsing(false); // class names may contain "_"
             // Honor any prior explicit uncheck so the box keeps its state when
             // the slider repopulates this list at a new threshold.
             cb.setSelected(!userUnchecked.contains(key));

@@ -881,6 +881,12 @@ public class MAEPretrainingDialog {
 
     private class MAEImageCell extends ListCell<MAEImageItem> {
         private final CheckBox checkBox = new CheckBox();
+
+        {
+            // Shows a name the user chose; "_" is not a mnemonic marker here.
+            checkBox.setMnemonicParsing(false);
+        }
+
         private final Label info = new Label();
         private final HBox root = new HBox(8, checkBox, info);
 
