@@ -287,11 +287,24 @@ it back to compare:
 
 - **LAST CHANGE** names what you changed, for example `Resolution 1x -> 8x`.
 - Every gauge the change moved keeps a faint mark where it was and gets a chip with the size of
-  the move (`▼ ×9 faster`). **Blue** means better for you, **orange** means worse. Gauges it did
-  not move stay pale yellow and step back.
+  the move. **Blue** with a check means better for you (`✓ ×9 faster`); **orange** with an
+  exclamation mark means worse (`! ×4 fewer`). Gauges it did not move stay pale yellow and step
+  back.
 - The highlight stays until your next change, so you can look away and come back.
-- **Pin baseline** compares every later change against the settings you have now, rather than
-  against the previous edit.
+
+**Comparing against a set of configurations.** The button at the top right (`vs last change`)
+chooses what changes are measured against:
+
+- **Start** is recorded when classes are loaded, so you can always see everything you have
+  changed since, without having planned for it.
+- **Every profile you load** (Load profile..., or settings taken from a saved model) is recorded
+  under its name. Loading one is shown as a single change, `<profile>: N settings changed`, with
+  the full list in the tooltip, however many settings differ.
+- **Pin current settings** records what you have now as `Pin 1`, `Pin 2`, and so on.
+
+Pick any of them and the gauges redraw against it at once, with each dial's REF mark moved to it.
+So you can load profile A, then profile B, then ask how far your current settings are from either.
+Reloading classes clears the list back to a fresh Start.
 
 The gauges are **relative**. They tell you which way and by how much a run moves, not how many
 minutes it will take: that depends on your machine. The memory bars show the share of your GPU
