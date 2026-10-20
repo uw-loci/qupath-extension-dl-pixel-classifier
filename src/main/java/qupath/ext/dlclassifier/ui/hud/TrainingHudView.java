@@ -34,7 +34,7 @@ import qupath.ext.dlclassifier.utilities.VramEstimator;
  * by the last edit is not orange, because then orange would mean two things.
  * Each gauge is judged alone, so one edit can light one dial blue and the other
  * orange, and there is no overall "good change" anywhere. And never colour
- * alone: every coloured gauge also carries a direction glyph and a ratio chip,
+ * alone: every coloured gauge also carries a verdict mark and a ratio chip,
  * so the panel reads in greyscale and in a screenshot pasted into a bug report.
  * <p>
  * Every number comes from {@link ChangeTracker.State}. Nothing here recomputes

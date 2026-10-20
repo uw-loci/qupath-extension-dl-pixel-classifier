@@ -101,7 +101,8 @@ final class GaugeBar extends HudGauge {
         Chip c = chip();
         if (c != null) {
             double available = chipWidth - 6;
-            Chip fitted = new Chip(fit(c.text(), chipFont(), available - (c.plain() ? 0 : 12)), c.tint(), c.plain());
+            Chip fitted =
+                    c.withText(fit(c.text(), chipFont(), available - (c.plain() ? 0 : 12) - markWidth(c, chipFont())));
             drawChip(gc, fitted, w - chipWidth + 2, centreY, chipFont());
         }
         if (pulse.get() >= 0) {
@@ -278,7 +279,7 @@ final class GaugeBar extends HudGauge {
 
         Chip c = chip();
         if (c != null) {
-            Chip fitted = new Chip(fit(c.text(), CHIP_SMALL_FONT, w - 14), c.tint(), c.plain());
+            Chip fitted = c.withText(fit(c.text(), CHIP_SMALL_FONT, w - 14 - markWidth(c, CHIP_SMALL_FONT)));
             drawChip(gc, fitted, TITLE_INSET, h - 8, CHIP_SMALL_FONT);
         }
         if (pulse.get() >= 0) {

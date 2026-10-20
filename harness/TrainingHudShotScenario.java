@@ -137,12 +137,9 @@ public final class TrainingHudShotScenario {
             return d.edit();
         }));
 
-        // The architecture change alone leaves the time gauges exactly where
-        // they were -- the work formula has no architecture term -- so SAME
-        // wins before UNKNOWN can be reached. Changing the resolution in the
-        // same burst moves them, and THAT is when the comparison becomes
-        // unknowable: the needle travelled, but across two architectures the
-        // distance means nothing.
+        // An architecture change makes both time gauges UNKNOWN whether or not
+        // the formula's value moved (scenario e); this one also moves them, so
+        // the hollow needle has somewhere to go.
         written.addAll(shoot(outDir, "e2-architecture-and-resolution-unknown", () -> {
             defaults();
             Driver d = new Driver();
@@ -161,6 +158,39 @@ public final class TrainingHudShotScenario {
             batchSize = 12;
             d.edit();
             mixedPrecision = false;
+            return d.edit();
+        }));
+
+        // (h) The user's question, 2026-10-20: how does it help across several
+        // changes? Three edits in a row, each shown against the one before it
+        // (h1-h3; the REF tick still marks where the session started), then the
+        // same three after Pin baseline, shown against the starting point (h4).
+        Driver[] seq = new Driver[1];
+        written.addAll(shoot(outDir, "h1-sequence-downsample-4-to-8", () -> {
+            defaults();
+            downsample = 4;
+            seq[0] = new Driver();
+            downsample = 8;
+            return seq[0].edit();
+        }));
+        written.addAll(shoot(outDir, "h2-then-context-2x", () -> {
+            contextScale = 2;
+            return seq[0].edit();
+        }));
+        written.addAll(shoot(outDir, "h3-then-epochs-40-to-80", () -> {
+            epochs = 80;
+            return seq[0].edit();
+        }));
+        written.addAll(shoot(outDir, "h4-same-three-against-a-pin", () -> {
+            defaults();
+            downsample = 4;
+            Driver d = new Driver();
+            d.pin();
+            downsample = 8;
+            d.edit();
+            contextScale = 2;
+            d.edit();
+            epochs = 80;
             return d.edit();
         }));
 

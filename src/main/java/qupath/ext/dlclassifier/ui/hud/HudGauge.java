@@ -26,9 +26,9 @@ import javafx.util.Duration;
  * stylesheet remains the only place a colour is written down. Three rules from
  * the instrument-panel-ui skill are enforced here rather than in each gauge:
  * colour appears only on a gauge the last change moved; a coloured change
- * always carries a direction glyph and a ratio chip, so the panel reads in
- * greyscale; and a gauge the change did not move steps back rather than
- * competing with the ones it did.
+ * always carries a verdict mark (a check for better, an exclamation mark for
+ * worse) and a ratio chip, so the panel reads in greyscale; and a gauge the
+ * change did not move steps back rather than competing with the ones it did.
  */
 abstract class HudGauge extends Region {
 
@@ -61,10 +61,9 @@ abstract class HudGauge extends Region {
     static final double TRACKING = 0.8;
 
     // The panel may display Unicode; this file may not contain it, so the
-    // glyphs are built from their code points. BLACK UP-POINTING TRIANGLE,
-    // BLACK DOWN-POINTING TRIANGLE, MULTIPLICATION SIGN, HORIZONTAL ELLIPSIS.
-    private static final String UP = String.valueOf((char) 0x25B2);
-    private static final String DOWN = String.valueOf((char) 0x25BC);
+    // glyphs are built from their code points. MULTIPLICATION SIGN,
+    // HORIZONTAL ELLIPSIS. The verdict marks are drawn as shapes, not glyphs,
+    // so they do not depend on which fonts a machine has.
     private static final String TIMES = String.valueOf((char) 0x00D7);
     private static final String ELLIPSIS = String.valueOf((char) 0x2026);
 
@@ -87,8 +86,26 @@ abstract class HudGauge extends Region {
         }
     }
 
-    /** A ratio chip: glyph plus words, tinted by the verdict. */
-    record Chip(String text, HudPalette.Token tint, boolean plain) {}
+    /**
+     * The mark at the front of a chip. It carries the VERDICT, not the
+     * direction: the words already say which way the value went ("faster",
+     * "fewer"). An up/down triangle there said the same thing twice and left
+     * better-or-worse to colour alone -- in the downsample trap every chip read
+     * "down", the good one and the bad ones alike.
+     */
+    enum Mark {
+        NONE,
+        BETTER,
+        WORSE
+    }
+
+    /** A ratio chip: verdict mark plus words, tinted by the verdict. */
+    record Chip(String text, HudPalette.Token tint, boolean plain, Mark mark) {
+
+        Chip withText(String t) {
+            return new Chip(t, tint, plain, mark);
+        }
+    }
 
     protected final HudPalette palette;
     protected final Gauge gauge;
@@ -262,7 +279,9 @@ abstract class HudGauge extends Region {
     protected Chip chip() {
         GaugeReading r = frame.reading();
         if (!r.available()) {
-            return r.note().isEmpty() || frame.suppressNote() ? null : new Chip(r.note(), HudPalette.Token.MUTED, true);
+            return r.note().isEmpty() || frame.suppressNote()
+                    ? null
+                    : new Chip(r.note(), HudPalette.Token.MUTED, true, Mark.NONE);
         }
         if (!frame.moved()) {
             return null;
@@ -270,9 +289,17 @@ abstract class HudGauge extends Region {
         HudDelta.Change c = frame.change();
         return switch (c.verdict()) {
             // No colour is honest here, so the words carry the whole message.
-            case UNKNOWN -> new Chip("? not comparable", HudPalette.Token.TEXT_2, false);
-            case APPEARED_OR_GONE -> new Chip("data arrived", HudPalette.Token.NEUTRAL_HOT, false);
-            default -> new Chip(ratioText(gauge, c), tintFor(c.verdict()), false);
+            case UNKNOWN -> new Chip("? not comparable", HudPalette.Token.TEXT_2, false, Mark.NONE);
+            case APPEARED_OR_GONE -> new Chip("data arrived", HudPalette.Token.NEUTRAL_HOT, false, Mark.NONE);
+            default -> new Chip(ratioText(gauge, c), tintFor(c.verdict()), false, markFor(c.verdict()));
+        };
+    }
+
+    private static Mark markFor(HudDelta.Verdict v) {
+        return switch (v) {
+            case BETTER -> Mark.BETTER;
+            case WORSE -> Mark.WORSE;
+            default -> Mark.NONE;
         };
     }
 
@@ -285,8 +312,8 @@ abstract class HudGauge extends Region {
     }
 
     /**
-     * The change in the user's words: a direction glyph and a ratio, never an
-     * absolute value. Rounded to two significant figures, and "slightly" below
+     * The change in the user's words: a ratio and a direction word, never an
+     * absolute value. The verdict is the chip's mark, not part of this text. Rounded to two significant figures, and "slightly" below
      * a tenth, because a HUD that reads "x1.03 fewer" is reporting noise.
      */
     static String ratioText(Gauge g, HudDelta.Change c) {
@@ -299,16 +326,15 @@ abstract class HudGauge extends Region {
             return "band changed";
         }
         boolean up = ratio > 1;
-        String glyph = up ? UP : DOWN;
         String word = up ? words[0] : words[1];
         double factor = up ? ratio : 1 / ratio;
         if (Double.isInfinite(factor)) {
-            return glyph + (up ? " from none" : " to none");
+            return up ? "from none" : "to none";
         }
         if (factor < 1.1) {
-            return glyph + " slightly " + word;
+            return "slightly " + word;
         }
-        return glyph + " " + TIMES + format(factor) + " " + word;
+        return TIMES + format(factor) + " " + word;
     }
 
     /** Words for a rise and for a fall, in the terms the user thinks in. */
@@ -371,7 +397,8 @@ abstract class HudGauge extends Region {
     protected double drawChip(GraphicsContext gc, Chip c, double x, double centreY, Font font) {
         double padX = c.plain() ? 0 : 6;
         double textW = textWidth(c.text(), font);
-        double w = textW + 2 * padX;
+        double markW = markWidth(c, font);
+        double w = textW + markW + 2 * padX;
         if (gc == null) {
             return w;
         }
@@ -384,11 +411,47 @@ abstract class HudGauge extends Region {
             gc.setLineWidth(1);
             gc.strokeRoundRect(x + 0.5, centreY - h / 2 + 0.5, w - 1, h - 1, h, h);
         }
+        if (c.mark() != Mark.NONE) {
+            drawMark(gc, c.mark(), x + padX, centreY, font.getSize() * MARK_SCALE, tint);
+        }
         gc.setFill(tint);
         gc.setFont(font);
         gc.setTextBaseline(VPos.CENTER);
-        gc.fillText(c.text(), x + padX, centreY + 0.5);
+        gc.fillText(c.text(), x + padX + markW, centreY + 0.5);
         return w;
+    }
+
+    /** Mark height as a share of the chip font size. */
+    private static final double MARK_SCALE = 0.78;
+
+    /** @return the room a chip's mark takes, including its gap to the text; 0 for none */
+    protected static double markWidth(Chip c, Font font) {
+        return c.mark() == Mark.NONE ? 0 : font.getSize() * MARK_SCALE + 4;
+    }
+
+    /**
+     * A check for better, an exclamation mark for worse, drawn as strokes in
+     * a square of side {@code s} whose left edge is {@code x}.
+     */
+    private static void drawMark(GraphicsContext gc, Mark m, double x, double cy, double s, Color tint) {
+        gc.save();
+        gc.setStroke(tint);
+        gc.setFill(tint);
+        gc.setLineWidth(Math.max(1.4, s * 0.17));
+        gc.setLineCap(javafx.scene.shape.StrokeLineCap.ROUND);
+        gc.setLineJoin(javafx.scene.shape.StrokeLineJoin.ROUND);
+        if (m == Mark.BETTER) {
+            gc.strokePolyline(
+                    new double[] {x + s * 0.05, x + s * 0.38, x + s * 0.95},
+                    new double[] {cy + s * 0.02, cy + s * 0.34, cy - s * 0.38},
+                    3);
+        } else {
+            double mx = x + s * 0.5;
+            gc.strokeLine(mx, cy - s * 0.45, mx, cy + s * 0.12);
+            double r = Math.max(0.9, s * 0.11);
+            gc.fillOval(mx - r, cy + s * 0.38 - r, 2 * r, 2 * r);
+        }
+        gc.restore();
     }
 
     // ------------------------------------------------------------------- type
@@ -465,7 +528,13 @@ abstract class HudGauge extends Region {
                             + "and none has been measured, so this change cannot honestly be called "
                             + "better or worse.");
         } else if (frame.moved()) {
-            sb.append('\n').append("Last change: ").append(ratioText(gauge, frame.change()));
+            String verdict = frame.verdict() == HudDelta.Verdict.BETTER
+                    ? " (better for you)"
+                    : frame.verdict() == HudDelta.Verdict.WORSE ? " (worse for you)" : "";
+            sb.append('\n')
+                    .append("Last change: ")
+                    .append(ratioText(gauge, frame.change()))
+                    .append(verdict);
         }
         if (!r.calibrated()) {
             sb.append('\n').append("Rough: this estimate rests on no measurement for this architecture.");
