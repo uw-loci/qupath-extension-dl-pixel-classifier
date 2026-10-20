@@ -12,15 +12,21 @@ public enum Gauge {
     GPU_MEMORY("GPU memory", Polarity.LOWER_BETTER, Scale.FRACTION),
     /** In-memory dataset cache as a fraction of free system RAM. */
     RAM_CACHE("RAM cache", Polarity.LOWER_BETTER, Scale.FRACTION),
-    /** Relative pixels the GPU processes per epoch. */
-    TIME_PER_EPOCH("Time per epoch", Polarity.LOWER_BETTER, Scale.RELATIVE),
+    /**
+     * How fast one epoch goes, relative: the reciprocal of the pixels the GPU
+     * processes per epoch. Shown as a speed, not a time, so that on both big
+     * dials the good end is on the right (user, 2026-10-20): in the downsample
+     * trap the speed needle swings right while the learning-steps needle swings
+     * left, instead of both swinging left in different colours.
+     */
+    EPOCH_SPEED("Epoch speed", Polarity.HIGHER_BETTER, Scale.RELATIVE),
     /** Optimizer steps over the whole run: how much learning the run buys. */
     LEARNING_STEPS("Learning steps", Polarity.HIGHER_BETTER, Scale.RELATIVE),
     /** Training patches. */
     TRAINING_DATA("Training data", Polarity.HIGHER_BETTER, Scale.RELATIVE),
     /** Validation patches; one patch is a large share of the score when there are few. */
     VALIDATION("Validation detail", Polarity.HIGHER_BETTER, Scale.RELATIVE),
-    /** Time per epoch times epochs; an upper bound when early stopping is on. */
+    /** Epoch work times epochs: the whole run; an upper bound when early stopping is on. */
     TOTAL_TIME("Total time", Polarity.LOWER_BETTER, Scale.RELATIVE);
 
     /** Which direction of change is better for the user. */

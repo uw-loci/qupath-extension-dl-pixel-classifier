@@ -50,7 +50,7 @@ public final class HudModel {
         if (!in.patchesKnown()) {
             String why = "Load classes to see data and time";
             for (Gauge g : new Gauge[] {
-                Gauge.TIME_PER_EPOCH, Gauge.LEARNING_STEPS, Gauge.TRAINING_DATA, Gauge.VALIDATION, Gauge.TOTAL_TIME
+                Gauge.EPOCH_SPEED, Gauge.LEARNING_STEPS, Gauge.TRAINING_DATA, Gauge.VALIDATION, Gauge.TOTAL_TIME
             }) {
                 m.put(g, GaugeReading.unavailable(g, why));
             }
@@ -60,7 +60,11 @@ public final class HudModel {
         double contextFactor = in.contextScale() > 1 ? 2.0 : 1.0;
         double perPatch = (double) paddedTile * paddedTile * contextFactor;
         double epochWork = (in.trainPatches() + VALIDATION_COST * in.valPatches()) * perPatch;
-        m.put(Gauge.TIME_PER_EPOCH, relative(Gauge.TIME_PER_EPOCH, epochWork, GaugeReading.Band.NORMAL, ""));
+        if (epochWork > 0) {
+            m.put(Gauge.EPOCH_SPEED, relative(Gauge.EPOCH_SPEED, 1.0 / epochWork, GaugeReading.Band.NORMAL, ""));
+        } else {
+            m.put(Gauge.EPOCH_SPEED, GaugeReading.unavailable(Gauge.EPOCH_SPEED, "no patches"));
+        }
 
         TrainingWorkflow.StepBudget budget =
                 TrainingWorkflow.computeStepBudget(in.trainPatches(), in.batchSize(), in.accumulation(), in.epochs());

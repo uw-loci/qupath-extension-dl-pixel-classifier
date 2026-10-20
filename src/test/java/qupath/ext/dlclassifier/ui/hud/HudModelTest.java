@@ -96,10 +96,24 @@ class HudModelTest {
     @Test
     void downsampleEightIsFasterAndStarved() {
         Map<Gauge, HudDelta.Change> c = change(inputs(1, 16, 40), inputs(8, 16, 40));
-        assertThat(c.get(Gauge.TIME_PER_EPOCH).verdict()).isEqualTo(Verdict.BETTER);
+        assertThat(c.get(Gauge.EPOCH_SPEED).verdict()).isEqualTo(Verdict.BETTER);
         assertThat(c.get(Gauge.LEARNING_STEPS).verdict()).isEqualTo(Verdict.WORSE);
         assertThat(c.get(Gauge.TRAINING_DATA).verdict()).isEqualTo(Verdict.WORSE);
         assertThat(c.get(Gauge.LEARNING_STEPS).ratio()).isLessThan(0.5);
+        // Right is better on both big dials, so the trap shows the two needles
+        // swinging APART: speed up, learning down.
+        assertThat(c.get(Gauge.EPOCH_SPEED).positionNow())
+                .isGreaterThan(c.get(Gauge.EPOCH_SPEED).positionBefore());
+        assertThat(c.get(Gauge.LEARNING_STEPS).positionNow())
+                .isLessThan(c.get(Gauge.LEARNING_STEPS).positionBefore());
+    }
+
+    /** Both big dials keep their good end on the right; reverting either brings back the mirrored reading. */
+    @Test
+    void forTheTwoBigDialsRightIsBetter() {
+        for (Gauge g : List.of(Gauge.EPOCH_SPEED, Gauge.LEARNING_STEPS)) {
+            assertThat(g.polarity()).as(g.name()).isEqualTo(Gauge.Polarity.HIGHER_BETTER);
+        }
     }
 
     @Test
@@ -133,7 +147,7 @@ class HudModelTest {
         assertThat(c.get(Gauge.LEARNING_STEPS).ratio()).isEqualTo(2.0);
         assertThat(c.get(Gauge.TOTAL_TIME).verdict()).isEqualTo(Verdict.WORSE);
         assertThat(c.get(Gauge.TOTAL_TIME).ratio()).isEqualTo(2.0);
-        assertThat(c.get(Gauge.TIME_PER_EPOCH).verdict()).isEqualTo(Verdict.SAME);
+        assertThat(c.get(Gauge.EPOCH_SPEED).verdict()).isEqualTo(Verdict.SAME);
     }
 
     @Test
@@ -147,7 +161,7 @@ class HudModelTest {
     void everyPolarityIsExercisedInBothDirections() {
         Map<Gauge, HudDelta.Change> up = change(inputs(4, 16, 20), inputs(1, 16, 40));
         Map<Gauge, HudDelta.Change> down = change(inputs(1, 16, 40), inputs(4, 16, 20));
-        for (Gauge g : List.of(Gauge.TIME_PER_EPOCH, Gauge.LEARNING_STEPS, Gauge.TRAINING_DATA, Gauge.TOTAL_TIME)) {
+        for (Gauge g : List.of(Gauge.EPOCH_SPEED, Gauge.LEARNING_STEPS, Gauge.TRAINING_DATA, Gauge.TOTAL_TIME)) {
             assertThat(up.get(g).verdict()).as(g.name()).isIn(Verdict.BETTER, Verdict.WORSE);
             assertThat(down.get(g).verdict())
                     .as(g.name())
@@ -158,7 +172,7 @@ class HudModelTest {
     @Test
     void timeAcrossArchitecturesIsUnknownNotColoured() {
         Map<Gauge, HudDelta.Change> c = change(inputs(4, 16, 40, "unet", 256), inputs(4, 16, 40, "tiny-unet", 512));
-        assertThat(c.get(Gauge.TIME_PER_EPOCH).verdict()).isEqualTo(Verdict.UNKNOWN);
+        assertThat(c.get(Gauge.EPOCH_SPEED).verdict()).isEqualTo(Verdict.UNKNOWN);
         assertThat(c.get(Gauge.TOTAL_TIME).verdict()).isEqualTo(Verdict.UNKNOWN);
         // Data and steps do not depend on the architecture, so they stay judged.
         assertThat(c.get(Gauge.TRAINING_DATA).verdict()).isIn(Verdict.BETTER, Verdict.WORSE);
@@ -172,7 +186,7 @@ class HudModelTest {
     @Test
     void anArchitectureOnlyChangeIsUnknownNotSame() {
         Map<Gauge, HudDelta.Change> c = change(inputs(4, 16, 40, "unet", 256), inputs(4, 16, 40, "tiny-unet", 256));
-        assertThat(c.get(Gauge.TIME_PER_EPOCH).verdict()).isEqualTo(Verdict.UNKNOWN);
+        assertThat(c.get(Gauge.EPOCH_SPEED).verdict()).isEqualTo(Verdict.UNKNOWN);
         assertThat(c.get(Gauge.TOTAL_TIME).verdict()).isEqualTo(Verdict.UNKNOWN);
         assertThat(c.get(Gauge.TRAINING_DATA).verdict()).isEqualTo(Verdict.SAME);
     }

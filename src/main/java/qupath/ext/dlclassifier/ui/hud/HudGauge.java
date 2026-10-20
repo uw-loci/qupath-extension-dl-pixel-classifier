@@ -340,7 +340,8 @@ abstract class HudGauge extends Region {
     /** Words for a rise and for a fall, in the terms the user thinks in. */
     private static String[] words(Gauge g) {
         return switch (g) {
-            case TIME_PER_EPOCH, TOTAL_TIME -> new String[] {"slower", "faster"};
+            case EPOCH_SPEED -> new String[] {"faster", "slower"};
+            case TOTAL_TIME -> new String[] {"slower", "faster"};
             case LEARNING_STEPS, TRAINING_DATA, VALIDATION -> new String[] {"more", "fewer"};
             case GPU_MEMORY, RAM_CACHE -> new String[] {"more", "less"};
         };
@@ -577,14 +578,15 @@ abstract class HudGauge extends Region {
         return switch (g) {
             case GPU_MEMORY -> "Predicted peak GPU memory as a share of the card. Lower is better.";
             case RAM_CACHE -> "The in-memory patch cache as a share of free system RAM. Lower is better.";
-            case TIME_PER_EPOCH ->
-                "Relative work in one epoch: patches times the padded tile area. "
-                        + "Lower is faster. Comparable within one architecture only.";
+            case EPOCH_SPEED ->
+                "How fast one epoch goes, relative: the inverse of the pixels the GPU processes in an "
+                        + "epoch (patches times the padded tile area). Higher is better. Comparable within "
+                        + "one architecture only.";
             case LEARNING_STEPS ->
                 "Optimizer steps over the whole run: how much learning it buys. " + "Higher is better.";
             case TRAINING_DATA -> "Training patches the export would start from. Higher is better.";
             case VALIDATION -> "Validation patches. With very few, every score jumps. Higher is better.";
-            case TOTAL_TIME -> "Time per epoch times epochs. Lower is faster.";
+            case TOTAL_TIME -> "The whole run: epoch work times epochs. Lower is faster.";
         };
     }
 }

@@ -48,7 +48,7 @@ import java.util.concurrent.TimeUnit;
  * annotations, opens the Train dialog the way the menu does, loads classes,
  * opens the HUD from its button, then changes Resolution the way a user would
  * -- by setting the combo box. Checks the panel the user sees ended up in the
- * state the design requires (section 3, the trap: time per epoch BETTER,
+ * state the design requires (section 3, the trap: epoch speed BETTER,
  * learning steps WORSE), and writes both windows to PNG.
  *
  * <p>args: workDir outDir tile1.ome.tif tile1.geojson tile4.ome.tif tile4.geojson [savedModelDir]
@@ -150,11 +150,11 @@ public final class TrainingHudDialogScenario {
             }
             check(s.controls().stream().anyMatch(c -> c.startsWith("Resolution")), "the strip names Resolution");
             boolean coarser = to.startsWith("8x");
-            HudDelta.Verdict time = s.changes().get(Gauge.TIME_PER_EPOCH).verdict();
+            HudDelta.Verdict time = s.changes().get(Gauge.EPOCH_SPEED).verdict();
             HudDelta.Verdict steps = s.changes().get(Gauge.LEARNING_STEPS).verdict();
             HudDelta.Verdict data = s.changes().get(Gauge.TRAINING_DATA).verdict();
             if (coarser) {
-                check(time == HudDelta.Verdict.BETTER, "coarser resolution: time per epoch is BETTER");
+                check(time == HudDelta.Verdict.BETTER, "coarser resolution: epoch speed is BETTER");
                 check(data == HudDelta.Verdict.WORSE, "coarser resolution: training data is WORSE");
                 // Steps can sit still when batch already exceeds the patches; then SAME is honest.
                 check(steps == HudDelta.Verdict.WORSE || steps == HudDelta.Verdict.SAME,

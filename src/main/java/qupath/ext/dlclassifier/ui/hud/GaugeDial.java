@@ -9,7 +9,7 @@ import javafx.scene.shape.ArcType;
  * tapered needle, a ghost needle at the previous reading and a filled sweep
  * between them.
  * <p>
- * These carry the pair the whole panel exists for -- time per epoch beside
+ * These carry the pair the whole panel exists for -- epoch speed beside
  * learning steps, speed beside fuel -- so they get the size and the only
  * logarithmic scale on the panel, where a doubling moves the needle the same
  * distance wherever it sits and the reference reading is marked at the top.
@@ -23,8 +23,8 @@ final class GaugeDial extends HudGauge {
      * The title sits below the face rather than inside it. The skill puts it
      * under the hub, but a 240 degree arc sweeps the needle through the whole
      * lower half of the face, so a title there is crossed by the needle at
-     * either stop -- and "TIME PER EPOCH" is wider than the face at that
-     * height anyway.
+     * either stop -- and a title like "LEARNING STEPS" is wider than the face
+     * at that height anyway.
      */
     private static final double TITLE_BAND = 13;
 

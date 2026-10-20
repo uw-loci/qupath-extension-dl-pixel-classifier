@@ -110,7 +110,7 @@ public final class TrainingHudShotScenario {
 
         List<Path> written = new ArrayList<>();
 
-        // (c) first, because it is the acceptance test: time per epoch must be
+        // (c) first, because it is the acceptance test: epoch speed must be
         // blue and learning steps orange from one edit.
         written.addAll(shoot(outDir, "c-trap-downsample-1-to-8", () -> {
             defaults();

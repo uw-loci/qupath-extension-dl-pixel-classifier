@@ -93,7 +93,7 @@ public final class HudDelta {
             double un = scale.unclampedPosition(g, n.value());
             boolean visible = crossed || (ub != un && !(Math.abs(un - ub) < minPositionStep));
             Verdict v;
-            if (!sameArchitecture && (g == Gauge.TIME_PER_EPOCH || g == Gauge.TOTAL_TIME)) {
+            if (!sameArchitecture && (g == Gauge.EPOCH_SPEED || g == Gauge.TOTAL_TIME)) {
                 // The work formula has no per-architecture cost term, and none
                 // is measured. Painting a guess blue or orange would break the
                 // one promise the colours make -- and so would SAME: an

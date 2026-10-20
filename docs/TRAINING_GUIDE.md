@@ -311,10 +311,11 @@ minutes it will take: that depends on your machine. The memory bars show the sha
 and of free RAM, with the point where the GPU gets tight and where the in-memory cache's `auto`
 mode stops caching (50% of free RAM) marked on them.
 
-**Time per epoch and learning steps sit side by side on purpose.** A coarser resolution makes
-each epoch faster only because there are fewer patches to learn from: the panel shows time per
-epoch in blue and learning steps in orange, and both are true. A configuration that is fast
-because it is starved is the one that cannot learn.
+**Epoch speed and learning steps sit side by side on purpose,** and on both dials the good end is
+on the right. A coarser resolution makes each epoch faster only because there are fewer patches
+to learn from: the speed needle swings right in blue while the learning-steps needle swings left
+in orange, and both are true. A configuration that is fast because it is starved is the one that
+cannot learn.
 
 Two things it will not do. Time cannot be compared across architectures or encoders (the panel
 shows `?` rather than guess). And patch counts are estimated from your annotations before any

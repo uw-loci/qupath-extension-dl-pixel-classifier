@@ -154,7 +154,7 @@ public final class TrainingHudView extends Region {
         setPrefSize(PREF_W, PREF_H);
         setMinSize(PREF_W, PREF_H);
 
-        for (Gauge g : new Gauge[] {Gauge.TIME_PER_EPOCH, Gauge.LEARNING_STEPS}) {
+        for (Gauge g : new Gauge[] {Gauge.EPOCH_SPEED, Gauge.LEARNING_STEPS}) {
             gauges.put(g, new GaugeDial(g, palette));
         }
         gpuBar = new GaugeBar(Gauge.GPU_MEMORY, palette, GaugeBar.Size.FULL);
@@ -252,7 +252,7 @@ public final class TrainingHudView extends Region {
      */
     public void show(ChangeTracker.State newState) {
         this.state = newState;
-        boolean hasData = newState.now().get(Gauge.TIME_PER_EPOCH).available();
+        boolean hasData = newState.now().get(Gauge.EPOCH_SPEED).available();
         // Rising from the stop is for the first reading and for the moment the
         // patch counts arrive -- both of which the user did not cause.
         boolean rise = !everShown || (hasData && !dataSeen);
@@ -459,7 +459,7 @@ public final class TrainingHudView extends Region {
         double y = PAD + STRIP_H + GAP;
 
         double cellW = (w - 2 * PAD - 16) / 2;
-        gauges.get(Gauge.TIME_PER_EPOCH).resizeRelocate(PAD, y, cellW, dialsH);
+        gauges.get(Gauge.EPOCH_SPEED).resizeRelocate(PAD, y, cellW, dialsH);
         gauges.get(Gauge.LEARNING_STEPS).resizeRelocate(PAD + cellW + 16, y, cellW, dialsH);
         y += dialsH + GAP;
 
