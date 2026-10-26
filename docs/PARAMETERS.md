@@ -29,7 +29,7 @@ Dialog sections appear in this order:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| **Classifier Name** | Text | Unique identifier for the classifier. Used as filename. Only letters, numbers, underscore, and hyphen allowed. |
+| **Classifier Name** | Text | The name shown in menus and saved with the model. The model folder is derived from it (lower-cased, other characters replaced by `_`, a timestamp appended), so only `< > : " / \ \| ? *` are refused; spaces, periods and parentheses are fine. |
 | **Description** | Text | Optional free-text description stored in classifier metadata. |
 
 ### Model Architecture

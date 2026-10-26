@@ -114,7 +114,7 @@ Loading settings from such a model (see below) restores these per-image roles to
 
 | Setting | Description |
 |---------|-------------|
-| **Classifier Name** | Unique identifier (letters, numbers, underscore, hyphen). Used as filename. |
+| **Classifier Name** | The name shown in menus and saved with the model; spaces, periods and parentheses are fine. The model folder is derived from it, so `< > : " / \ \| ? *` are refused. |
 | **Description** | Optional free-text description for documentation. |
 
 ## Step 4: Configure Model Architecture

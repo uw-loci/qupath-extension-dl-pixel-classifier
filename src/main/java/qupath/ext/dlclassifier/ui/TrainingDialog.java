@@ -51,6 +51,7 @@ import qupath.ext.dlclassifier.ui.hud.TrainingHudView;
 import qupath.ext.dlclassifier.ui.hud.TrainingHudWindow;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner;
 import qupath.ext.dlclassifier.utilities.CheckpointScanner.OrphanedCheckpoint;
+import qupath.ext.dlclassifier.utilities.ClassifierNames;
 import qupath.ext.dlclassifier.utilities.ImageClassCoverageSplitter;
 import qupath.ext.dlclassifier.utilities.PatchCountEstimator;
 import qupath.ext.dlclassifier.utilities.PatchSampler;
@@ -2316,8 +2317,9 @@ public class TrainingDialog {
 
             Label nameLabel = new Label("Classifier Name:");
             TooltipHelper.install(
-                    "Unique identifier for this classifier.\n" + "Used as the filename when saving.\n"
-                            + "Only letters, numbers, underscore, and hyphen allowed.",
+                    "The name shown in menus and saved with the model.\n"
+                            + "The model folder is derived from it, so < > : \" / \\ | ? * are not allowed;\n"
+                            + "spaces, periods and parentheses are fine.",
                     nameLabel,
                     classifierNameField);
 
@@ -7026,11 +7028,11 @@ public class TrainingDialog {
         }
 
         private void validateClassifierName(String name) {
-            if (name == null || name.trim().isEmpty()) {
-                validationErrors.put("name", "Classifier name is required");
-            } else if (!name.matches("[a-zA-Z0-9_-]+")) {
-                validationErrors.put(
-                        "name", "Classifier name can only contain letters, numbers, underscore, and hyphen");
+            // A display name: the model folder is derived from it by TrainingWorkflow, so
+            // only the characters a file name cannot hold are refused (ClassifierNames).
+            String problem = ClassifierNames.problemWith(name);
+            if (problem != null) {
+                validationErrors.put("name", problem);
             } else {
                 validationErrors.remove("name");
             }
