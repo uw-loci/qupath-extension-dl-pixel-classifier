@@ -54,6 +54,7 @@ import qupath.ext.dlclassifier.utilities.CheckpointScanner.OrphanedCheckpoint;
 import qupath.ext.dlclassifier.utilities.ImageClassCoverageSplitter;
 import qupath.ext.dlclassifier.utilities.PatchCountEstimator;
 import qupath.ext.dlclassifier.utilities.PatchSampler;
+import qupath.ext.dlclassifier.utilities.SystemMemory;
 import qupath.ext.dlclassifier.utilities.VramEstimator;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
@@ -732,6 +733,11 @@ public class TrainingDialog {
 
             // Cache GPU memory for live VRAM estimation
             cacheGpuMemory();
+
+            // Free RAM for the cache verdict and the HUD's RAM gauge. A jlinked QuPath
+            // runtime cannot answer from the JVM, so the OS is asked on a background
+            // thread; the reply re-paints the label and the HUD when it arrives.
+            SystemMemory.probe(bytes -> Platform.runLater(() -> onFreeRamResolved(bytes)));
 
             // Initial validation and VRAM estimate
             updateValidation();
@@ -6109,6 +6115,28 @@ public class TrainingDialog {
             if (hudTracker != null) {
                 hudTracker.reset();
             }
+            if (hudFreeRamBytes <= 0) {
+                SystemMemory.probe(bytes -> Platform.runLater(() -> onFreeRamResolved(bytes)));
+            }
+        }
+
+        /**
+         * The OS answered the free-RAM query. Nothing the user did caused this, so the
+         * HUD is shown at rest with the RAM gauge filled in, and the cache verdict on the
+         * tile-estimate label is painted for the first time. A value the dialog already
+         * holds is a no-op, so a synchronous answer costs nothing.
+         */
+        private void onFreeRamResolved(long bytes) {
+            if (bytes <= 0 || bytes == hudFreeRamBytes) {
+                return;
+            }
+            hudFreeRamBytes = bytes;
+            if (lastLoadedClassCount > 0) {
+                updateTileEstimateLabel(lastLoadedClassCount, lastLoadedImageCount);
+            }
+            if (hudTracker != null) {
+                hudTracker.reset();
+            }
         }
 
         /** The dialog's current settings, as the HUD reads them. */
@@ -8839,20 +8867,14 @@ public class TrainingDialog {
     private record HudImage(ImageSelectionItem item, PatchCountEstimator.ImageAnnotations annotations) {}
 
     /**
-     * Free system RAM as the JVM sees it, or -1 when it cannot say.
-     * The training script queries the OS itself; this is what the dialog can see.
+     * Free system RAM as the dialog can see it, or -1 when nothing has answered yet.
+     * The training script queries the OS itself; this is what the dialog can see. QuPath's
+     * bundled runtimes lack the management module that answers at once, so the dialog also
+     * asks the OS in the background ({@link SystemMemory#probe}) and re-reads this when it
+     * replies.
      */
     static long freeRamBytes() {
-        try {
-            java.lang.management.OperatingSystemMXBean osBean =
-                    java.lang.management.ManagementFactory.getOperatingSystemMXBean();
-            if (osBean instanceof com.sun.management.OperatingSystemMXBean sun) {
-                return sun.getFreeMemorySize();
-            }
-        } catch (Throwable ignored) {
-            // com.sun.* unavailable on some JVMs
-        }
-        return -1L;
+        return SystemMemory.freeBytes();
     }
 
     private record ClassItem(

@@ -126,7 +126,7 @@ public final class HudModel {
             return GaugeReading.unavailable(Gauge.RAM_CACHE, "Load classes to see data and time");
         }
         if (in.freeRamBytes() <= 0) {
-            return GaugeReading.unavailable(Gauge.RAM_CACHE, "Free RAM unknown on this system");
+            return GaugeReading.unavailable(Gauge.RAM_CACHE, "Free RAM unknown");
         }
         long bytes = PatchCountEstimator.cacheBytes(
                 in.trainPatches() + in.valPatches(),
