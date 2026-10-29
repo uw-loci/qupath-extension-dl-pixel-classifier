@@ -1710,6 +1710,78 @@ def _validate_mae_architecture(pretrained_path, architecture, log):
         )
 
 
+def _json_safe(value):
+    """Return ``value`` with every non-finite float replaced by None.
+
+    ``json.dump`` writes NaN and Infinity as bare tokens, which no strict
+    JSON parser (Gson, Jackson, browsers) accepts.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+def _epoch_cost_record(
+    train_seconds, val_seconds, train_batches, val_batches, peak_vram_mb
+):
+    """Per-epoch cost fields for ``training_history.json``.
+
+    Seconds are rounded to milliseconds and peak VRAM to 0.1 MB; a peak of
+    None (CPU or MPS) stays None, as does any non-finite value.
+    """
+
+    def _r(v, nd):
+        if v is None:
+            return None
+        v = float(v)
+        return round(v, nd) if math.isfinite(v) else None
+
+    def _secs(v):
+        # Check finiteness first: max(0.0, nan) is 0.0, which would record an
+        # unknown duration as a measured zero.
+        v = _r(v, 3)
+        return None if v is None else max(0.0, v)
+
+    train_s = _secs(train_seconds)
+    val_s = _secs(val_seconds)
+    return {
+        "epoch_seconds": (
+            _r(train_s + val_s, 3)
+            if train_s is not None and val_s is not None
+            else None
+        ),
+        "train_seconds": train_s,
+        "val_seconds": val_s,
+        "train_batches": int(train_batches),
+        "val_batches": int(val_batches),
+        "peak_vram_mb": _r(peak_vram_mb, 1),
+    }
+
+
+def _training_hardware(gpu_manager, device):
+    """What the run trained on, for ``metadata.json``.
+
+    Lets a later reader tell whether a measured epoch time or peak VRAM was
+    measured on the card it is being compared against.
+    """
+    info = {"device": str(device)}
+    try:
+        info["device_name"] = gpu_manager.get_device_name()
+        info["total_memory_mb"] = int(gpu_manager.get_memory_mb() or 0)
+        info["cuda_version"] = gpu_manager.get_cuda_version()
+    except Exception as e:
+        logger.warning("Could not read GPU details for metadata: %s", e)
+    try:
+        info["torch_version"] = torch.__version__
+    except Exception:
+        pass
+    return info
+
+
 class TrainingService:
     """Service for training deep learning models.
 
@@ -3753,6 +3825,14 @@ class TrainingService:
             # long epochs on slow devices (MPS) show visible progress.
             log_interval = max(1, min(50, total_batches // 10))
             epoch_start_time = time.time()
+            # Peak VRAM is recorded per epoch in training_history.json (the
+            # Training HUD calibrates its GPU gauge from it), so measure each
+            # epoch from its own start. Weights already resident still count.
+            if self.device == "cuda":
+                try:
+                    torch.cuda.reset_peak_memory_stats()
+                except Exception as e:
+                    logger.warning("Could not reset CUDA peak memory stats: %s", e)
 
             for batch_idx, (images, masks) in enumerate(active_train_loader):
                 images = images.to(self.device)
@@ -4062,7 +4142,15 @@ class TrainingService:
             else:
                 selection_mean_iou = mean_iou
 
-            # Record history
+            # Record history. The timing and VRAM fields are what the Training
+            # HUD will calibrate from: measured seconds and memory for a known
+            # configuration (metadata.json carries the settings and, under
+            # "training_hardware", the device), so an architecture change can
+            # be shown as a measured ratio instead of "not comparable".
+            # train_seconds runs from the first batch request (data loading
+            # included) to the end of the train loop; val_seconds is the
+            # validation pass; neither includes checkpoint saving below.
+            _val_end_time = time.time()
             training_history.append(
                 {
                     "epoch": epoch + 1,
@@ -4073,6 +4161,17 @@ class TrainingService:
                     "per_class_iou": per_class_iou,
                     "per_class_loss": per_class_loss,
                     "mean_iou": mean_iou,
+                    **_epoch_cost_record(
+                        train_seconds=val_start_time - epoch_start_time,
+                        val_seconds=_val_end_time - val_start_time,
+                        train_batches=total_batches,
+                        val_batches=val_total_batches,
+                        peak_vram_mb=(
+                            self.gpu_manager.get_peak_allocated_mb()
+                            if self.device == "cuda"
+                            else None
+                        ),
+                    ),
                 }
             )
 
@@ -5740,6 +5839,7 @@ class TrainingService:
             },
             "input_config": saved_input_config,
             "classes": class_list,
+            "training_hardware": _training_hardware(self.gpu_manager, self.device),
         }
         # Resolution contract: if pixel size or tile size were provided
         # by the caller, embed them so the inference path (and the
@@ -5783,7 +5883,9 @@ class TrainingService:
         if training_history:
             history_path = output_dir / "training_history.json"
             with open(history_path, "w") as f:
-                json.dump(training_history, f, indent=2)
+                # A diverged epoch records NaN loss; bare NaN is not JSON and
+                # would break every reader of this file, including the HUD's.
+                json.dump(_json_safe(training_history), f, indent=2, allow_nan=False)
             logger.info(f"Saved training history ({len(training_history)} epochs)")
 
         logger.info(f"Model saved to {output_dir}")

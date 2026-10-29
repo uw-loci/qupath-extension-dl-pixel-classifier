@@ -37,6 +37,24 @@ public class ModelManager {
     private static final String CLASSIFIERS_DIR = "classifiers/dl";
     private static final String METADATA_FILE = "metadata.json";
 
+    /**
+     * Top-level keys of the metadata.json the training script writes that survive the
+     * Java rewrite in {@link #saveClassifier}, which REPLACES that file: a key missing
+     * from both {@link ClassifierMetadata#toMap()} and this list is destroyed on every
+     * training run. {@code training_hardware} names the device the run's per-epoch
+     * times and peak VRAM in training_history.json were measured on.
+     */
+    static final List<String> PYTHON_PRESERVED_KEYS = List.of(
+            "input_config",
+            "normalization_stats",
+            "training_pixel_size_um",
+            "training_tile_size_px",
+            "training_patches_total",
+            "training_patches_train",
+            "training_patches_validation",
+            "onnx_variants",
+            "training_hardware");
+
     private final Gson gson;
     private final Path userClassifiersDir;
 
@@ -615,15 +633,7 @@ public class ModelManager {
                 // mismatch warning and the resample step, which is the whole
                 // cross-batch use case. They were being lost on every single
                 // training run -- no saved model had them.
-                for (String key : List.of(
-                        "input_config",
-                        "normalization_stats",
-                        "training_pixel_size_um",
-                        "training_tile_size_px",
-                        "training_patches_total",
-                        "training_patches_train",
-                        "training_patches_validation",
-                        "onnx_variants")) {
+                for (String key : PYTHON_PRESERVED_KEYS) {
                     if (pythonMeta.has(key) && !javaMetadata.containsKey(key)) {
                         javaMetadata.put(key, gson.fromJson(pythonMeta.get(key), Object.class));
                     }
