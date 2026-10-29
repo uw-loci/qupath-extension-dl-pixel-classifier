@@ -27,63 +27,24 @@ if inference_service is None:
     )
 
 
-# --- Inline normalization for precomputed image-level stats ---
-# This logic is defined here (in the JAR-bundled script) rather than
-# delegating entirely to inference_service._normalize(), because the
-# dlclassifier_server package installed in the Appose pixi environment
-# may be an older version that does not support precomputed stats.
-# Scripts loaded from JAR resources are always current.
-
-
-def _apply_precomputed_stats(img, stats, strategy):
-    """Normalize a single channel/image using pre-computed statistics."""
-    if strategy == "percentile_99":
-        p_min = stats.get("p1", float(img.min()))
-        p_max = stats.get("p99", float(img.max()))
-        img = np.clip(img, p_min, p_max)
-        if p_max > p_min:
-            img = (img - p_min) / (p_max - p_min)
-    elif strategy == "min_max":
-        i_min = stats.get("min", float(img.min()))
-        i_max = stats.get("max", float(img.max()))
-        if i_max > i_min:
-            img = (img - i_min) / (i_max - i_min)
-    elif strategy == "z_score":
-        mean = stats.get("mean", float(img.mean()))
-        std = stats.get("std", float(img.std()))
-        if std > 0:
-            img = (img - mean) / std
-            img = np.clip(img, -5, 5)
-            img = (img + 5) / 10
-    elif strategy == "fixed_range":
-        fixed_min = stats.get("min", 0)
-        fixed_max = stats.get("max", 255)
-        img = np.clip(img, fixed_min, fixed_max)
-        if fixed_max > fixed_min:
-            img = (img - fixed_min) / (fixed_max - fixed_min)
-    return img
-
-
+# --- Normalization: the training function, not a copy of it ---
+# Tiles are normalized by the SAME function the training dataset calls,
+# dlclassifier_server.utils.normalization.normalize (reached through
+# inference_service._normalize), so preprocessing round-trips by
+# construction. See docs/NORMALIZATION_ROUNDTRIP.md.
+#
+# This used to be an inline copy, kept because the installed package might
+# be older than the JAR (2026-02). It drifted: when 931ec34 (0.9.15) made
+# per_channel=false POOL the per-channel statistics in training, the copies
+# kept using channel 0's (red's) for every channel, so every brightfield
+# model trained since was served different preprocessing than it learned on
+# (output matched red-only normalization on 100% of pixels, the training
+# preprocessing on 85.9%). The copies also lacked training's fallback for
+# statistics with no range. The reason for copying is gone: init_services
+# refuses to start an inference service whose package version differs from
+# the JAR's, so this function is always the one training used.
 def _normalize_tile(img, input_config):
-    """Normalize a tile, using precomputed image-level stats when available."""
-    norm_config = input_config.get("normalization", {})
-    precomputed = norm_config.get("precomputed", False)
-    channel_stats = norm_config.get("channel_stats", None)
-
-    if precomputed and channel_stats:
-        strategy = norm_config.get("strategy", "percentile_99")
-        per_channel = norm_config.get("per_channel", False)
-        if per_channel and img.ndim == 3 and img.shape[2] > 1:
-            for c in range(min(img.shape[2], len(channel_stats))):
-                img[..., c] = _apply_precomputed_stats(
-                    img[..., c], channel_stats[c], strategy
-                )
-        else:
-            stats = channel_stats[0] if channel_stats else {}
-            img = _apply_precomputed_stats(img, stats, strategy)
-        return img
-
-    # Fall back to per-tile normalization via installed InferenceService
+    """Normalize one tile exactly as training normalized its patches."""
     return inference_service._normalize(img, input_config)
 
 
