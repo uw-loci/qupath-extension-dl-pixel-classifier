@@ -288,9 +288,19 @@ _AUTO_CACHE_FRACTION = 0.50
 # keys off _in_memory_mode, not this flag).
 _cache_validation_only = str(_in_memory_mode).lower() == "off"
 
-if (_in_memory_mode in ("auto", "on", "bounded") or _cache_validation_only) and not getattr(
-        _tsm.SegmentationDataset, "_patched_preload", False):
-    _orig_sd_init = _tsm.SegmentationDataset.__init__
+# Re-installed on EVERY run, around the class's true __init__. Appose reuses
+# the worker process, and this script runs again in fresh globals each time;
+# the patch closes over THIS run's _in_memory_mode, _cache_validation_only
+# and _bounded_fraction. It used to be installed once per process behind a
+# _patched_preload flag, so the first run's cache mode stuck for every later
+# run in that worker: found 2026-10-29 when a benchmark's 'auto' arms ran
+# after an 'off' arm and took the validation-only branch.
+if not hasattr(_tsm.SegmentationDataset, "_dl_orig_init"):
+    _tsm.SegmentationDataset._dl_orig_init = _tsm.SegmentationDataset.__init__
+_orig_sd_init = _tsm.SegmentationDataset._dl_orig_init
+_tsm.SegmentationDataset.__init__ = _orig_sd_init
+
+if _in_memory_mode in ("auto", "on", "bounded") or _cache_validation_only:
     try:
         import psutil as _psutil
         _psutil_ok = True
@@ -581,8 +591,11 @@ if (_in_memory_mode in ("auto", "on", "bounded") or _cache_validation_only) and 
                     "may fail with MemoryError",
                     total_bytes / 1e9, available / 1e9, source)
 
-        logger.info("In-memory cache: preloading %d patches (~%.2f GB) from %s...",
-                    n, total_bytes / 1e9,
+        # Name the half: both are read from a folder called "images", so the
+        # log could not say which set was cached.
+        logger.info("In-memory cache: preloading %d %s patches (~%.2f GB) from %s...",
+                    n, "validation" if _is_validation else "training",
+                    total_bytes / 1e9,
                     self.images_dir.name if hasattr(self.images_dir, 'name')
                     else str(self.images_dir))
 
@@ -639,10 +652,10 @@ if (_in_memory_mode in ("auto", "on", "bounded") or _cache_validation_only) and 
 
         self._cached_images = cached_imgs
         self._cached_masks = cached_masks
-        logger.info("In-memory cache: preload complete (%d patches)", n)
+        logger.info("In-memory cache: preload complete (%d %s patches)", n,
+                    "validation" if _is_validation else "training")
 
     _tsm.SegmentationDataset.__init__ = _init_with_cache
-    _tsm.SegmentationDataset._patched_preload = True
 
 # DataLoader num_workers bootstrap: the installed pip package may still
 # hardcode num_workers=0 in training_service._run_training (prior to
@@ -668,40 +681,52 @@ if (_cache_mode_for_workers in ("auto", "on", "bounded")
         "worker on Windows/Appose spawn).")
     _dl_workers_pref = 0
 
+# Re-installed on every run around DataLoader's true __init__, for the same
+# reason as the cache patch above: installed once per process, it kept the
+# first run's worker count and upgraded every later run's loaders too,
+# including runs with the cache on (one cache copy per worker on Windows).
+#
+# It does two things, scoped to this extension's SegmentationDataset so
+# DataLoaders built by other tasks in the same worker are left alone:
+#   * validation stays single-process, ALWAYS. It is never augmented and is
+#     read identically every epoch, so workers buy it nothing, while on
+#     Windows/Appose spawn each one would pickle another copy of the
+#     validation cache, which is budgeted as ONE copy (_copies above). The
+#     installed training_service passes its worker count to the validation
+#     loader too, so this must override a non-zero request, not only fill in
+#     a zero one; until 2026-10-29 it did not.
+#   * training loaders asked for 0 workers get _dl_workers_pref, for an
+#     installed package that predates honoring data_loader_workers.
+from torch.utils.data import DataLoader as _DataLoader
+
+if not hasattr(_DataLoader, "_dl_orig_init"):
+    _DataLoader._dl_orig_init = _DataLoader.__init__
+_orig_dl_init = _DataLoader._dl_orig_init
+
+
+def _patched_dl_init(self, *args, **kwargs):
+    _ds = args[0] if args else kwargs.get("dataset")
+    if isinstance(_ds, _tsm.SegmentationDataset):
+        if getattr(_ds, "_is_validation_half", False):
+            kwargs["num_workers"] = 0
+            kwargs["persistent_workers"] = False
+            kwargs["pin_memory"] = False
+        elif _dl_workers_pref > 0 and kwargs.get("num_workers", 0) == 0:
+            kwargs["num_workers"] = _dl_workers_pref
+            # persistent_workers reduces per-epoch worker startup cost for
+            # small datasets; page-locked buffers let the H2D copy overlap
+            # compute. Both only mean anything alongside worker processes.
+            kwargs.setdefault("persistent_workers", True)
+            kwargs.setdefault("pin_memory", True)
+    return _orig_dl_init(self, *args, **kwargs)
+
+
+_DataLoader.__init__ = _patched_dl_init
 if _dl_workers_pref > 0:
-    from torch.utils.data import DataLoader as _DataLoader
-    if not getattr(_DataLoader, "_patched_num_workers", False):
-        _orig_dl_init = _DataLoader.__init__
-
-        def _patched_dl_init(self, *args, **kwargs):
-            # Validation stays single-process. It is never augmented and is
-            # read identically every epoch, so workers buy it nothing, while
-            # on Windows/Appose spawn each one would pickle another copy of
-            # the validation cache. See the _copies comment above -- the two
-            # must change together.
-            _ds = args[0] if args else kwargs.get("dataset")
-            if getattr(_ds, "_is_validation_half", False):
-                return _orig_dl_init(self, *args, **kwargs)
-            # Only upgrade when the caller explicitly passed num_workers=0
-            # (or omitted it so it defaults to 0). This lets future
-            # call-sites that opt out of worker processes stay at 0.
-            if kwargs.get("num_workers", 0) == 0:
-                kwargs["num_workers"] = _dl_workers_pref
-                # persistent_workers reduces per-epoch worker startup cost
-                # for small datasets; only meaningful when num_workers > 0.
-                kwargs.setdefault("persistent_workers", True)
-                # Page-locked staging buffers let the H2D copy overlap compute.
-                # Only meaningful alongside worker processes, which is why it
-                # sits inside the num_workers upgrade.
-                kwargs.setdefault("pin_memory", True)
-            return _orig_dl_init(self, *args, **kwargs)
-
-        _DataLoader.__init__ = _patched_dl_init
-        _DataLoader._patched_num_workers = True
-        logger.info(
-            "DataLoader bootstrap: forcing num_workers=%d, persistent_workers=True "
-            "(installed pip package may still hardcode num_workers=0)",
-            _dl_workers_pref)
+    logger.info(
+        "DataLoader bootstrap: forcing num_workers=%d, persistent_workers=True "
+        "(installed pip package may still hardcode num_workers=0)",
+        _dl_workers_pref)
 
 logger.info("train.py: constructing TrainingService")
 training_service = TrainingService(gpu_manager=gpu_manager)
