@@ -44,6 +44,7 @@ import qupath.ext.dlclassifier.utilities.ChannelSelection;
 import qupath.ext.dlclassifier.utilities.ClassPixelCounter;
 import qupath.ext.dlclassifier.utilities.ImageCompat;
 import qupath.ext.dlclassifier.utilities.OutputGenerator;
+import qupath.ext.dlclassifier.utilities.RegionTiling;
 import qupath.ext.dlclassifier.utilities.TileEncoder;
 import qupath.ext.dlclassifier.utilities.TileProcessor;
 import qupath.fx.dialogs.Dialogs;
@@ -728,10 +729,18 @@ public class InferenceWorkflow {
             // counts, so it counts tile by tile inside the annotation instead: a whole-slide
             // annotation at full resolution would need tens of gigabytes as one map.
             boolean measurements = inferenceConfig.getOutputType() == InferenceConfig.OutputType.MEASUREMENTS;
+            if (!measurements) {
+                String tooBig =
+                        RegionTiling.objectsClassMapProblem(pixelW, pixelH, RegionTiling.availableHeapBytes(), ds);
+                if (tooBig != null) {
+                    throw new IOException(tooBig);
+                }
+            }
             int[][] classMap = measurements ? null : new int[pixelH][pixelW];
-            ClassPixelCounter counter = measurements
-                    ? new ClassPixelCounter(region.getShape(), regionX, regionY, ds, pixelW, pixelH)
-                    : null;
+            java.awt.Shape roiShape = region.getShape();
+            ClassPixelCounter counter =
+                    measurements ? new ClassPixelCounter(roiShape, regionX, regionY, ds, pixelW, pixelH) : null;
+            int skipped = 0;
 
             // Count tiles for progress
             int tilesX = (int) Math.ceil((double) regionW / strideFull);
@@ -756,6 +765,16 @@ public class InferenceWorkflow {
 
                     int w = Math.min(strideFull, regionX + regionW - tileXFull);
                     int h = Math.min(strideFull, regionY + regionH - tileYFull);
+
+                    // A tile outside the annotation would only be classified to be clipped
+                    // (OBJECTS) or masked (MEASUREMENTS) away; an L-shaped or thin annotation's
+                    // bounding box is mostly such tiles. Its class-map cells stay 0, which the
+                    // clip to the parent ROI removes.
+                    if (!RegionTiling.tileTouches(roiShape, tileXFull, tileYFull, w, h)) {
+                        skipped++;
+                        processed++;
+                        continue;
+                    }
 
                     RegionRequest request = RegionRequest.createInstance(serverPath, ds, tileXFull, tileYFull, w, h);
 
@@ -790,9 +809,10 @@ public class InferenceWorkflow {
             if (measurements) {
                 outputGenerator.addClassPixelMeasurements(parentObject, counter.counts(), ds);
                 if (progress != null) {
-                    progress.log("Measured " + counter.total() + " classified pixels in " + processed + " tiles");
+                    progress.log("Measured " + counter.total() + " classified pixels in " + (processed - skipped)
+                            + " tiles (" + skipped + " outside the annotation skipped)");
                 }
-                return processed;
+                return processed - skipped;
             }
 
             // Create objects from the classification map.
@@ -808,6 +828,9 @@ public class InferenceWorkflow {
 
             imageData.getHierarchy().addObjects(objects);
 
+            if (progress != null && skipped > 0) {
+                progress.log(skipped + " of " + processed + " tiles lay outside the annotation and were skipped");
+            }
             if (progress != null) {
                 progress.log("Created " + objects.size() + " "
                         + inferenceConfig.getObjectType().name().toLowerCase()
@@ -815,7 +838,7 @@ public class InferenceWorkflow {
                         + processed + " tiles");
             }
 
-            return processed;
+            return processed - skipped;
         } finally {
             classifier.cleanup();
         }
