@@ -115,8 +115,7 @@ public class DLClassifierScripts {
             throw new IllegalArgumentException("Classifier '" + existingClassifierId
                     + "' has no training_settings recorded -- cannot retrain from it.");
         }
-        Map<String, Object> merged = new LinkedHashMap<>(ts);
-        if (overrides != null) merged.putAll(overrides);
+        Map<String, Object> merged = retrainSettings(source, ts, overrides);
         qupath.ext.dlclassifier.model.TrainingConfig.Builder cb =
                 qupath.ext.dlclassifier.model.TrainingConfig.Builder.fromTrainingSettings(merged);
         // Top-level metadata fields aren't in training_settings; copy from the
@@ -127,15 +126,7 @@ public class DLClassifierScripts {
                 .downsample(source.getDownsample());
         qupath.ext.dlclassifier.model.TrainingConfig config = cb.build();
 
-        ChannelConfiguration channels = ChannelConfiguration.builder()
-                .channelNames(source.getExpectedChannelNames())
-                .normalizationStrategy(source.getNormalizationStrategy())
-                // Carry the trained normalization flags forward -- see
-                // NORMALIZATION_ROUNDTRIP.md.
-                .perChannelNormalization(source.isPerChannelNormalization())
-                .clipPercentile(source.getClipPercentile())
-                .bitDepth(source.getBitDepthTrained())
-                .build();
+        ChannelConfiguration channels = retrainChannels(source);
         List<String> classes = source.getClasses().stream()
                 .map(ClassifierMetadata.ClassInfo::name)
                 .toList();
@@ -157,6 +148,48 @@ public class DLClassifierScripts {
                 .classes(classes)
                 .build()
                 .run();
+    }
+
+    /**
+     * The channel configuration a retrain runs with: the source's selected channels
+     * (or 0..n-1 for a model that predates recording them), names, normalization and
+     * bit depth. Until 2026-10-29 the selected channels were left out, so
+     * {@link ChannelConfiguration.Builder#build()} threw "At least one channel must be
+     * selected" on every retrain.
+     */
+    public static ChannelConfiguration retrainChannels(ClassifierMetadata source) {
+        return ChannelConfiguration.builder()
+                .selectedChannels(source.getSelectedChannelsOrRange())
+                .channelNames(source.getExpectedChannelNames())
+                .normalizationStrategy(source.getNormalizationStrategy())
+                // Carry the trained normalization flags forward -- see
+                // NORMALIZATION_ROUNDTRIP.md.
+                .perChannelNormalization(source.isPerChannelNormalization())
+                .clipPercentile(source.getClipPercentile())
+                .bitDepth(source.getBitDepthTrained())
+                .build();
+    }
+
+    /**
+     * The settings a retrain runs with: the source's {@code training_settings}, plus
+     * the tile size and epoch count, which are stored elsewhere in metadata
+     * ({@code input_size}, {@code training.epochs}) and were silently replaced by the
+     * builder defaults (512 px, 50 epochs) until 2026-10-29. Same rule as the Train
+     * dialog's load-from-model. Overrides win over everything.
+     */
+    public static Map<String, Object> retrainSettings(
+            ClassifierMetadata source, Map<String, Object> trainingSettings, Map<String, Object> overrides) {
+        Map<String, Object> merged = new LinkedHashMap<>(trainingSettings);
+        if (source.getInputWidth() > 0) {
+            merged.putIfAbsent("tile_size", source.getInputWidth());
+        }
+        if (source.getTrainingEpochs() > 0) {
+            merged.putIfAbsent("epochs", source.getTrainingEpochs());
+        }
+        if (overrides != null) {
+            merged.putAll(overrides);
+        }
+        return merged;
     }
 
     /**

@@ -1195,6 +1195,11 @@ public class TrainingConfig {
                     switch (k) {
                         case "learning_rate" -> b.learningRate(((Number) v).doubleValue());
                         case "batch_size" -> b.batchSize(((Number) v).intValue());
+                        // Not in a saved model's training_settings (they live in
+                        // metadata as input_size and training.epochs), but accepted
+                        // so a retrain override or a merged map can set them.
+                        case "epochs" -> b.epochs(((Number) v).intValue());
+                        case "tile_size" -> b.tileSize(((Number) v).intValue());
                         case "weight_decay" -> b.weightDecay(((Number) v).doubleValue());
                         case "validation_split" -> b.validationSplit(((Number) v).doubleValue());
                         case "overlap" -> b.overlap(((Number) v).intValue());
