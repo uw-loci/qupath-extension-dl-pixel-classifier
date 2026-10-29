@@ -258,7 +258,7 @@ qupath-extension-dl-pixel-classifier/
 |   |-- utilities/                     # Processing utilities
 |   |   |-- AnnotationExtractor.java  # Training data export (single + multi-image)
 |   |   |-- TileProcessor.java
-|   |   |-- ChannelNormalizer.java
+|   |   |-- ClassPixelCounter.java    # MEASUREMENTS: per-class pixel counts inside annotations
 |   |   |-- BitDepthConverter.java
 |   |   `-- OutputGenerator.java
 |   |-- ui/                            # UI components
