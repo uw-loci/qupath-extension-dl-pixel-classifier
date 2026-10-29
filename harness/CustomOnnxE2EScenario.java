@@ -407,6 +407,10 @@ public final class CustomOnnxE2EScenario {
                 .minObjectSizeMicrons(0.0)
                 .holeFillingMicrons(0.0)
                 .boundarySmoothing(0.0)
+                // The expected class map is the model's raw per-pixel argmax, so compare
+                // against unsmoothed output (as the overlay checks above do); the default
+                // sigma of 2.0 moves several points of a speckled map between classes.
+                .overlaySmoothingSigma(0.0)
                 .build();
         long t0 = System.currentTimeMillis();
         InferenceWorkflow.InferenceResult res;

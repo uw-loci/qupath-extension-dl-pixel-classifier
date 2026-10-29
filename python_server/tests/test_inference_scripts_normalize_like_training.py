@@ -23,7 +23,7 @@ SCRIPTS = (
     pathlib.Path(__file__).resolve().parents[2]
     / "src/main/resources/qupath/ext/dlclassifier/scripts"
 )
-NAMES = ["inference_pixel.py", "inference_pixel_batch.py", "inference_batch.py"]
+NAMES = ["inference_pixel.py", "inference_pixel_batch.py"]
 
 
 def _stats(p1, p99, lo, hi, mean, std):

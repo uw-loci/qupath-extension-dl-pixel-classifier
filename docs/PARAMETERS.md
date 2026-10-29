@@ -239,7 +239,7 @@ The inference dialog is accessed via **Extensions > DL Pixel Classifier > Apply 
 
 | Parameter | Default | Options | Description |
 |-----------|---------|---------|-------------|
-| **Output Type** | RENDERED_OVERLAY | MEASUREMENTS, OBJECTS, OVERLAY, RENDERED_OVERLAY | How results are represented. **RENDERED_OVERLAY** (recommended) runs batch inference with tile blending, producing a seamless overlay that accurately represents what OBJECTS output would look like. Best for validating classifier quality. **OVERLAY** enables live on-demand classification as you pan and zoom. **OBJECTS** creates detection/annotation objects. **MEASUREMENTS** adds per-class probabilities to existing annotations. |
+| **Output Type** | RENDERED_OVERLAY | MEASUREMENTS, OBJECTS, OVERLAY, RENDERED_OVERLAY | How results are represented. **RENDERED_OVERLAY** (recommended) runs batch inference with tile blending, producing a seamless overlay that accurately represents what OBJECTS output would look like. Best for validating classifier quality. **OVERLAY** enables live on-demand classification as you pan and zoom. **OBJECTS** creates detection/annotation objects. **MEASUREMENTS** adds each class's area and percentage of the annotation, counted from the same per-pixel classification as OBJECTS. |
 | **Object Type** | DETECTION | DETECTION, ANNOTATION | QuPath object type (OBJECTS output only). |
 | **Min Object Size** | 10 um^2 | 0-10000 | Discard objects below this area. |
 | **Hole Filling** | 5 um^2 | 0-1000 | Fill interior holes below this area. |

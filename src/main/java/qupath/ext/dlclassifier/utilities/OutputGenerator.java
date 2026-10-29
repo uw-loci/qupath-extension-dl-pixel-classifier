@@ -73,60 +73,6 @@ public class OutputGenerator {
     }
 
     /**
-     * Generates measurements output for a parent annotation.
-     *
-     * @param parent      the parent annotation
-     * @param predictions probability map [height][width][numClasses]
-     */
-    public void addMeasurements(PathObject parent, float[][][] predictions) {
-        logger.info("Adding measurements to: {}", parent.getName());
-
-        int height = predictions.length;
-        int width = predictions[0].length;
-        int numClasses = predictions[0][0].length;
-        int totalPixels = height * width;
-
-        // Calculate area per class
-        double[] classAreas = new double[numClasses];
-        int[] classCounts = new int[numClasses];
-
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                // Find winning class
-                int maxClass = 0;
-                float maxProb = predictions[y][x][0];
-                for (int c = 1; c < numClasses; c++) {
-                    if (predictions[y][x][c] > maxProb) {
-                        maxProb = predictions[y][x][c];
-                        maxClass = c;
-                    }
-                }
-                classCounts[maxClass]++;
-            }
-        }
-
-        // Convert to area
-        double pixelArea = pixelSizeMicrons * pixelSizeMicrons;
-        for (int c = 0; c < numClasses; c++) {
-            classAreas[c] = classCounts[c] * pixelArea;
-        }
-
-        // Add measurements
-        var ml = parent.getMeasurementList();
-        List<ClassifierMetadata.ClassInfo> classes = metadata.getClasses();
-
-        for (int c = 0; c < numClasses; c++) {
-            String className = c < classes.size() ? classes.get(c).name() : "Class " + c;
-            double percentage = 100.0 * classCounts[c] / totalPixels;
-
-            ml.put("DL: " + className + " area (um^2)", classAreas[c]);
-            ml.put("DL: " + className + " %", percentage);
-        }
-
-        logger.info("Added {} measurements", numClasses * 2);
-    }
-
-    /**
      * Creates detection objects from classification results using QuPath's ContourTracing API.
      *
      * @param predictions probability map [height][width][numClasses]
@@ -211,71 +157,44 @@ public class OutputGenerator {
     }
 
     /**
-     * Generates measurements output for a parent annotation from multiple tile results.
+     * Writes class measurements to an annotation from pixel counts of the classified map
+     * (see {@link ClassPixelCounter}): for each class, its area and its share of the
+     * classified pixels inside the annotation, plus the pixel total.
+     * <p>
+     * Classes are named by their metadata {@code index}, not their position in the list, so
+     * metadata listing classes out of order still labels them correctly; a model output with
+     * no class in the metadata is reported as "Class i".
      *
-     * @param parent      the parent annotation
-     * @param tileResults list of probability maps for each tile
-     * @param tileSpecs   list of tile specifications
+     * @param parent     the annotation
+     * @param counts     pixel count per class index, at classifier resolution
+     * @param downsample full-resolution pixels per counted pixel, for converting to area
      */
-    public void addMeasurements(
-            PathObject parent, List<float[][][]> tileResults, List<TileProcessor.TileSpec> tileSpecs) {
-        if (tileResults.isEmpty()) {
-            logger.warn("No tile results to process for measurements");
-            return;
+    public void addClassPixelMeasurements(PathObject parent, long[] counts, double downsample) {
+        java.util.Map<Integer, String> names = new java.util.HashMap<>();
+        int numClasses = counts.length;
+        for (ClassifierMetadata.ClassInfo ci : metadata.getClasses()) {
+            names.put(ci.index(), ci.name());
+            numClasses = Math.max(numClasses, ci.index() + 1);
         }
-
-        logger.info("Adding measurements from {} tiles to: {}", tileResults.size(), parent.getName());
-
-        // Aggregate counts across all tiles
-        int numClasses = tileResults.get(0)[0][0].length;
-        long[] classCounts = new long[numClasses];
-        long totalPixels = 0;
-
-        for (float[][][] predictions : tileResults) {
-            int height = predictions.length;
-            int width = predictions[0].length;
-            totalPixels += (long) height * width;
-
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
-                    // Find winning class
-                    int maxClass = 0;
-                    float maxProb = predictions[y][x][0];
-                    for (int c = 1; c < numClasses; c++) {
-                        if (predictions[y][x][c] > maxProb) {
-                            maxProb = predictions[y][x][c];
-                            maxClass = c;
-                        }
-                    }
-                    classCounts[maxClass]++;
-                }
-            }
+        long total = 0;
+        for (long c : counts) {
+            total += c;
         }
-
-        // Convert to area
-        double pixelArea = pixelSizeMicrons * pixelSizeMicrons;
-        double[] classAreas = new double[numClasses];
-        for (int c = 0; c < numClasses; c++) {
-            classAreas[c] = classCounts[c] * pixelArea;
-        }
-
-        // Add measurements
+        double pixelArea = (pixelSizeMicrons * downsample) * (pixelSizeMicrons * downsample);
         var ml = parent.getMeasurementList();
-        List<ClassifierMetadata.ClassInfo> classes = metadata.getClasses();
-
         for (int c = 0; c < numClasses; c++) {
-            String className = c < classes.size() ? classes.get(c).name() : "Class " + c;
-            double percentage = totalPixels > 0 ? 100.0 * classCounts[c] / totalPixels : 0;
-
-            ml.put("DL: " + className + " area (um^2)", classAreas[c]);
-            ml.put("DL: " + className + " %", percentage);
+            long n = c < counts.length ? counts[c] : 0;
+            String className = names.getOrDefault(c, "Class " + c);
+            ml.put("DL: " + className + " area (um^2)", n * pixelArea);
+            ml.put("DL: " + className + " %", total > 0 ? 100.0 * n / total : 0);
         }
-
-        ml.put("DL: Total pixels", totalPixels);
-        // Classifier name stored in logger only; MeasurementList accepts only numeric values
-        logger.info("Measurements from classifier: {}", metadata.getName());
-
-        logger.info("Added {} measurements", numClasses * 2 + 2);
+        ml.put("DL: Total pixels", total);
+        logger.info(
+                "Measurements for '{}': {} classified pixels at {}x downsample, classifier {}",
+                parent.getName(),
+                total,
+                downsample,
+                metadata.getName());
     }
 
     /**

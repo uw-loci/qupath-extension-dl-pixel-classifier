@@ -187,33 +187,6 @@ public interface ClassifierBackend {
             throws IOException;
 
     /**
-     * Runs batch inference using binary tile transfer.
-     *
-     * @param modelPath       path to the trained model
-     * @param rawTileBytes    concatenated tile pixels
-     * @param tileIds         tile IDs
-     * @param tileHeight      tile height
-     * @param tileWidth       tile width
-     * @param numChannels     number of channels
-     * @param dtype           data type
-     * @param channelConfig   channel configuration
-     * @param inferenceConfig inference configuration
-     * @return inference result, or null if binary path unavailable
-     * @throws IOException if communication fails
-     */
-    ClassifierClient.InferenceResult runInferenceBinary(
-            String modelPath,
-            byte[] rawTileBytes,
-            List<String> tileIds,
-            int tileHeight,
-            int tileWidth,
-            int numChannels,
-            String dtype,
-            ChannelConfiguration channelConfig,
-            InferenceConfig inferenceConfig)
-            throws IOException;
-
-    /**
      * Runs batch inference using base64/file-path tile transfer.
      *
      * @param modelPath       path to the trained model

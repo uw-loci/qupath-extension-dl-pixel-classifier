@@ -2063,95 +2063,6 @@ public class ApposeClassifierBackend implements ClassifierBackend {
     }
 
     @Override
-    public ClassifierClient.InferenceResult runInferenceBinary(
-            String modelPath,
-            byte[] rawTileBytes,
-            List<String> tileIds,
-            int tileHeight,
-            int tileWidth,
-            int numChannels,
-            String dtype,
-            ChannelConfiguration channelConfig,
-            InferenceConfig inferenceConfig)
-            throws IOException {
-
-        ApposeService appose = ApposeService.getInstance();
-
-        try {
-            return ApposeService.withExtensionClassLoader(() -> {
-                int numTiles = tileIds.size();
-                int pixelsPerTile = tileHeight * tileWidth * numChannels;
-
-                // Convert to float32 if needed.
-                // uint8 values are kept in [0, 255] range (not divided by 255)
-                // because normalization expects raw pixel values matching training stats.
-                byte[] float32Bytes;
-                if ("uint8".equals(dtype)) {
-                    float32Bytes = new byte[numTiles * pixelsPerTile * Float.BYTES];
-                    FloatBuffer fbuf = ByteBuffer.wrap(float32Bytes)
-                            .order(ByteOrder.LITTLE_ENDIAN)
-                            .asFloatBuffer();
-                    for (byte b : rawTileBytes) {
-                        fbuf.put((float) (b & 0xFF));
-                    }
-                } else {
-                    float32Bytes = rawTileBytes;
-                }
-
-                NDArray.Shape shape =
-                        new NDArray.Shape(NDArray.Shape.Order.C_ORDER, numTiles, tileHeight, tileWidth, numChannels);
-                NDArray inputNd = new NDArray(NDArray.DType.FLOAT32, shape);
-
-                try {
-                    ByteBuffer buf = inputNd.buffer().order(ByteOrder.nativeOrder());
-                    buf.put(float32Bytes);
-
-                    Map<String, Object> inputConfig = buildInputConfig(channelConfig);
-
-                    Map<String, Object> inputs = new HashMap<>();
-                    inputs.put("model_path", modelPath);
-                    inputs.put("tile_data", inputNd);
-                    inputs.put("tile_ids", tileIds);
-                    inputs.put("tile_height", tileHeight);
-                    inputs.put("tile_width", tileWidth);
-                    inputs.put("num_channels", numChannels);
-                    inputs.put("input_config", inputConfig);
-                    // Pass experimental provider flags so the
-                    // measurements path does not silently inherit
-                    // stale provider state from the most recent
-                    // pixel inference. Matches the pixel-path wiring.
-                    inputs.put("use_tensorrt", DLClassifierPreferences.isExperimentalTensorRT());
-                    inputs.put("use_int8", DLClassifierPreferences.isExperimentalInt8());
-
-                    Task task = appose.runTask("inference_batch", inputs);
-
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> rawPredictions = (Map<String, Object>) task.outputs.get("predictions");
-
-                    Map<String, float[]> predictions = new HashMap<>();
-                    for (Map.Entry<String, Object> entry : rawPredictions.entrySet()) {
-                        @SuppressWarnings("unchecked")
-                        List<Number> probs = (List<Number>) entry.getValue();
-                        float[] probArray = new float[probs.size()];
-                        for (int i = 0; i < probs.size(); i++) {
-                            probArray[i] = probs.get(i).floatValue();
-                        }
-                        predictions.put(entry.getKey(), probArray);
-                    }
-
-                    return new ClassifierClient.InferenceResult(predictions);
-                } finally {
-                    inputNd.close();
-                }
-            });
-        } catch (IOException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IOException("Batch inference failed", e);
-        }
-    }
-
-    @Override
     public ClassifierClient.InferenceResult runInference(
             String modelPath,
             List<ClassifierClient.TileData> tiles,
@@ -2159,10 +2070,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             InferenceConfig inferenceConfig)
             throws IOException {
         // For the Appose backend, the base64 path is not supported.
-        // Callers should use runInferenceBinary.
         logger.warn("Appose backend does not support base64 tile transfer for batch inference");
-        throw new IOException(
-                "Appose backend does not support base64 tile transfer. " + "Use runInferenceBinary instead.");
+        throw new IOException("Appose backend does not support base64 tile transfer.");
     }
 
     // ==================== Pretrained Model Info ====================

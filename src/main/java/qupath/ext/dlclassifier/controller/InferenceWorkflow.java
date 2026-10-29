@@ -41,6 +41,7 @@ import qupath.ext.dlclassifier.ui.InferenceDialog;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.ui.UserErrors;
 import qupath.ext.dlclassifier.utilities.ChannelSelection;
+import qupath.ext.dlclassifier.utilities.ClassPixelCounter;
 import qupath.ext.dlclassifier.utilities.ImageCompat;
 import qupath.ext.dlclassifier.utilities.OutputGenerator;
 import qupath.ext.dlclassifier.utilities.TileEncoder;
@@ -263,42 +264,15 @@ public class InferenceWorkflow {
                         classifier.getDownsample(),
                         OutOfDistributionPreflight.SurfaceMode.LOG);
 
-                // Use same effective overlap as the overlay path
-                int effectivePadding = config.effectivePadding();
-                TileProcessor tileProcessor = new TileProcessor(
-                        config.getTileSize(),
-                        2 * effectivePadding,
-                        config.getBlendMode(),
-                        config.getMaxTilesInMemory(),
-                        classifier.getDownsample());
-
-                ClassifierBackend backend = BackendFactory.getBackend();
-
                 int processedAnnotations = 0;
                 int processedTiles = 0;
                 int objectsCreated = 0;
 
                 for (PathObject annotation : annotations) {
-                    int tilesForRegion;
-                    if (config.getOutputType() == InferenceConfig.OutputType.OBJECTS) {
-                        // Unified pipeline: same DLPixelClassifier as overlay
-                        tilesForRegion =
-                                classifyRegionUnified(classifier, channelsWithStats, config, imgData, annotation, null);
-                    } else {
-                        ROI region = annotation.getROI();
-                        tilesForRegion = processRegionCore(
-                                region,
-                                annotation,
-                                tileProcessor,
-                                backend,
-                                classifier,
-                                channelsWithStats,
-                                config,
-                                server,
-                                imgData,
-                                null);
-                    }
-                    processedTiles += tilesForRegion;
+                    // OBJECTS and MEASUREMENTS both run the overlay's own classifier
+                    // (DLPixelClassifier) on its tile grid and use the pixel-level map.
+                    processedTiles +=
+                            classifyRegionUnified(classifier, channelsWithStats, config, imgData, annotation, null);
                     processedAnnotations++;
                 }
 
@@ -573,8 +547,9 @@ public class InferenceWorkflow {
                 // the unified pipeline actually processed 35), so match the
                 // pre-count to whichever path will run.
                 int totalTiles = 0;
-                boolean unifiedObjects =
-                        !isRenderedOverlay && inferenceConfig.getOutputType() == InferenceConfig.OutputType.OBJECTS;
+                boolean unifiedObjects = !isRenderedOverlay
+                        && (inferenceConfig.getOutputType() == InferenceConfig.OutputType.OBJECTS
+                                || inferenceConfig.getOutputType() == InferenceConfig.OutputType.MEASUREMENTS);
                 if (unifiedObjects) {
                     int tileSize = inferenceConfig.getTileSize();
                     int padding = inferenceConfig.effectivePadding();
@@ -627,24 +602,13 @@ public class InferenceWorkflow {
                         if (classified != null) {
                             classifiedRegions.add(classified);
                         }
-                    } else if (inferenceConfig.getOutputType() == InferenceConfig.OutputType.OBJECTS) {
-                        // Unified pipeline: same DLPixelClassifier as overlay
+                    } else {
+                        // OBJECTS and MEASUREMENTS: the overlay's own classifier on its tile
+                        // grid, then objects from the class map or pixel counts inside the
+                        // annotation. MEASUREMENTS used to average each tile to one vector
+                        // and count tiles as pixels.
                         int tilesForRegion = classifyRegionUnified(
                                 metadata, channelCfg, inferenceConfig, imageData, annotation, progress);
-                        processedTiles += tilesForRegion;
-                    } else {
-                        // MEASUREMENTS: batch pipeline
-                        int tilesForRegion = processRegionWithProgress(
-                                region,
-                                annotation,
-                                tileProcessor,
-                                backend,
-                                metadata,
-                                channelCfg,
-                                inferenceConfig,
-                                server,
-                                imageData,
-                                progress);
                         processedTiles += tilesForRegion;
                     }
 
@@ -760,7 +724,14 @@ public class InferenceWorkflow {
             int pixelW = (int) Math.ceil((double) regionW / ds);
             int pixelH = (int) Math.ceil((double) regionH / ds);
 
-            int[][] classMap = new int[pixelH][pixelW];
+            // OBJECTS needs the whole class map to trace contours. MEASUREMENTS only needs
+            // counts, so it counts tile by tile inside the annotation instead: a whole-slide
+            // annotation at full resolution would need tens of gigabytes as one map.
+            boolean measurements = inferenceConfig.getOutputType() == InferenceConfig.OutputType.MEASUREMENTS;
+            int[][] classMap = measurements ? null : new int[pixelH][pixelW];
+            ClassPixelCounter counter = measurements
+                    ? new ClassPixelCounter(region.getShape(), regionX, regionY, ds, pixelW, pixelH)
+                    : null;
 
             // Count tiles for progress
             int tilesX = (int) Math.ceil((double) regionW / strideFull);
@@ -795,11 +766,15 @@ public class InferenceWorkflow {
                     int outX = (int) ((tileXFull - regionX) / ds);
                     int outY = (int) ((tileYFull - regionY) / ds);
                     var raster = tileResult.getRaster();
-                    int tileH = raster.getHeight();
-                    int tileW = raster.getWidth();
-                    for (int py = 0; py < tileH && outY + py < pixelH; py++) {
-                        for (int px = 0; px < tileW && outX + px < pixelW; px++) {
-                            classMap[outY + py][outX + px] = raster.getSample(px, py, 0);
+                    if (measurements) {
+                        counter.add(raster, outX, outY);
+                    } else {
+                        int tileH = raster.getHeight();
+                        int tileW = raster.getWidth();
+                        for (int py = 0; py < tileH && outY + py < pixelH; py++) {
+                            for (int px = 0; px < tileW && outX + px < pixelW; px++) {
+                                classMap[outY + py][outX + px] = raster.getSample(px, py, 0);
+                            }
                         }
                     }
 
@@ -811,10 +786,18 @@ public class InferenceWorkflow {
                 }
             }
 
+            OutputGenerator outputGenerator = new OutputGenerator(imageData, metadata, inferenceConfig);
+            if (measurements) {
+                outputGenerator.addClassPixelMeasurements(parentObject, counter.counts(), ds);
+                if (progress != null) {
+                    progress.log("Measured " + counter.total() + " classified pixels in " + processed + " tiles");
+                }
+                return processed;
+            }
+
             // Create objects from the classification map.
             // Pass ds so contour tracing maps classification pixels to
             // full-res image coordinates correctly.
-            OutputGenerator outputGenerator = new OutputGenerator(imageData, metadata, inferenceConfig);
             List<PathObject> objects = outputGenerator.createObjectsFromMergedMap(
                     classMap, regionX, regionY, ds, inferenceConfig.getObjectType());
 
@@ -835,306 +818,6 @@ public class InferenceWorkflow {
             return processed;
         } finally {
             classifier.cleanup();
-        }
-    }
-
-    /**
-     * Processes a single region with progress updates.
-     *
-     * @return the number of tiles processed
-     */
-    private int processRegionWithProgress(
-            ROI region,
-            PathObject parentObject,
-            TileProcessor tileProcessor,
-            ClassifierBackend backend,
-            ClassifierMetadata metadata,
-            ChannelConfiguration channelConfig,
-            InferenceConfig inferenceConfig,
-            ImageServer<BufferedImage> server,
-            ImageData<BufferedImage> imageData,
-            ProgressMonitorController progress)
-            throws IOException {
-        return processRegionCore(
-                region,
-                parentObject,
-                tileProcessor,
-                backend,
-                metadata,
-                channelConfig,
-                inferenceConfig,
-                server,
-                imageData,
-                progress);
-    }
-
-    /**
-     * Core region processing logic shared by GUI and headless paths.
-     * <p>
-     * When {@code progress} is {@code null}, progress updates and cancellation
-     * checks are skipped, enabling headless execution.
-     *
-     * @param region          the ROI to process
-     * @param parentObject    the parent annotation
-     * @param tileProcessor   tile processor for generating tiles
-     * @param backend         classifier backend (Appose or HTTP)
-     * @param metadata        classifier metadata
-     * @param channelConfig   channel configuration
-     * @param inferenceConfig inference configuration
-     * @param server          image server
-     * @param imageData       image data
-     * @param progress        progress monitor (nullable for headless execution)
-     * @return the number of tiles processed
-     * @throws IOException if tile processing or server communication fails
-     */
-    static int processRegionCore(
-            ROI region,
-            PathObject parentObject,
-            TileProcessor tileProcessor,
-            ClassifierBackend backend,
-            ClassifierMetadata metadata,
-            ChannelConfiguration channelConfig,
-            InferenceConfig inferenceConfig,
-            ImageServer<BufferedImage> server,
-            ImageData<BufferedImage> imageData,
-            ProgressMonitorController progress)
-            throws IOException {
-        // Resolve classifier ID to filesystem path for the Python server
-        ModelManager modelManager = new ModelManager();
-        String modelDirPath = modelManager
-                .getModelPath(metadata.getId())
-                .map(p -> p.getParent().toString())
-                .orElse(metadata.getId());
-        logger.info("Resolved model path: {}", modelDirPath);
-
-        // Generate tiles
-        List<TileProcessor.TileSpec> tileSpecs = tileProcessor.generateTiles(region, server);
-        logger.info("Generated {} tiles for region", tileSpecs.size());
-        if (progress != null) progress.log("Generated " + tileSpecs.size() + " tiles");
-
-        // OVERLAY mode uses on-demand tile rendering via QuPath's PixelClassifier
-        // interface, so skip batch tile processing entirely
-        if (inferenceConfig.getOutputType() == InferenceConfig.OutputType.OVERLAY) {
-            DLPixelClassifier pixelClassifier =
-                    new DLPixelClassifier(metadata, channelConfig, inferenceConfig, imageData);
-            OverlayService.getInstance().applyClassifierOverlay(imageData, pixelClassifier, metadata, channelConfig);
-            if (progress != null) {
-                progress.log("Classification overlay applied - tiles rendered on demand");
-            }
-            return 0;
-        }
-
-        // Branch on output type: MEASUREMENTS uses aggregated tile-level inference,
-        // OBJECTS needs full pixel-level probability maps
-        boolean usePixelInference = inferenceConfig.getOutputType() != InferenceConfig.OutputType.MEASUREMENTS;
-
-        // Multi-scale context: when contextScale > 1, detail + context tiles are concatenated
-        int contextScale = metadata.getContextScale();
-
-        // Process in batches with parallel tile preparation
-        int batchSize = tileProcessor.getMaxTilesInMemory();
-        List<float[][][]> allResults = new ArrayList<>();
-        Path tempDir = null;
-        int tileSize = inferenceConfig.getTileSize();
-
-        // Thread pool for parallel tile reading -- overlaps I/O with GPU inference
-        int poolSize = Math.min(4, Runtime.getRuntime().availableProcessors());
-        ExecutorService tilePool = Executors.newFixedThreadPool(poolSize);
-
-        try {
-            if (usePixelInference) {
-                tempDir = Files.createTempDirectory("dl-pixel-inference-");
-                logger.info("Using pixel-level inference, temp dir: {}", tempDir);
-            }
-
-            // Double-buffered pipeline: prepare next batch while current batch infers
-            PreparedBatch nextPrepared = null;
-
-            for (int i = 0; i < tileSpecs.size(); i += batchSize) {
-                if (progress != null && progress.isCancelled()) {
-                    return i;
-                }
-
-                int end = Math.min(i + batchSize, tileSpecs.size());
-
-                if (progress != null) {
-                    progress.setDetail(String.format("Processing tiles %d-%d of %d", i + 1, end, tileSpecs.size()));
-                    progress.setCurrentProgress((double) i / tileSpecs.size());
-                }
-
-                // Get current batch -- either from pre-prepared or prepare now
-                PreparedBatch currentBatch;
-                if (nextPrepared != null) {
-                    currentBatch = nextPrepared;
-                    nextPrepared = null;
-                } else {
-                    List<TileProcessor.TileSpec> batch = tileSpecs.subList(i, end);
-                    currentBatch = prepareBatch(batch, tileProcessor, server, tilePool, contextScale, channelConfig);
-                }
-
-                // Start preparing NEXT batch in parallel while we send current to server
-                int nextStart = i + batchSize;
-                Future<PreparedBatch> nextBatchFuture = null;
-                if (nextStart < tileSpecs.size()) {
-                    int nextEnd = Math.min(nextStart + batchSize, tileSpecs.size());
-                    List<TileProcessor.TileSpec> nextBatchSpecs = tileSpecs.subList(nextStart, nextEnd);
-                    nextBatchFuture = tilePool.submit(() ->
-                            prepareBatch(nextBatchSpecs, tileProcessor, server, tilePool, contextScale, channelConfig));
-                }
-
-                // Send current batch to server for inference
-                if (usePixelInference) {
-                    ClassifierClient.PixelInferenceResult pixelResult = backend.runPixelInferenceBinary(
-                            modelDirPath,
-                            currentBatch.rawBytes(),
-                            currentBatch.tileIds(),
-                            tileSize,
-                            tileSize,
-                            currentBatch.numChannels(),
-                            currentBatch.dtype(),
-                            channelConfig,
-                            inferenceConfig,
-                            tempDir,
-                            0);
-
-                    if (pixelResult == null) {
-                        if (contextScale > 1) {
-                            logger.warn(
-                                    "Binary pixel inference failed for context_scale={} "
-                                            + "model; JSON fallback does not support multi-scale "
-                                            + "context tiles",
-                                    contextScale);
-                        }
-                        pixelResult = backend.runPixelInference(
-                                modelDirPath, currentBatch.tileDataList(), channelConfig, inferenceConfig, tempDir, 0);
-                    }
-
-                    if (pixelResult != null && pixelResult.outputs() != null) {
-                        for (ClassifierClient.TileData tile : currentBatch.tileDataList()) {
-                            ClassifierClient.TileOutput tileOutput =
-                                    pixelResult.outputs().get(tile.id());
-                            if (tileOutput != null) {
-                                float[][][] probMap = ClassifierClient.readProbabilityMap(
-                                        tileOutput, pixelResult.numClasses(), tileSize, tileSize);
-                                allResults.add(probMap);
-                            }
-                        }
-                    }
-                } else {
-                    ClassifierClient.InferenceResult result = backend.runInferenceBinary(
-                            modelDirPath,
-                            currentBatch.rawBytes(),
-                            currentBatch.tileIds(),
-                            tileSize,
-                            tileSize,
-                            currentBatch.numChannels(),
-                            currentBatch.dtype(),
-                            channelConfig,
-                            inferenceConfig);
-
-                    if (result == null) {
-                        if (contextScale > 1) {
-                            logger.warn(
-                                    "Binary inference failed for context_scale={} "
-                                            + "model; JSON fallback does not support multi-scale "
-                                            + "context tiles",
-                                    contextScale);
-                        }
-                        result = backend.runInference(
-                                modelDirPath, currentBatch.tileDataList(), channelConfig, inferenceConfig);
-                    }
-
-                    if (result != null && result.predictions() != null) {
-                        for (float[] probs : result.predictions().values()) {
-                            float[][][] tileResult = new float[1][1][probs.length];
-                            tileResult[0][0] = probs;
-                            allResults.add(tileResult);
-                        }
-                    }
-                }
-
-                // Collect the pre-prepared next batch (blocks until ready)
-                if (nextBatchFuture != null) {
-                    try {
-                        nextPrepared = nextBatchFuture.get();
-                    } catch (Exception e) {
-                        logger.warn("Parallel tile prep failed, will prepare sequentially", e);
-                        nextPrepared = null;
-                    }
-                }
-            }
-
-            if (progress != null) progress.setCurrentProgress(1.0);
-
-            // Create output generator
-            OutputGenerator outputGenerator = new OutputGenerator(imageData, metadata, inferenceConfig);
-
-            // Generate output based on type
-            switch (inferenceConfig.getOutputType()) {
-                case MEASUREMENTS:
-                    outputGenerator.addMeasurements(parentObject, allResults, tileSpecs);
-                    if (progress != null) progress.log("Added measurements to annotation");
-                    break;
-
-                case OBJECTS:
-                    // GUARD -- same coordinate-space mismatch as the rendered
-                    // overlay above: createObjectsFromTiles takes regionX from
-                    // the parent ROI in full-resolution pixels and subtracts it
-                    // from tile coordinates that are now downsampled.
-                    //
-                    // Unreachable today: OBJECTS routes to classifyRegionUnified
-                    // before processRegionCore at both entry points, and that
-                    // path threads downsample correctly. The guard is here so a
-                    // change to that routing fails visibly.
-                    if (metadata.getDownsample() > 1.0) {
-                        throw new IOException(String.format(
-                                "This OBJECTS path does not support downsample %.1f "
-                                        + "(it maps tiles in full-resolution coordinates). It should "
-                                        + "not have been reached -- OBJECTS output is handled by "
-                                        + "classifyRegionUnified. Please report this.",
-                                metadata.getDownsample()));
-                    }
-                    // Use the new merged-map approach for proper cross-tile object handling
-                    int numClasses = metadata.getClasses().size();
-                    List<PathObject> objects = outputGenerator.createObjectsFromTiles(
-                            tileProcessor, allResults, tileSpecs, region, numClasses, inferenceConfig.getObjectType());
-                    imageData.getHierarchy().addObjects(objects);
-                    if (progress != null) {
-                        progress.log("Created " + objects.size() + " "
-                                + inferenceConfig.getObjectType().name().toLowerCase() + " objects");
-                    }
-                    break;
-
-                case OVERLAY:
-                    // Should not reach here - OVERLAY exits early above
-                    logger.warn("OVERLAY case reached in switch - this should not happen");
-                    break;
-
-                case RENDERED_OVERLAY:
-                    // Handled by caller (runInferenceWithProgress collects ClassifiedRegions)
-                    // Nothing to do here per-region; the caller assembles the overlay
-                    break;
-            }
-
-            return tileSpecs.size();
-        } finally {
-            // Shut down tile preparation thread pool
-            tilePool.shutdownNow();
-
-            // Clean up temp directory for pixel inference
-            if (tempDir != null) {
-                try {
-                    Files.walk(tempDir).sorted(Comparator.reverseOrder()).forEach(path -> {
-                        try {
-                            Files.deleteIfExists(path);
-                        } catch (IOException e) {
-                            logger.warn("Failed to delete temp file: {}", path, e);
-                        }
-                    });
-                } catch (IOException e) {
-                    logger.warn("Failed to clean up temp directory: {}", tempDir, e);
-                }
-            }
         }
     }
 
@@ -1420,7 +1103,7 @@ public class InferenceWorkflow {
 
     /**
      * Processes a single region.
-     * @deprecated Use {@link #processRegionWithProgress} instead
+     * @deprecated Use {@link #runInferenceWithProgress} instead
      */
     @Deprecated
     private void processRegion(

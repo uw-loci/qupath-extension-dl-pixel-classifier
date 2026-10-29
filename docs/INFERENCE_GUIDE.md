@@ -42,7 +42,7 @@ For unmatched channels, use the dropdown to manually remap to the correct image 
 
 | Output Type | Description | Best for |
 |-------------|-------------|----------|
-| **MEASUREMENTS** | Adds per-class probability values as annotation measurements | Quantification (% area per class) |
+| **MEASUREMENTS** | Adds, for each class, its area (um^2) and its share (%) of the annotation, counted from the same per-pixel classification the overlay and OBJECTS use, plus `DL: Total pixels` (pixels classified inside the annotation, at the model's resolution) | Quantification (% area per class) |
 | **OBJECTS** | Creates detection or annotation objects from the classification map. Uses the same unified inference pipeline as the overlay, predictions are identical. | Spatial analysis, counting structures |
 
 ### Object output options (OBJECTS only)
