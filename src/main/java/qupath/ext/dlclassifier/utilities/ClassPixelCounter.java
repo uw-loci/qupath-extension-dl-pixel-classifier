@@ -14,7 +14,7 @@ import java.util.Arrays;
  * count each TILE as one pixel, so class percentages were per-tile votes, areas were a few
  * pixels' worth, and "Total pixels" was the tile count; pixels outside the annotation but
  * inside a tile counted too. This counts the actual classified pixels of the class map the
- * overlay and OBJECTS use, keeping only those whose centre lies inside the annotation.
+ * overlay and OBJECTS use, keeping only those whose center lies inside the annotation.
  *
  * <p>Works per tile so memory stays at one tile's mask: a whole-slide annotation at full
  * resolution would need tens of gigabytes as a single class map.
@@ -22,7 +22,7 @@ import java.util.Arrays;
  * <p>Coordinates: the region's top-left is ({@code regionX}, {@code regionY}) in full-resolution
  * pixels; the class map is at classifier resolution, one map pixel per {@code downsample}
  * full-resolution pixels. A map pixel (mx, my) covers full-resolution
- * [regionX + mx*ds, regionX + (mx+1)*ds), and counts when that square's centre is inside the
+ * [regionX + mx*ds, regionX + (mx+1)*ds), and counts when that square's center is inside the
  * shape (Java2D's non-antialiased fill rule).
  */
 public final class ClassPixelCounter {
@@ -98,11 +98,11 @@ public final class ClassPixelCounter {
 
     /**
      * The annotation over a w x h block of class-map pixels starting at (outX, outY), as a
-     * row-major boolean mask: true where the pixel's centre is inside the shape.
+     * row-major boolean mask: true where the pixel's center is inside the shape.
      *
      * <p>A scanline fill rather than Java2D's rasterizer: the rasterizer places edges with
      * limited sub-pixel precision, which put an ellipse's boundary pixels on the wrong side
-     * of the centre rule (10 of 43,065 even after fine flattening). Here each row's centre
+     * of the center rule (10 of 43,065 even after fine flattening). Here each row's center
      * line is intersected with the shape's edges, flattened in mask-pixel space to 1e-4 of a
      * pixel, and spans are filled by the shape's own winding rule, so holes in a QuPath ROI
      * stay holes.

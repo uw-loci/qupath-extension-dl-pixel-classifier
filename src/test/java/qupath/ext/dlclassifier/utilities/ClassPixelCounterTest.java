@@ -13,7 +13,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * Counts must equal a brute-force "is the pixel's centre inside the annotation" count over
+ * Counts must equal a brute-force "is the pixel's center inside the annotation" count over
  * the same class map, whatever the shape, downsample or tiling. Swept over three shapes,
  * four downsamples (including a non-integer one) and three tile sizes that do and do not
  * divide the map.
@@ -36,7 +36,7 @@ class ClassPixelCounterTest {
     }
 
     /**
-     * Reference: is the pixel centre inside the shape's OUTLINE. For a polygon that is the
+     * Reference: is the pixel center inside the shape's OUTLINE. For a polygon that is the
      * shape itself. For Ellipse2D it is the four cubic Beziers Java draws it with, which
      * bulge outward by up to ~0.03% of the radius; Ellipse2D.contains() uses the exact
      * ellipse instead, so it disagrees with any outline-based count on a few boundary pixels.
