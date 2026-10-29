@@ -133,6 +133,34 @@ public class ChannelConfiguration {
     }
 
     /**
+     * Creates a copy that normalizes the way the model was trained: strategy, joint or
+     * per-channel, and clip percentile from its metadata. Channel selection, bit depth
+     * and any precomputed statistics are kept.
+     * <p>
+     * Normalization is part of the model, not a viewing choice: a tile normalized
+     * differently from the training patches is a different input. The Apply Classifier
+     * dialog used to send whatever its own panel held (PERCENTILE_99 by default), so a
+     * model trained with MIN_MAX, Z_SCORE or FIXED_RANGE was applied wrongly from there
+     * while the overlay and scripting, which read the metadata, were right. See
+     * docs/NORMALIZATION_ROUNDTRIP.md.
+     *
+     * @param metadata the classifier being applied
+     * @return a configuration with the model's normalization
+     */
+    public ChannelConfiguration withNormalizationOf(ClassifierMetadata metadata) {
+        return new Builder()
+                .selectedChannels(selectedChannels)
+                .channelNames(channelNames)
+                .bitDepth(bitDepth)
+                .normalizationStrategy(metadata.getNormalizationStrategy())
+                .perChannelNormalization(metadata.isPerChannelNormalization())
+                .clipPercentile(metadata.getClipPercentile())
+                .fixedRange(fixedMin, fixedMax)
+                .precomputedChannelStats(precomputedChannelStats)
+                .build();
+    }
+
+    /**
      * Returns the maximum possible value for the configured bit depth.
      */
     public int getMaxValue() {

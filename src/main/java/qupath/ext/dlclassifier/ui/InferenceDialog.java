@@ -819,6 +819,7 @@ public class InferenceDialog {
                 classifierInfoLabel.setText("Select a classifier to see details");
                 classifierInfoLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
                 channelPanel.setRequiredChannelCount(-1);
+                channelPanel.clearModelNormalization();
                 channelMappingPanel.setVisible(false);
                 channelMappingPanel.setManaged(false);
                 okButton.setDisable(true);
@@ -855,6 +856,8 @@ public class InferenceDialog {
             // Update channel requirements
             channelPanel.setRequiredChannelCount(classifier.getInputChannels());
             channelPanel.setExpectedChannels(classifier.getExpectedChannelNames());
+            channelPanel.setModelNormalization(
+                    classifier.getNormalizationStrategy(), classifier.isPerChannelNormalization());
 
             // Update tile size to match classifier
             tileSizeSpinner.getValueFactory().setValue(classifier.getInputWidth());
@@ -1064,7 +1067,9 @@ public class InferenceDialog {
                     .useCompactArgmaxOutput(DLClassifierPreferences.isUseCompactArgmaxOutput())
                     .build();
 
-            ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();
+            // Normalization comes from the model, whatever the panel holds.
+            ChannelConfiguration channelConfig =
+                    channelPanel.getChannelConfiguration().withNormalizationOf(classifier);
 
             return new InferenceDialogResult(
                     classifier, inferenceConfig, channelConfig, scope, createBackupCheck.isSelected());
@@ -1099,7 +1104,9 @@ public class InferenceDialog {
                     .useCompactArgmaxOutput(DLClassifierPreferences.isUseCompactArgmaxOutput())
                     .build();
 
-            ChannelConfiguration channelConfig = channelPanel.getChannelConfiguration();
+            // Normalization comes from the model, whatever the panel holds.
+            ChannelConfiguration channelConfig =
+                    channelPanel.getChannelConfiguration().withNormalizationOf(classifier);
 
             InferenceConfig.ApplicationScope scope;
             if (applyToWholeImageRadio.isSelected()) {

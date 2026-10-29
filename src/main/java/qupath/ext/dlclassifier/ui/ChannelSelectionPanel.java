@@ -446,6 +446,35 @@ public class ChannelSelectionPanel extends VBox {
         }
     }
 
+    /**
+     * Shows a model's trained normalization and locks the controls, for dialogs that
+     * apply an existing model (normalization belongs to the model; changing it changes
+     * the input the model sees). Call {@link #clearModelNormalization()} when no model
+     * is selected.
+     *
+     * @param strategy   the model's normalization strategy
+     * @param perChannel whether the model normalized each channel separately
+     */
+    public void setModelNormalization(ChannelConfiguration.NormalizationStrategy strategy, boolean perChannel) {
+        if (strategy != null) {
+            normalizationCombo.setValue(strategy);
+        }
+        perChannelNormCheck.setSelected(perChannel);
+        normalizationCombo.setDisable(true);
+        perChannelNormCheck.setDisable(true);
+        String why = "Set by the model: it was trained with " + normalizationCombo.getValue()
+                + (perChannel ? ", each channel normalized separately" : ", one transform shared by all channels")
+                + ".\nApplying it with different normalization would change what the model sees.";
+        normalizationCombo.setTooltip(new javafx.scene.control.Tooltip(why));
+        perChannelNormCheck.setTooltip(new javafx.scene.control.Tooltip(why));
+    }
+
+    /** Unlocks the normalization controls after {@link #setModelNormalization}. */
+    public void clearModelNormalization() {
+        normalizationCombo.setDisable(false);
+        perChannelNormCheck.setDisable(false);
+    }
+
     // ---- Private helper methods ----
 
     private void updateSearchToolbarVisibility(int channelCount) {

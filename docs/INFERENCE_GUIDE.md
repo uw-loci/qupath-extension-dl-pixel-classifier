@@ -124,7 +124,7 @@ The extension automatically computes normalization statistics across the entire 
 2. **Image-level sampling**: samples ~16 tiles in a 4x4 grid across the image (~1-3s one-time cost)
 3. **Per-tile normalization**: fallback if sampling fails
 
-This is fully automatic and requires no configuration.
+This is fully automatic and requires no configuration. The normalization method itself (the strategy, and whether channels are normalized together or separately) always comes from the model, because changing it changes what the model sees: **Apply DL Pixel Classifier** shows the model's setting and does not let you change it.
 
 ### BatchRenorm (model-internal normalization)
 
