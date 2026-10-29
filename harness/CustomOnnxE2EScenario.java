@@ -192,7 +192,10 @@ public final class CustomOnnxE2EScenario {
             panel.autoConfigureForImageType(imageData.getImageType(), server.nChannels());
             panel.setRequiredChannelCount(fixed.getInputChannels());
             panel.setExpectedChannels(fixed.getExpectedChannelNames());
-            return panel.getChannelConfiguration();
+            // As InferenceDialog does since 903ee33: show the model's normalization locked,
+            // and take normalization from the model whatever the panel holds.
+            panel.setModelNormalization(fixed.getNormalizationStrategy(), fixed.isPerChannelNormalization());
+            return panel.getChannelConfiguration().withNormalizationOf(fixed);
         });
         note("metadata says %s per_channel=%s; dialog panel gives %s per_channel=%s clip=%.1f channels=%s",
                 fixed.getNormalizationStrategy(), fixed.isPerChannelNormalization(),
