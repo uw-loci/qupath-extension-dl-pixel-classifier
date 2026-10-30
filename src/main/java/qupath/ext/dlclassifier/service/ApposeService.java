@@ -211,7 +211,7 @@ public class ApposeService {
 
         // Restart Python service
         report(statusCallback, "Restarting Python service...");
-        pythonService = ApposeGpu.pinned(environment).python();
+        pythonService = ApposeGpu.forWorker(environment).python();
         pythonService.debug(msg -> {
             try {
                 DebugLine line = condenseDebugLine(msg);
@@ -374,7 +374,7 @@ public class ApposeService {
                 report(statusCallback, "Starting Python service...");
 
                 // Create Python service (lazy - subprocess starts on first task)
-                pythonService = ApposeGpu.pinned(environment).python();
+                pythonService = ApposeGpu.forWorker(environment).python();
 
                 // Register debug output handler -- log Python stderr at INFO level
                 // so diagnostic messages (device info, training config) are visible
@@ -829,7 +829,7 @@ public class ApposeService {
             // Recreate the worker subprocess from the already-built environment.
             // The subprocess starts lazily on the next task; init_services.py is
             // queued here so the fresh worker initializes its services first.
-            pythonService = ApposeGpu.pinned(environment).python();
+            pythonService = ApposeGpu.forWorker(environment).python();
             pythonService.debug(msg -> {
                 logger.info("[Appose Python] {}", msg);
                 qupath.ext.dlclassifier.ui.PythonConsoleWindow.appendMessage(msg);
