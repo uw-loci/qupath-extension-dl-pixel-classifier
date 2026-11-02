@@ -125,10 +125,9 @@ public class BugReportDialog {
         // The single most surprising thing about this reporter: the issue is not
         // filed under the reporter's name, so GitHub has nobody to notify. Say
         // so at the top, before they write anything, not in the success dialog.
-        Label anonymityNote = new Label("Reports are filed anonymously -- the issue is created by the reporting "
-                + "service, not from your GitHub account. You will NOT be notified of replies unless you comment "
-                + "on the issue yourself on GitHub. Adding a GitHub username below mentions you on the issue, "
-                + "which does notify you.");
+        Label anonymityNote = new Label("Leave a GitHub username below if you want to hear back. Reports are "
+                + "filed by the reporting service, not from your GitHub account, so without a username nobody "
+                + "can reach you about this report.");
         anonymityNote.setWrapText(true);
         anonymityNote.setStyle("-fx-text-fill: -fx-accent;");
 
@@ -171,11 +170,15 @@ public class BugReportDialog {
         // Optional contact. Both handles are user-typed and go into a public
         // issue, so the note below says so plainly rather than relying on the
         // user knowing where the report lands.
-        Label contactHeading = new Label("Contact (optional -- leave blank to report anonymously):");
+        Label contactHeading = new Label("How to reach you (optional, but without it we cannot reply):");
         contactHeading.setStyle("-fx-font-weight: bold;");
         githubUserField.setPromptText("GitHub username, with or without @ (e.g. alice or @alice)");
+        // First field, so it has focus on open: keep its hint visible while focused.
+        githubUserField.setStyle("-fx-prompt-text-fill: derive(-fx-control-inner-background, -45%);");
         imageScUserField.setPromptText("image.sc forum username (e.g. alice)");
-        Label contactNote = new Label("Both are shown publicly in the issue.");
+        Label contactNote =
+                new Label("Both are shown publicly in the issue. A GitHub username notifies you of replies; "
+                        + "an image.sc username lets us message you on the forum.");
         contactNote.setWrapText(true);
         VBox contactBox = new VBox(6, contactHeading, githubUserField, imageScUserField, contactNote);
 
@@ -204,11 +207,11 @@ public class BugReportDialog {
         root.getChildren()
                 .addAll(
                         anonymityNote,
+                        contactBox,
                         summaryHeading,
                         summaryField,
                         heading,
                         descriptionArea,
-                        contactBox,
                         options,
                         chkOpenIssue,
                         statusLabel,
@@ -324,14 +327,17 @@ public class BugReportDialog {
             if (chkOpenIssue.isSelected() && issueUrl != null && !issueUrl.isEmpty()) {
                 QuPathGUI.openInBrowser(issueUrl);
             }
-            showSuccess(result.issueNumber(), issueUrl);
+            showSuccess(
+                    result.issueNumber(),
+                    issueUrl,
+                    BugReportService.isValidGitHubHandle(BugReportService.normalizeHandle(githubUserField.getText())));
         } else {
             setStatus(result.error() != null ? result.error() : "Submission failed.", true);
         }
     }
 
     /** Confirmation dialog with a clickable link to the created issue. */
-    private void showSuccess(Integer issueNumber, String url) {
+    private void showSuccess(Integer issueNumber, String url, boolean mentioned) {
         String number = issueNumber != null ? "#" + issueNumber : "";
         Label message = new Label(
                 number.isEmpty()
@@ -349,6 +355,14 @@ public class BugReportDialog {
             link.setTooltip(new Tooltip("Open the issue in your browser"));
             link.setOnAction(e -> QuPathGUI.openInBrowser(url));
             content.getChildren().addAll(hint, link);
+        }
+
+        if (!mentioned) {
+            Label follow = new Label("You did not leave a GitHub username, so you will not be told about replies. "
+                    + "To follow this report, open the issue and click Subscribe (needs a GitHub account).");
+            follow.setWrapText(true);
+            follow.setStyle("-fx-text-fill: -fx-accent;");
+            content.getChildren().add(follow);
         }
 
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
