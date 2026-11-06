@@ -58,7 +58,7 @@ In advanced mode, the dialog has collapsible titled pane sections:
 
 To pre-populate dialog settings from a previously trained classifier:
 
-1. In the **WEIGHT INITIALIZATION** section, select the **"Continue training from saved model"** radio button
+1. In the **WEIGHT INITIALIZATION** section, select the **"Continue training one of your saved models"** radio button
 2. Click **"Select model..."** to open the model picker
 3. Select a model from the table (sorted by date, newest first)
 4. Click **OK**
@@ -73,7 +73,7 @@ All fields can be adjusted before training. Older models (trained before this fe
 
 ### UI Locking When Continuing Training
 
-When **Continue training from saved model** is selected and a model is loaded, the following controls are **locked** because the saved weights require an exact architecture match:
+When **Continue training one of your saved models** is selected and a model is loaded, the following controls are **locked** because the saved weights require an exact architecture match:
 
 - Architecture (UNet, MuViT, Custom ONNX)
 - Backbone/Encoder (resnet34, resnet50, etc.)
@@ -199,14 +199,14 @@ The **WEIGHT INITIALIZATION** section controls how model weights are initialized
 | Strategy | When to use |
 |----------|-------------|
 | **Train from scratch** | Very large datasets or custom architectures. Rarely needed. |
-| **Use pretrained backbone weights** | **Recommended for most cases.** Uses ImageNet or histology-pretrained encoder weights. Shows a layer freeze panel for fine-grained control. |
+| **Continue from provided weights** | **Recommended for most cases.** Starts from the weights that come with the selected encoder (ImageNet, histology or a foundation model; the line under the option says which) and trains them further on your annotations. This is how you fine-tune ImageNet weights. Shows a layer freeze panel for fine-grained control. |
 | **Use MAE pretrained encoder** | MuViT only. Load encoder weights from a self-supervised MAE pretrained .pt file. Click "Browse..." to select. Architecture locks to match the encoder. |
 | **Use SSL pretrained encoder** | UNet only. Load encoder weights from a SimCLR/BYOL self-supervised pretrained .pt file. Use when you have domain-specific unlabeled images (different microscope, staining, tissue type) and want the encoder to recognize those visual patterns before supervised training. Run **Utilities > SSL Pretrain Encoder** first. See [Domain Adaptation Guide](DOMAIN_ADAPTATION_GUIDE.md). |
-| **Continue training from saved model** | Resume from a previously trained classifier. Click "Select model..." to pick the model. All settings populate from the saved model. |
+| **Continue training one of your saved models** | Resume from a previously trained classifier. Click "Select model..." to pick the model. All settings populate from the saved model. |
 
 ![Transfer Learning Configuration panel: per-layer freeze checkboxes for encoder blocks with parameter counts, a retraining preset dropdown, and Keep All Pretrained / Retrain Everything / Use Recommended buttons](images/train-dialog-transfer-learning-layers.png)
 
-When **Use pretrained backbone weights** is selected, a layer freeze panel appears:
+When **Continue from provided weights** is selected, a layer freeze panel appears:
 - Per-layer checkboxes to freeze/unfreeze individual encoder layers
 - **Freeze All** / **Unfreeze All** / **Use Recommended** buttons
 - Small datasets (<500 tiles): freeze most layers; large datasets (>5000): unfreeze nearly all

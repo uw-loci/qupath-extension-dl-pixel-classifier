@@ -34,6 +34,7 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.SetupDLClassifier;
 import qupath.ext.dlclassifier.classifier.ClassifierHandler;
 import qupath.ext.dlclassifier.classifier.ClassifierRegistry;
+import qupath.ext.dlclassifier.classifier.handlers.UNetHandler;
 import qupath.ext.dlclassifier.controller.TrainingWorkflow;
 import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
@@ -240,6 +241,11 @@ public class TrainingDialog {
                 architectureCombo.setValue(current);
             } else if (!choices.isEmpty()) {
                 architectureCombo.setValue(choices.get(0));
+            }
+            // The architecture may not have changed, so its listener may not run:
+            // re-check the weight options for the new filter state directly.
+            if (weightInitGroup != null && architectureCombo.getValue() != null) {
+                updateWeightInitOptions(architectureCombo.getValue());
             }
         }
 
@@ -1262,8 +1268,15 @@ public class TrainingDialog {
             continueRequiresModelLabel.setVisible(false);
             continueRequiresModelLabel.setManaged(false);
 
+            Label continueInfo = new Label("Picks up a classifier you trained before and trains it further. "
+                    + "To fine-tune ImageNet or other pretrained weights instead, use \"Continue from provided "
+                    + "weights\" above.");
+            continueInfo.setWrapText(true);
+            continueInfo.setStyle("-fx-font-size: 11px;");
+
             continueTrainingContent = new VBox(
                     5,
+                    continueInfo,
                     continueRequiresModelLabel,
                     new HBox(10, selectModelButton, loadCheckpointButton),
                     loadedModelLabel);
@@ -1275,11 +1288,16 @@ public class TrainingDialog {
                 updateValidation();
             });
 
-            // Basic mode: hide scratch and MAE options, hide layer freeze panel
-            scratchRadio.visibleProperty().bind(advancedMode);
-            scratchRadio.managedProperty().bind(advancedMode);
-            scratchInfo.visibleProperty().bind(advancedMode);
-            scratchInfo.managedProperty().bind(advancedMode);
+            // Basic mode: hide scratch and MAE options, hide layer freeze panel.
+            // "Only architectures with pretrained weights" takes Train from scratch off
+            // the list too: ticking it means "start from pretrained weights".
+            javafx.beans.binding.BooleanBinding scratchShown = pretrainedOnlyCheck == null
+                    ? javafx.beans.binding.Bindings.createBooleanBinding(advancedMode::get, advancedMode)
+                    : advancedMode.and(pretrainedOnlyCheck.selectedProperty().not());
+            scratchRadio.visibleProperty().bind(scratchShown);
+            scratchRadio.managedProperty().bind(scratchShown);
+            scratchInfo.visibleProperty().bind(scratchShown);
+            scratchInfo.managedProperty().bind(scratchShown);
             maeEncoderRadio.visibleProperty().bind(advancedMode);
             maeEncoderRadio.managedProperty().bind(advancedMode);
             maeEncoderContent.visibleProperty().bind(advancedMode);
@@ -1439,9 +1457,18 @@ public class TrainingDialog {
             setRadioAvailable(
                     continueTrainingRadio, supported.contains(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING));
 
-            // If current selection is no longer supported, fall back to handler default
+            // If current selection is no longer supported, fall back to handler default.
+            // Train from scratch is also off the list while only pretrained architectures
+            // are shown, so a scratch selection left over from before the box was ticked
+            // moves to the pretrained start.
             ClassifierHandler.WeightInitStrategy current = getSelectedWeightInitStrategy();
-            if (current == null || !supported.contains(current)) {
+            boolean scratchHidden = current == ClassifierHandler.WeightInitStrategy.SCRATCH
+                    && pretrainedOnlyCheck != null
+                    && pretrainedOnlyCheck.isSelected()
+                    && supported.contains(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
+            if (scratchHidden) {
+                selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED);
+            } else if (current == null || !supported.contains(current)) {
                 ClassifierHandler.WeightInitStrategy defaultStrategy = handler.getDefaultWeightInitStrategy();
                 // Check preferences for CNN backbone pretrained
                 if (supported.contains(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED)
@@ -2512,12 +2539,13 @@ public class TrainingDialog {
                     allBothBtn,
                     "Set every selected image to Both (used for both training\n"
                             + "and validation).\n\n"
-                            + "Use this when the project is too small to split train/val\n"
-                            + "without stranding rare classes. The model will see every\n"
-                            + "patch, and validation IoU will reflect training-set\n"
-                            + "performance -- read it as a smoke test, not as a\n"
-                            + "generalization signal. Use the per-image dropdowns to\n"
-                            + "carve out a real holdout for selected slides.");
+                            + "Use this when there are too few images to set some aside\n"
+                            + "for validation without leaving a rare class out of training.\n\n"
+                            + "The model then trains on every patch, and validation checks\n"
+                            + "it on regions of the same images. That is too easy a test:\n"
+                            + "the validation score will look better than the model really\n"
+                            + "does on images it has not seen. For an honest score, set at\n"
+                            + "least one image to Validation with its dropdown.");
             allBothBtn.setOnAction(e -> assignAllSelectedToBoth());
             allBothBtn.visibleProperty().bind(advancedMode);
             allBothBtn.managedProperty().bind(advancedMode);
@@ -2563,7 +2591,7 @@ public class TrainingDialog {
                     basicSplitChangeBtn,
                     "Switch to Advanced mode to override per-image roles,\n"
                             + "re-run Auto-Distribute, change the validation split %,\n"
-                            + "or use All-Both.");
+                            + "or use All Both.");
             HBox basicSplitBox = new HBox(8, basicSplitStatusLabel, basicSplitChangeBtn);
             basicSplitBox.setAlignment(Pos.CENTER_LEFT);
             basicSplitBox.visibleProperty().bind(advancedMode.not());
@@ -2656,8 +2684,9 @@ public class TrainingDialog {
                     "Set every selected image to Both?",
                     String.format(
                             "This will overwrite the Train/Val role of %d selected image(s)%s.\n\n"
-                                    + "Validation will then run on slides the model also trained on. "
-                                    + "Val IoU becomes a smoke test, not a generalization signal.\n\n"
+                                    + "Validation will then check the model on the same images it trained on, "
+                                    + "so the validation score will look better than the model really does "
+                                    + "on images it has not seen.\n\n"
                                     + "Continue?",
                             selected.size(), nonBoth > 0 ? " (" + nonBoth + " currently train/val-only)" : ""));
             if (!proceed) return;
@@ -2674,8 +2703,9 @@ public class TrainingDialog {
             Dialogs.showInfoNotification(
                     "All Both",
                     String.format(
-                            "%d image(s) set to Both. Val IoU reflects training-set "
-                                    + "performance -- use it as a smoke test, not a generalization signal.",
+                            "%d image(s) set to Both. The validation score now checks the model on "
+                                    + "images it trained on, so it will look better than the model "
+                                    + "really does on images it has not seen.",
                             selected.size()));
         }
 
@@ -2851,11 +2881,12 @@ public class TrainingDialog {
             if (nBoth > 0) {
                 Set<String> limited = result.limitedDataClasses();
                 msg.append(String.format(
-                                "%d slide(s) defaulted to Both because they carry class(es) with too few "
-                                        + "source slides (%s). The model trains on every patch from these slides, "
-                                        + "but validation IoU for those classes will be optimistic (it sees the "
-                                        + "training data). Use it as a smoke test, not a generalization signal. "
-                                        + "Change a slide's role manually if you want a different split.",
+                                "%d image(s) were set to Both because they hold class(es) found on too few "
+                                        + "images to split between training and validation (%s). The model "
+                                        + "trains on every patch from these images, so the validation score for "
+                                        + "those classes checks it on images it trained on and will look better "
+                                        + "than the model really does on new images. Change an image's role "
+                                        + "with its dropdown if you want a different split.",
                                 nBoth, String.join(", ", limited)))
                         .append("\n\n");
             }
@@ -3596,31 +3627,34 @@ public class TrainingDialog {
             if (backbone == null || backboneInfo == null) return;
 
             // Basic mode: simplified language for non-ML users
+            // One name in every mode: the encoder's own weights are "provided", whatever
+            // they were trained on, and the line beneath says what that is. The name used
+            // to switch between "histology" and "pretrained backbone" and guessed wrong.
             if (!advancedMode.get()) {
-                backbonePretrainedRadio.setText("Start from a pre-trained model (recommended)");
-                backboneInfo.setText("The model begins with knowledge learned from millions of images, "
-                        + "so it needs less of your data to learn well.");
+                backbonePretrainedRadio.setText(
+                        ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED.getDisplayName() + " (recommended)");
+                backboneInfo.setText("The model starts from weights already trained on a large set of images, "
+                        + "and training adapts them to your annotations, so it needs far less of your data.");
                 return;
             }
+            backbonePretrainedRadio.setText(ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED.getDisplayName());
 
-            // Advanced mode: full technical detail
             if (isFoundationModel(backbone)) {
-                backboneInfo.setText("Foundation model encoder (downloaded on-demand from HuggingFace). "
-                        + "Large-scale vision model with rich feature representations. "
-                        + "Gated models need HF_TOKEN env var. "
-                        + "Inspired by LazySlide (Zheng et al. 2026, Nature Methods).");
-                backbonePretrainedRadio.setText("Use foundation model pretrained weights");
-            } else if (backbone.contains("_")) {
-                backboneInfo.setText("Histology-pretrained on H&E tissue patches at 20x (3-channel RGB). "
-                        + "Best for H&E brightfield. Less freezing needed. "
-                        + "For fluorescence or multi-channel images, use an ImageNet backbone instead. "
-                        + "~100MB download on first use (cached).");
-                backbonePretrainedRadio.setText("Use histology pretrained weights");
+                backboneInfo.setText("Starts from a foundation model's weights (downloaded on first use from "
+                        + "HuggingFace) and trains them further on your annotations. Some of these models need "
+                        + "an HF_TOKEN environment variable. Integration inspired by LazySlide (Zheng et al. "
+                        + "2026, Nature Methods).");
+            } else if (UNetHandler.isHistologyBackbone(backbone)) {
+                backboneInfo.setText("Starts from weights trained on H&E tissue patches at 20x (3-channel RGB) "
+                        + "and trains them further on your annotations. Best for H&E brightfield; for "
+                        + "fluorescence or multi-channel images, pick an ImageNet encoder instead. About 100 MB "
+                        + "to download the first time.");
             } else {
-                backboneInfo.setText("ImageNet-pretrained weights provide general edge/texture features "
-                        + "that transfer to most image types including fluorescence and multi-channel. "
-                        + "Freeze early layers to preserve these features.");
-                backbonePretrainedRadio.setText("Use pretrained backbone weights");
+                backboneInfo.setText("Starts from ImageNet weights (learned from about a million everyday "
+                        + "photos) and trains them further on your annotations. This is the usual way to "
+                        + "train from pretrained weights, and it works for most images, including fluorescence "
+                        + "and multi-channel. The freezing options below set how much of the ImageNet weights "
+                        + "to keep unchanged.");
             }
         }
 
@@ -3859,7 +3893,9 @@ public class TrainingDialog {
             grid.add(validationSplitObservedLabel, 1, row, 2, 1);
             row++;
 
-            allBothBadgeLabel = new Label("All-Both is active: val IoU is a smoke test, not a generalization signal.");
+            allBothBadgeLabel = new Label("Every image is used for both training and validation, so the validation "
+                    + "score checks the model on the same images it learned from. Expect it to look "
+                    + "better than the model really does on images it has not seen.");
             allBothBadgeLabel.setWrapText(true);
             allBothBadgeLabel.setMaxWidth(360);
             allBothBadgeLabel.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
@@ -6828,10 +6864,7 @@ public class TrainingDialog {
                 backboneCompatWarning.setManaged(false);
                 return;
             }
-            boolean isHistologyBackbone = backbone.contains("_lunit")
-                    || backbone.contains("_kather")
-                    || backbone.contains("_tcga")
-                    || backbone.contains("_pathology");
+            boolean isHistologyBackbone = UNetHandler.isHistologyBackbone(backbone);
             if (isHistologyBackbone && !lastImageIsBrightfield) {
                 backboneCompatWarning.setText("Histology backbone selected but images appear to be fluorescence. "
                         + "Consider a standard backbone (resnet34, resnet50) for best results.");

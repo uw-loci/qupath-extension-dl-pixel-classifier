@@ -163,13 +163,13 @@ public interface ClassifierHandler {
         /** Random initialization -- no pretrained weights. */
         SCRATCH("Train from scratch"),
         /** ImageNet or histology pretrained backbone encoder. */
-        BACKBONE_PRETRAINED("Use pretrained backbone weights"),
+        BACKBONE_PRETRAINED("Continue from provided weights"),
         /** MAE self-supervised pretrained encoder (MuViT). */
         MAE_ENCODER("Use MAE pretrained encoder"),
         /** SSL (SimCLR/BYOL) self-supervised pretrained encoder. */
         SSL_ENCODER("Use SSL pretrained encoder"),
         /** Load all weights from a previously trained model. */
-        CONTINUE_TRAINING("Continue training from saved model");
+        CONTINUE_TRAINING("Continue training one of your saved models");
 
         private final String displayName;
 

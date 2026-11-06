@@ -17,6 +17,7 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.dlclassifier.classifier.handlers.UNetHandler;
 import qupath.ext.dlclassifier.service.ClassifierBackend;
 import qupath.ext.dlclassifier.service.ClassifierClient; // for nested data types
 
@@ -302,9 +303,7 @@ public class LayerFreezePanel extends VBox {
      */
     private List<LayerItem> buildLocalLayerStructure(String encoder) {
         List<LayerItem> result = new ArrayList<>();
-        boolean isHistology = encoder != null
-                && encoder.contains("_")
-                && (encoder.contains("lunit") || encoder.contains("kather") || encoder.contains("tcga"));
+        boolean isHistology = UNetHandler.isHistologyBackbone(encoder);
         // Resolve the base encoder family
         String family = resolveEncoderFamily(encoder);
 
@@ -568,8 +567,7 @@ public class LayerFreezePanel extends VBox {
      * Mirrors the logic in pretrained_models.py.
      */
     private Map<Integer, Boolean> getLocalFreezeRecommendations(String datasetSize, String encoder) {
-        boolean isHistology = encoder != null
-                && (encoder.contains("lunit") || encoder.contains("kather") || encoder.contains("tcga"));
+        boolean isHistology = UNetHandler.isHistologyBackbone(encoder);
 
         Map<Integer, Boolean> recs = new java.util.HashMap<>();
         if (isHistology) {

@@ -70,12 +70,12 @@ Controls how model weights are initialized before training. This section has fiv
 | Strategy | Description |
 |----------|-------------|
 | **Train from scratch** | Random initialization. Only recommended for very large datasets. |
-| **Use pretrained backbone weights** | Initialize the encoder with pretrained weights (ImageNet or histology). Almost always recommended. Shows a layer freeze panel for fine-grained control over which layers to train vs. freeze. |
+| **Continue from provided weights** | Start from the weights that come with the selected encoder (ImageNet, histology or a foundation model) and train them further. Almost always recommended. Shows a layer freeze panel for fine-grained control over which layers to train vs. freeze. |
 | **Use MAE pretrained encoder** | Load encoder weights from a self-supervised MAE pretrained model (.pt file). Click "Browse..." to select the file. Architecture settings auto-lock to match the encoder metadata. MuViT only. |
 | **Use SSL pretrained encoder** | Load encoder weights from a self-supervised SSL pretrained model (.pt file). Click "Browse..." to select the file. For CNN encoders (ResNet, EfficientNet, MobileNet) produced by the SSL Pretrain Encoder workflow. UNet only. See [Domain Adaptation Guide](DOMAIN_ADAPTATION_GUIDE.md). |
-| **Continue training from saved model** | Resume training from a previously trained classifier. Click "Select model..." to pick the model. All dialog fields populate from the saved model's metadata and training settings. Architecture, backbone, tile size, downsample, context scale, and handler-specific parameters (MuViT model size, patch size, level scales) are locked to match the saved model weights. |
+| **Continue training one of your saved models** | Resume training from a previously trained classifier. Click "Select model..." to pick the model. All dialog fields populate from the saved model's metadata and training settings. Architecture, backbone, tile size, downsample, context scale, and handler-specific parameters (MuViT model size, patch size, level scales) are locked to match the saved model weights. |
 
-When **Use pretrained backbone weights** is selected, a **Layer Freeze Panel** appears with:
+When **Continue from provided weights** is selected, a **Layer Freeze Panel** appears with:
 - Per-layer checkboxes to freeze/unfreeze individual encoder layers
 - **Freeze All** / **Unfreeze All** / **Use Recommended** buttons
 - Freezing early layers preserves general features; unfreezing later layers adapts to your data

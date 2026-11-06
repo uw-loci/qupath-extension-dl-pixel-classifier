@@ -87,6 +87,22 @@ public class UNetHandler implements ClassifierHandler {
         return BACKBONE_DISPLAY_NAMES.getOrDefault(backbone, backbone);
     }
 
+    /** Encoders pretrained on histology (H&E) tissue rather than on ImageNet. */
+    public static final Set<String> HISTOLOGY_BACKBONES =
+            Set.of("resnet50_lunit-swav", "resnet50_lunit-bt", "resnet50_kather100k", "resnet50_tcga-brca");
+
+    /**
+     * Whether an encoder's pretrained weights come from histology rather than ImageNet.
+     * Decided from the list, never from the name's shape: ImageNet encoders such as
+     * {@code mobilenet_v2} and {@code tu-repghostnet_050} contain underscores too.
+     *
+     * @param backbone the backbone identifier, may be null
+     * @return true for the histology-pretrained encoders only
+     */
+    public static boolean isHistologyBackbone(String backbone) {
+        return backbone != null && HISTOLOGY_BACKBONES.contains(backbone);
+    }
+
     @Override
     public String getBackboneDisplayName(String backbone) {
         return BACKBONE_DISPLAY_NAMES.getOrDefault(backbone, backbone);
