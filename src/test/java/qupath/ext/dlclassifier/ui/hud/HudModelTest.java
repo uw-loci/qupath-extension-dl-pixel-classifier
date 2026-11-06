@@ -141,6 +141,28 @@ class HudModelTest {
     }
 
     @Test
+    void theTooFewStepsNoteSaysTheRunWorksAndGivesTheNumbers() {
+        // Every batch size that trips the line, with and without accumulation.
+        for (int accumulation = 1; accumulation <= 3; accumulation++) {
+            for (int batch = 1; batch <= 64; batch++) {
+                var b = TrainingWorkflow.computeStepBudget(5, batch, accumulation, 40);
+                if (!b.isUntrainable()) {
+                    continue;
+                }
+                String note = HudModel.tooFewStepsNote(b);
+                assertThat(note)
+                        .as("batch %d, accumulation %d", batch, accumulation)
+                        .contains("Training will run")
+                        .contains(b.stepsPerEpoch() == 1 ? "only 1 weight update" : "only " + b.stepsPerEpoch())
+                        .contains("5 training patches")
+                        .contains("batches of " + batch)
+                        .doesNotContainIgnoringCase("untrainable");
+                assertThat(note.contains("batches per update")).isEqualTo(accumulation > 1);
+            }
+        }
+    }
+
+    @Test
     void moreEpochsBuysStepsAndCostsTime() {
         Map<Gauge, HudDelta.Change> c = change(inputs(4, 16, 20), inputs(4, 16, 40));
         assertThat(c.get(Gauge.LEARNING_STEPS).verdict()).isEqualTo(Verdict.BETTER);

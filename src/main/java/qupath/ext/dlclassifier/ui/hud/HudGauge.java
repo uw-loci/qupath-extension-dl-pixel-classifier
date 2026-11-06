@@ -538,7 +538,13 @@ abstract class HudGauge extends Region {
         if (r == null) {
             return gauge.title();
         }
-        StringBuilder sb = new StringBuilder(gauge.title()).append('\n').append(explain(gauge));
+        StringBuilder sb = new StringBuilder(gauge.title());
+        // A gauge at a hard line leads with the problem: that is what its chip is about.
+        boolean atLine = r.available() && r.band() != GaugeReading.Band.NORMAL;
+        if (atLine && !r.note().isEmpty()) {
+            sb.append('\n').append(r.note());
+        }
+        sb.append('\n').append(explain(gauge));
         if (!r.available()) {
             if (!r.note().isEmpty()) {
                 sb.append('\n').append(r.note());
@@ -562,13 +568,9 @@ abstract class HudGauge extends Region {
         if (!r.calibrated()) {
             sb.append('\n').append("Rough: this estimate rests on no measurement for this architecture.");
         }
-        if (r.band() != GaugeReading.Band.NORMAL) {
-            sb.append('\n').append("At a hard line");
-            if (!r.note().isEmpty()) {
-                sb.append(": ").append(r.note());
-            }
-            sb.append('.');
-        } else if (!r.note().isEmpty()) {
+        if (atLine && r.note().isEmpty()) {
+            sb.append('\n').append("At a hard line.");
+        } else if (!atLine && !r.note().isEmpty()) {
             sb.append('\n').append(r.note());
         }
         return sb.toString();

@@ -74,7 +74,7 @@ public final class HudModel {
                         Gauge.LEARNING_STEPS,
                         budget.totalSteps(),
                         budget.isUntrainable() ? GaugeReading.Band.LIMIT : GaugeReading.Band.NORMAL,
-                        budget.isUntrainable() ? budget.stepsPerEpoch() + " step per epoch" : ""));
+                        budget.isUntrainable() ? tooFewStepsNote(budget) : ""));
 
         m.put(
                 Gauge.TRAINING_DATA,
@@ -154,5 +154,23 @@ public final class HudModel {
 
     private static GaugeReading relative(Gauge g, double value, GaugeReading.Band band, String note) {
         return new GaugeReading(g, true, value, true, band, note);
+    }
+
+    /**
+     * What the "TOO FEW STEPS" chip means, in numbers. The training still runs; the
+     * problem is that each epoch buys at most one weight update, so the epoch count
+     * stops measuring how much the model learns.
+     */
+    static String tooFewStepsNote(TrainingWorkflow.StepBudget b) {
+        String update = b.stepsPerEpoch() == 1 ? "1 weight update" : b.stepsPerEpoch() + " weight updates";
+        return String.format(
+                java.util.Locale.ROOT,
+                "Training will run, but each epoch makes only %s (%d training patches in batches of %d%s), "
+                        + "so raising the epochs cannot make up for it. Lower the batch size, or add "
+                        + "training patches.",
+                update,
+                b.trainPatches(),
+                b.batchSize(),
+                b.accumulation() > 1 ? ", " + b.accumulation() + " batches per update" : "");
     }
 }

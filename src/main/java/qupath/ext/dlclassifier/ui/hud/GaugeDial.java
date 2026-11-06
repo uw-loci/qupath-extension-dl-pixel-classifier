@@ -239,7 +239,8 @@ final class GaugeDial extends HudGauge {
             return null;
         }
         if (gauge == Gauge.LEARNING_STEPS) {
-            return "UNTRAINABLE";
+            // Not "untrainable": the run works, it just learns too little per epoch.
+            return "TOO FEW STEPS";
         }
         return r.band() == GaugeReading.Band.LIMIT ? "LIMIT" : "CAUTION";
     }
