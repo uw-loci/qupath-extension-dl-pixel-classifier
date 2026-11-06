@@ -32,6 +32,7 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.service.ModelManager;
 import qupath.ext.dlclassifier.service.OverlayService;
+import qupath.ext.dlclassifier.ui.ThemeColors;
 import qupath.ext.dlclassifier.ui.UserErrors;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
@@ -207,10 +208,11 @@ public class ModelManagementWorkflow {
     private VBox createDetailsPane() {
         VBox box = new VBox(10);
         box.setPadding(new Insets(10));
-        box.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #ddd; -fx-border-radius: 5;");
+        box.setStyle("-fx-background-color: " + ThemeColors.PANEL_BG + "; -fx-border-color: " + ThemeColors.BORDER
+                + "; -fx-border-radius: 5;");
 
         Label placeholder = new Label("Select a classifier to view details");
-        placeholder.setStyle("-fx-text-fill: #888;");
+        placeholder.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
         box.getChildren().add(placeholder);
 
         return box;
@@ -224,7 +226,7 @@ public class ModelManagementWorkflow {
 
         if (metadata == null) {
             Label placeholder = new Label("Select a classifier to view details");
-            placeholder.setStyle("-fx-text-fill: #888;");
+            placeholder.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
             detailsPane.getChildren().add(placeholder);
             return;
         }
@@ -237,7 +239,7 @@ public class ModelManagementWorkflow {
         if (metadata.getDescription() != null && !metadata.getDescription().isEmpty()) {
             Label descLabel = new Label(metadata.getDescription());
             descLabel.setWrapText(true);
-            descLabel.setStyle("-fx-text-fill: #666;");
+            descLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
             detailsPane.getChildren().add(descLabel);
         }
 
@@ -419,7 +421,7 @@ public class ModelManagementWorkflow {
             // Directory path (selectable)
             Label pathLabel = new Label(dir.toString());
             pathLabel.setWrapText(true);
-            pathLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+            pathLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.MUTED + ";");
             detailsPane.getChildren().add(pathLabel);
 
             // Open Folder button
@@ -434,7 +436,7 @@ public class ModelManagementWorkflow {
             detailsPane.getChildren().add(openFolderBtn);
         } else {
             Label noModelLabel = new Label("Model file not found");
-            noModelLabel.setStyle("-fx-text-fill: #c00;");
+            noModelLabel.setStyle("-fx-text-fill: " + ThemeColors.ERROR + ";");
             detailsPane.getChildren().add(noModelLabel);
         }
     }
@@ -456,7 +458,7 @@ public class ModelManagementWorkflow {
             grid.getColumnConstraints().addAll(labelCol, valueCol);
         }
         Label labelNode = new Label(label);
-        labelNode.setStyle("-fx-text-fill: #666;");
+        labelNode.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
         labelNode.setMinWidth(Region.USE_PREF_SIZE);
         Label valueNode = new Label(value != null ? value : "-");
         valueNode.setWrapText(true);
@@ -577,7 +579,7 @@ public class ModelManagementWorkflow {
 
         Button exportFullBtn = new Button("Export Full (with weights)  !");
         exportFullBtn.setOnAction(e -> exportSelectedClassifier());
-        exportFullBtn.setStyle("-fx-text-fill: #b00020; -fx-font-weight: bold;");
+        exportFullBtn.setStyle("-fx-text-fill: " + ThemeColors.ERROR + "; -fx-font-weight: bold;");
         exportFullBtn.setTooltip(
                 new Tooltip("Exports the ENTIRE classifier including model weights (model.pt, model.onnx,\n"
                         + "model_static.onnx). This can be 500 MB to several GB. Use this only to move a\n"
@@ -600,7 +602,7 @@ public class ModelManagementWorkflow {
 
         // Info label
         Label infoLabel = new Label("");
-        infoLabel.setStyle("-fx-text-fill: #888;");
+        infoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
         box.getChildren().addAll(infoLabel, spacer, deleteBtn, importBtn, exportDescriptorBtn, exportFullBtn, closeBtn);
         return box;
@@ -730,11 +732,11 @@ public class ModelManagementWorkflow {
     private void updateDetailsPaneForMultiple(int count) {
         detailsPane.getChildren().clear();
         Label label = new Label(count == 0 ? "Select a classifier to view details" : count + " classifiers selected");
-        label.setStyle("-fx-text-fill: #888;");
+        label.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
         detailsPane.getChildren().add(label);
         if (count > 1) {
             Label hint = new Label("Delete works on all of them. Export needs exactly one.");
-            hint.setStyle("-fx-text-fill: #888; -fx-font-size: 11px;");
+            hint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             hint.setWrapText(true);
             detailsPane.getChildren().add(hint);
         }

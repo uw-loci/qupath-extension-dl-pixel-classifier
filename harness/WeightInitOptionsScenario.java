@@ -164,6 +164,14 @@ public final class WeightInitOptionsScenario {
             return null;
         });
         Thread.sleep(600);
+        // Every section open, so the whole-dialog render shows every label.
+        onFx(() -> {
+            for (Node n : all(root)) {
+                if (n instanceof TitledPane tp) tp.setExpanded(true);
+            }
+            return null;
+        });
+        Thread.sleep(1500);
         for (String theme : new String[] {"Modena Light", "Modena Dark"}) {
             onFx(() -> {
                 for (var opt : QuPathStyleManager.availableStylesProperty()) {
@@ -180,6 +188,20 @@ public final class WeightInitOptionsScenario {
                 return null;
             });
             System.out.println("[note] wrote " + png);
+            Path whole = outDir.resolve("train-dialog-" + theme.replace(' ', '-').toLowerCase() + ".png");
+            onFx(() -> {
+                ScrollPane sp = findScrollPane(root);
+                Node content = sp != null ? sp.getContent() : root;
+                content.applyCss();
+                if (content instanceof Parent pc) pc.layout();
+                var img = content.snapshot(null, null);
+                javax.imageio.ImageIO.write(javafx.embed.swing.SwingFXUtils.fromFXImage(img, null), "png", whole.toFile());
+                var head = root.snapshot(null, null);
+                javax.imageio.ImageIO.write(javafx.embed.swing.SwingFXUtils.fromFXImage(head, null), "png",
+                        outDir.resolve("train-window-" + theme.replace(' ', '-').toLowerCase() + ".png").toFile());
+                return null;
+            });
+            System.out.println("[note] wrote " + whole);
         }
 
         System.out.println(failures == 0 ? "[PASS] weight initialization options" : "[FAIL] " + failures + " check(s)");

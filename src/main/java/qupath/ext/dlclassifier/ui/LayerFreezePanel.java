@@ -65,7 +65,7 @@ public class LayerFreezePanel extends VBox {
         Label infoLabel = new Label("The model starts with features learned from millions of images. "
                 + "You choose how much to keep vs. retrain on your data.");
         infoLabel.setWrapText(true);
-        infoLabel.setStyle("-fx-text-fill: #666666;");
+        infoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
         Hyperlink learnMoreLink = new Hyperlink("What is transfer learning?");
         learnMoreLink.setStyle("-fx-font-size: 11px;");
@@ -179,14 +179,15 @@ public class LayerFreezePanel extends VBox {
         // Context scale warning (hidden by default)
         contextWarningLabel = new Label();
         contextWarningLabel.setWrapText(true);
-        contextWarningLabel.setStyle("-fx-background-color: #FFF3CD; -fx-border-color: #FFECB5; "
-                + "-fx-border-radius: 4; -fx-background-radius: 4; -fx-padding: 8;");
+        contextWarningLabel.setStyle(
+                "-fx-background-color: " + ThemeColors.WARNING_BG + "; -fx-border-color: " + ThemeColors.WARNING_BORDER
+                        + "; " + "-fx-border-radius: 4; -fx-background-radius: 4; -fx-padding: 8;");
         contextWarningLabel.setVisible(false);
         contextWarningLabel.setManaged(false);
 
         // Status
         statusLabel = new Label("Select architecture and encoder to view layers");
-        statusLabel.setStyle("-fx-text-fill: #888888;");
+        statusLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
         getChildren()
                 .addAll(
@@ -706,7 +707,8 @@ public class LayerFreezePanel extends VBox {
             contextWarningLabel.setText("Note: Context scale is active (" + currentContextScale
                     + "x). The initial conv layer is correctly set to trainable so "
                     + "it can learn to use the extra context channels.");
-            contextWarningLabel.setStyle("-fx-background-color: #D4EDDA; -fx-border-color: #C3E6CB; "
+            contextWarningLabel.setStyle("-fx-background-color: " + ThemeColors.SUCCESS_BG + "; -fx-border-color: "
+                    + ThemeColors.SUCCESS_BORDER + "; "
                     + "-fx-border-radius: 4; -fx-background-radius: 4; -fx-padding: 8;");
         }
         contextWarningLabel.setVisible(true);
@@ -746,9 +748,9 @@ public class LayerFreezePanel extends VBox {
             nameLabel.setStyle("-fx-font-weight: bold;");
 
             paramsLabel = new Label();
-            paramsLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 11px;");
+            paramsLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             descLabel = new Label();
-            descLabel.setStyle("-fx-text-fill: #888888; -fx-font-size: 11px;");
+            descLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             // Description gets its own row inside the VBox and wraps to the
             // available cell width. The previous layout placed it next to
             // paramsLabel inside an HBox with a 300px maxWidth, which clipped
@@ -781,9 +783,9 @@ public class LayerFreezePanel extends VBox {
 
                 // Visual feedback for frozen state
                 if (item.isFrozen()) {
-                    container.setStyle("-fx-background-color: #f0f8ff;");
+                    container.setStyle("-fx-background-color: " + ThemeColors.COOL_BG + ";");
                 } else {
-                    container.setStyle("-fx-background-color: #fff8f0;");
+                    container.setStyle("-fx-background-color: " + ThemeColors.WARM_BG + ";");
                 }
 
                 setGraphic(container);

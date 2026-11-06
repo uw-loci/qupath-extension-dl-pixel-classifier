@@ -19,6 +19,7 @@ import qupath.ext.dlclassifier.model.ChannelConfiguration;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
+import qupath.ext.dlclassifier.ui.ThemeColors;
 import qupath.lib.gui.QuPathGUI;
 
 /**
@@ -197,8 +198,8 @@ public class CustomONNXHandler implements ClassifierHandler {
             Label infoLabel = new Label("Import a pre-trained ONNX model for inference. "
                     + "The model must have NCHW input format and output class probabilities.");
             infoLabel.setWrapText(true);
-            infoLabel.setStyle("-fx-background-color: #e8f4fd; -fx-padding: 8; "
-                    + "-fx-border-color: #b8daff; -fx-border-radius: 4;");
+            infoLabel.setStyle("-fx-background-color: " + ThemeColors.INFO_BG + "; -fx-padding: 8; "
+                    + "-fx-border-color: " + ThemeColors.INFO_BORDER + "; -fx-border-radius: 4;");
 
             // Model file selection
             Label pathLabel = new Label("ONNX Model File:");
@@ -241,7 +242,7 @@ public class CustomONNXHandler implements ClassifierHandler {
 
             // Status
             statusLabel = new Label("");
-            statusLabel.setStyle("-fx-text-fill: #666;");
+            statusLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
             root.getChildren()
                     .addAll(
@@ -281,14 +282,14 @@ public class CustomONNXHandler implements ClassifierHandler {
                     // Parse JSON and update UI
                     // (Simple parsing - in production would use Gson)
                     statusLabel.setText("Loaded metadata from " + jsonPath.getFileName());
-                    statusLabel.setStyle("-fx-text-fill: #080;");
+                    statusLabel.setStyle("-fx-text-fill: " + ThemeColors.SUCCESS + ";");
                 } catch (Exception e) {
                     statusLabel.setText("Could not read metadata file");
-                    statusLabel.setStyle("-fx-text-fill: #c00;");
+                    statusLabel.setStyle("-fx-text-fill: " + ThemeColors.ERROR + ";");
                 }
             } else {
                 statusLabel.setText("No metadata file found - configure manually");
-                statusLabel.setStyle("-fx-text-fill: #666;");
+                statusLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
             }
         }
 

@@ -156,11 +156,11 @@ public class ProgressMonitorController {
         statusLabel.setStyle("-fx-font-weight: bold;");
 
         timeLabel = new Label("Elapsed: 00:00:00");
-        timeLabel.setStyle("-fx-text-fill: #666;");
+        timeLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
         detailLabel = new Label();
         detailLabel.textProperty().bind(detail);
-        detailLabel.setStyle("-fx-text-fill: #666;");
+        detailLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
         detailLabel.setWrapText(true);
 
         logArea = new TextArea();
@@ -203,12 +203,12 @@ public class ProgressMonitorController {
         });
 
         estimateLabel = new Label();
-        estimateLabel.setStyle("-fx-text-fill: #336699; -fx-font-size: 12px; -fx-font-weight: bold;");
+        estimateLabel.setStyle("-fx-text-fill: " + ThemeColors.INFO + "; -fx-font-size: 12px; -fx-font-weight: bold;");
         estimateLabel.setVisible(false);
         estimateLabel.setManaged(false);
 
         reviewWarningLabel = new Label("Training tiles are cleaned up when this dialog closes.");
-        reviewWarningLabel.setStyle("-fx-text-fill: #CC8800; -fx-font-size: 11px;");
+        reviewWarningLabel.setStyle("-fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-size: 11px;");
         reviewWarningLabel.setWrapText(true);
         reviewWarningLabel.setVisible(false);
         reviewWarningLabel.setManaged(false);
@@ -680,7 +680,7 @@ public class ProgressMonitorController {
 
             if (success) {
                 status.set("Complete");
-                statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: green;");
+                statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: " + ThemeColors.SUCCESS + ";");
                 detail.set(message);
 
                 // Show continue-training button if callback is wired
@@ -703,9 +703,9 @@ public class ProgressMonitorController {
                 }
             } else {
                 status.set("Failed");
-                statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: red;");
+                statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: " + ThemeColors.ERROR + ";");
                 detail.set("Error -- see Log below");
-                detailLabel.setStyle("-fx-text-fill: red; -fx-font-weight: bold;");
+                detailLabel.setStyle("-fx-text-fill: " + ThemeColors.ERROR + "; -fx-font-weight: bold;");
                 logPane.setExpanded(true);
             }
 
@@ -726,7 +726,7 @@ public class ProgressMonitorController {
             estimateLabel.setVisible(false);
             estimateLabel.setManaged(false);
             status.set(String.format("Paused at epoch %d/%d", epoch, totalEpochs));
-            statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #CC8800;");
+            statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: " + ThemeColors.WARNING + ";");
 
             // Resume button
             pauseButton.setText("Resume");
@@ -828,7 +828,7 @@ public class ProgressMonitorController {
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
                 status.set("Saving best model...");
-                statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #CC8800;");
+                statusLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: " + ThemeColors.WARNING + ";");
                 pauseButton.setDisable(true);
                 completeTrainingButton.setDisable(true);
                 cancelButton.setDisable(true);

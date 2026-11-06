@@ -438,7 +438,7 @@ public class TrainingAreaIssuesDialog {
 
         // Status bar
         Label statusLabel = new Label("Click a row to navigate to the tile location");
-        statusLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+        statusLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
 
         // Preview pane with zoom support
         tileImageView = new ImageView();
@@ -455,7 +455,7 @@ public class TrainingAreaIssuesDialog {
 
         ScrollPane previewScroll = new ScrollPane(imageStack);
         previewScroll.setPannable(true);
-        previewScroll.setStyle("-fx-background-color: #222;");
+        previewScroll.setStyle("-fx-background-color: #222;"); // theme-exempt: image backdrop, dark in both themes
         previewScroll.setPrefSize(280, 280);
         previewScroll.setMinSize(280, 280);
         previewScroll.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
@@ -586,9 +586,9 @@ public class TrainingAreaIssuesDialog {
                         + "a center crop is applied, so tile edges (which often show artifacts and higher loss) "
                         + "are discarded.");
         centerCropNote.setWrapText(true);
-        centerCropNote.setStyle("-fx-background-color: #e7f1ff;"
-                + " -fx-text-fill: #084298;"
-                + " -fx-border-color: #b6d4fe;"
+        centerCropNote.setStyle("-fx-background-color: " + ThemeColors.INFO_BG + ";"
+                + " -fx-text-fill: " + ThemeColors.INFO_ON_BG + ";"
+                + " -fx-border-color: " + ThemeColors.INFO_BORDER + ";"
                 + " -fx-border-width: 1;"
                 + " -fx-padding: 6 10 6 10;"
                 + " -fx-font-size: 11px;");
@@ -618,7 +618,7 @@ public class TrainingAreaIssuesDialog {
         // Confusion-filter banner -- only visible when a matrix cell click
         // has applied a (gt, pred) filter to the table.
         confusionFilterLabel = new Label("");
-        confusionFilterLabel.setStyle("-fx-text-fill: #b80000; -fx-font-weight: bold;");
+        confusionFilterLabel.setStyle("-fx-text-fill: " + ThemeColors.ERROR + "; -fx-font-weight: bold;");
         Hyperlink clearConfusionLink = new Hyperlink("Clear");
         clearConfusionLink.setOnAction(e -> clearConfusionFilter());
         confusionFilterBanner = new HBox(8, confusionFilterLabel, clearConfusionLink);
@@ -1217,9 +1217,9 @@ public class TrainingAreaIssuesDialog {
     private Label buildOverlayWarningBanner() {
         Label banner = new Label();
         banner.setWrapText(true);
-        banner.setStyle("-fx-background-color: #fff3cd;"
-                + " -fx-text-fill: #664d03;"
-                + " -fx-border-color: #e5c97a;"
+        banner.setStyle("-fx-background-color: " + ThemeColors.WARNING_BG + ";"
+                + " -fx-text-fill: " + ThemeColors.WARNING_ON_BG + ";"
+                + " -fx-border-color: " + ThemeColors.WARNING_BORDER + ";"
                 + " -fx-border-width: 1;"
                 + " -fx-padding: 6 10 6 10;"
                 + " -fx-font-size: 11px;");
@@ -1367,7 +1367,7 @@ public class TrainingAreaIssuesDialog {
         if (classColors.isEmpty()) return;
 
         Label legendTitle = new Label("Class Colors:");
-        legendTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #888;");
+        legendTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.MUTED + ";");
         legendBox.getChildren().add(legendTitle);
 
         for (Map.Entry<String, Integer> entry : classColors.entrySet()) {
@@ -1395,20 +1395,22 @@ public class TrainingAreaIssuesDialog {
         confidenceLegendMarker = null;
 
         Label legendTitle = new Label("Loss Intensity:");
-        legendTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #888;");
+        legendTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.MUTED + ";");
         legendBox.getChildren().add(legendTitle);
 
         Region gradientBar = new Region();
         gradientBar.setPrefHeight(14);
         gradientBar.setPrefWidth(200);
         gradientBar.setMaxWidth(200);
-        gradientBar.setStyle("-fx-background-color: linear-gradient(to right, #0000FF, #FFFF00, #FF0000);"
-                + " -fx-border-color: #666; -fx-border-width: 0.5;");
+        gradientBar.setStyle(
+                "-fx-background-color: linear-gradient(to right, #0000FF, #FFFF00, #FF0000);" // theme-exempt: the
+                        // heatmap color scale
+                        + " -fx-border-color: " + ThemeColors.BORDER + "; -fx-border-width: 0.5;");
 
         Label lowLabel = new Label("Low");
-        lowLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888;");
+        lowLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: " + ThemeColors.MUTED + ";");
         Label highLabel = new Label("High");
-        highLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888;");
+        highLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: " + ThemeColors.MUTED + ";");
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
@@ -1430,7 +1432,7 @@ public class TrainingAreaIssuesDialog {
         legendBox.getChildren().clear();
 
         Label legendTitle = new Label("Model Confidence (click or drag to set threshold):");
-        legendTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #888;");
+        legendTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.MUTED + ";");
         legendBox.getChildren().add(legendTitle);
 
         double w = confidenceLegendWidth;
@@ -1441,7 +1443,7 @@ public class TrainingAreaIssuesDialog {
         gradientBar.setMaxSize(w, h);
         gradientBar.setStyle("-fx-background-color: "
                 + HeatmapColormap.cssLinearGradient("to right", 0.0, 1.0, 9)
-                + "; -fx-border-color: #666; -fx-border-width: 0.5;");
+                + "; -fx-border-color: " + ThemeColors.BORDER + "; -fx-border-width: 0.5;");
 
         // Threshold marker line; repositioned by updateConfidenceLegendMarker.
         Region marker = new Region();
@@ -1449,7 +1451,10 @@ public class TrainingAreaIssuesDialog {
         marker.setPrefSize(2, h + 4);
         marker.setMinSize(2, h + 4);
         marker.setMaxSize(2, h + 4);
-        marker.setStyle("-fx-background-color: white; -fx-border-color: black; -fx-border-width: 0.5;");
+        marker.setStyle(
+                "-fx-background-color: white; -fx-border-color: black; -fx-border-width: 0.5;"); // theme-exempt: marker
+        // drawn on the color
+        // scale
         confidenceLegendMarker = marker;
 
         // Shade the part of the ramp that cannot be selected, so clamping a
@@ -1461,7 +1466,8 @@ public class TrainingAreaIssuesDialog {
         belowMin.setMaxSize(unreachableW, h);
         belowMin.setLayoutX(0);
         belowMin.setMouseTransparent(true);
-        belowMin.setStyle("-fx-background-color: rgba(245, 245, 245, 0.72);");
+        belowMin.setStyle(
+                "-fx-background-color: rgba(245, 245, 245, 0.72);"); // theme-exempt: veil over the color scale
 
         Pane barPane = new Pane(gradientBar, belowMin, marker);
         barPane.setPrefSize(w, h);
@@ -1496,9 +1502,9 @@ public class TrainingAreaIssuesDialog {
         barPane.setOnMouseDragged(setThresholdFromX);
 
         Label lowLabel = new Label("Low");
-        lowLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888;");
+        lowLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: " + ThemeColors.MUTED + ";");
         Label highLabel = new Label("High -> changes");
-        highLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888;");
+        highLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: " + ThemeColors.MUTED + ";");
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
         HBox labels = new HBox(lowLabel, spacer, highLabel);
@@ -1613,7 +1619,7 @@ public class TrainingAreaIssuesDialog {
         // Status label
         adjustStatusLabel = new Label("Select a tile to enable adjustment");
         adjustStatusLabel.setWrapText(true);
-        adjustStatusLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        adjustStatusLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.MUTED + ";");
 
         // Per-(from -> to) transition checkboxes, populated when a preview is
         // computed. Hidden when no preview is pending. Toggling a checkbox
@@ -2266,7 +2272,7 @@ public class TrainingAreaIssuesDialog {
         if (classes.isEmpty()) {
             Label empty = new Label("No confusion data available yet.\n"
                     + "Train a classifier or load a saved session to populate the matrix.");
-            empty.setStyle("-fx-text-fill: #888;");
+            empty.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
             matrixContent.getChildren().add(empty);
             return;
         }
@@ -2284,17 +2290,17 @@ public class TrainingAreaIssuesDialog {
                 + "Cell colour = % of that GT class's pixels predicted as that column. "
                 + "Click an off-diagonal cell to filter the Tiles tab to those confusions.");
         hint.setWrapText(true);
-        hint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+        hint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
 
         GridPane grid = new GridPane();
         grid.setHgap(1);
         grid.setVgap(1);
-        grid.setStyle("-fx-background-color: #cccccc;");
+        grid.setStyle("-fx-background-color: " + ThemeColors.BORDER + ";");
 
         Label corner = new Label("GT \\ Pred");
         corner.setMinSize(110, 32);
         corner.setAlignment(Pos.CENTER);
-        corner.setStyle("-fx-font-weight: bold; -fx-background-color: #eeeeee;");
+        corner.setStyle("-fx-font-weight: bold; -fx-background-color: " + ThemeColors.PANEL_BG + ";");
         grid.add(corner, 0, 0);
 
         for (int j = 0; j < classes.size(); j++) {
@@ -2302,7 +2308,7 @@ public class TrainingAreaIssuesDialog {
             Label colHeader = new Label(truncateLabel(pred, 12));
             colHeader.setMinSize(80, 32);
             colHeader.setAlignment(Pos.CENTER);
-            colHeader.setStyle("-fx-font-weight: bold; -fx-background-color: #eeeeee;");
+            colHeader.setStyle("-fx-font-weight: bold; -fx-background-color: " + ThemeColors.PANEL_BG + ";");
             colHeader.setTooltip(TooltipHelper.create(pred + " (predicted)"));
             grid.add(colHeader, j + 1, 0);
         }
@@ -2312,7 +2318,8 @@ public class TrainingAreaIssuesDialog {
             Label rowHeader = new Label(truncateLabel(gt, 12));
             rowHeader.setMinSize(110, 32);
             rowHeader.setAlignment(Pos.CENTER_LEFT);
-            rowHeader.setStyle("-fx-font-weight: bold; -fx-background-color: #eeeeee; -fx-padding: 0 0 0 6;");
+            rowHeader.setStyle(
+                    "-fx-font-weight: bold; -fx-background-color: " + ThemeColors.PANEL_BG + "; -fx-padding: 0 0 0 6;");
             rowHeader.setTooltip(TooltipHelper.create(gt + " (ground truth)"));
             grid.add(rowHeader, 0, i + 1);
 
@@ -2333,13 +2340,16 @@ public class TrainingAreaIssuesDialog {
                 cell.setAlignment(Pos.CENTER);
                 if (gtTotal == 0) {
                     cell.setText("-");
-                    cell.setStyle("-fx-background-color: white; -fx-text-fill: #ccc;");
+                    cell.setStyle("-fx-background-color: " + ThemeColors.PANEL_BG + "; -fx-text-fill: "
+                            + ThemeColors.MUTED + ";");
                 } else if (diag) {
                     cell.setText(String.format("%.1f%%", pct));
-                    cell.setStyle("-fx-background-color: #f0f0f0; -fx-text-fill: #888;");
+                    cell.setStyle("-fx-background-color: " + ThemeColors.PANEL_BG + "; -fx-text-fill: "
+                            + ThemeColors.MUTED + ";");
                 } else if (pixels == 0) {
                     cell.setText("-");
-                    cell.setStyle("-fx-background-color: white; -fx-text-fill: #ccc;");
+                    cell.setStyle("-fx-background-color: " + ThemeColors.PANEL_BG + "; -fx-text-fill: "
+                            + ThemeColors.MUTED + ";");
                 } else {
                     cell.setText(formatConfusionShare(pixels, gtTotal));
                     double intensity = Math.min(pct / 30.0, 1.0);

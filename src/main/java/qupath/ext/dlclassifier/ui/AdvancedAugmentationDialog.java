@@ -119,7 +119,7 @@ class AdvancedAugmentationDialog {
         header.setStyle("-fx-font-size: 12px;");
         Label sub = new Label("Defaults match the built-in augmentation pipeline. "
                 + "Set probability to 0 to disable an augmentation entirely.");
-        sub.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+        sub.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
         sub.setWrapText(true);
 
         root.getChildren().addAll(header, sub, new Separator());

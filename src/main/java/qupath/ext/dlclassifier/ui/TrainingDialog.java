@@ -653,8 +653,9 @@ public class TrainingDialog {
                     augmentationSection));
 
             gatedSectionsHint = new Label("Load classes from the section above to unlock the rest of the dialog.");
-            gatedSectionsHint.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
-                    + "-fx-padding: 6 10; -fx-border-color: #d39e00; "
+            gatedSectionsHint.setStyle("-fx-text-fill: " + ThemeColors.WARNING_ON_BG + "; -fx-background-color: "
+                    + ThemeColors.WARNING_BG + "; "
+                    + "-fx-padding: 6 10; -fx-border-color: " + ThemeColors.WARNING_BORDER + "; "
                     + "-fx-border-width: 0 0 0 4; -fx-font-style: italic;");
             gatedSectionsHint.setMaxWidth(Double.MAX_VALUE);
             gatedSectionsHint.setWrapText(true);
@@ -781,11 +782,11 @@ public class TrainingDialog {
             }
 
             Label header = new Label("Unfinished training detected");
-            header.setStyle("-fx-font-weight: bold; -fx-text-fill: #8a5a00;");
+            header.setStyle("-fx-font-weight: bold; -fx-text-fill: " + ThemeColors.WARNING + ";");
 
             Label subtitle = new Label("These runs were interrupted before they could finish. "
                     + "Click Recover to finalize the best model so far.");
-            subtitle.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
+            subtitle.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             subtitle.setWrapText(true);
 
             VBox rows = new VBox(4);
@@ -795,8 +796,8 @@ public class TrainingDialog {
 
             VBox bannerContent = new VBox(4, header, subtitle, rows);
             bannerContent.setPadding(new Insets(8, 10, 8, 10));
-            bannerContent.setStyle("-fx-background-color: #fff7d6; "
-                    + "-fx-border-color: #e0b84a; "
+            bannerContent.setStyle("-fx-background-color: " + ThemeColors.WARNING_BG + "; "
+                    + "-fx-border-color: " + ThemeColors.WARNING_BORDER + "; "
                     + "-fx-border-width: 1; "
                     + "-fx-background-radius: 4; "
                     + "-fx-border-radius: 4;");
@@ -923,10 +924,10 @@ public class TrainingDialog {
             titleRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
             Label subtitleLabel = new Label("Train a deep learning model to classify pixels in your images");
-            subtitleLabel.setStyle("-fx-text-fill: #666;");
+            subtitleLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
             Label ruoLabel = new Label("Research use only -- not for clinical or diagnostic use.");
-            ruoLabel.setStyle("-fx-text-fill: #888; -fx-font-size: 11px; -fx-font-style: italic;");
+            ruoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px; -fx-font-style: italic;");
 
             // Basic mode hint (hidden in advanced)
             Label basicHint = new Label("Select images, load classes, pick a model size, "
@@ -934,7 +935,7 @@ public class TrainingDialog {
                     + "Use Fast for simple, obvious classes (background/tissue/artifact); "
                     + "otherwise start with Small or Medium -- larger models need more data and time.");
             basicHint.setWrapText(true);
-            basicHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            basicHint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             basicHint.visibleProperty().bind(advancedMode.not());
             basicHint.managedProperty().bind(advancedMode.not());
 
@@ -942,8 +943,9 @@ public class TrainingDialog {
             advancedSettingsWarning =
                     new Label("Note: Some advanced settings are still active. Switch to All Settings to review.");
             advancedSettingsWarning.setWrapText(true);
-            advancedSettingsWarning.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
-                    + "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
+            advancedSettingsWarning.setStyle(
+                    "-fx-text-fill: " + ThemeColors.WARNING_ON_BG + "; -fx-background-color: " + ThemeColors.WARNING_BG
+                            + "; " + "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
             advancedSettingsWarning.setVisible(false);
             advancedSettingsWarning.setManaged(false);
 
@@ -984,7 +986,7 @@ public class TrainingDialog {
 
             Label scratchInfo = new Label("All model weights are randomly initialized.");
             scratchInfo.setWrapText(true);
-            scratchInfo.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            scratchInfo.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             scratchInfo.setPadding(new Insets(0, 0, 0, 20));
 
             // --- Pretrained backbone (CNN) ---
@@ -1007,7 +1009,7 @@ public class TrainingDialog {
             Label backboneInfo = new Label("Transfer learning uses pretrained weights. "
                     + "Freeze early layers to preserve general features, train later layers to adapt to your data.");
             backboneInfo.setWrapText(true);
-            backboneInfo.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            backboneInfo.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
 
             // Update info text when backbone or mode changes (ImageNet vs histology vs foundation)
             backboneCombo.valueProperty().addListener((obs, old, newVal) -> {
@@ -1029,7 +1031,7 @@ public class TrainingDialog {
             // the user is starting from a backbone or continuing from a saved model.
             layerFreezeInfoLabel = new Label();
             layerFreezeInfoLabel.setWrapText(true);
-            layerFreezeInfoLabel.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
+            layerFreezeInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
 
             layerFreezeContainer = new VBox(5, layerFreezeInfoLabel, layerFreezePanel);
             layerFreezeContainer.setPadding(new Insets(0, 0, 0, 20));
@@ -1037,8 +1039,9 @@ public class TrainingDialog {
             // Backbone-image type compatibility warning (non-blocking)
             backboneCompatWarning = new Label();
             backboneCompatWarning.setWrapText(true);
-            backboneCompatWarning.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
-                    + "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
+            backboneCompatWarning.setStyle(
+                    "-fx-text-fill: " + ThemeColors.WARNING_ON_BG + "; -fx-background-color: " + ThemeColors.WARNING_BG
+                            + "; " + "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
             backboneCompatWarning.setVisible(false);
             backboneCompatWarning.setManaged(false);
 
@@ -1058,9 +1061,8 @@ public class TrainingDialog {
             maeEncoderPathField.setEditable(false);
             maeEncoderPathField.setFocusTraversable(false);
             maeEncoderPathField.setMouseTransparent(true);
-            maeEncoderPathField.setStyle(
-                    "-fx-control-inner-background: #f4f4f4; -fx-text-fill: #555; -fx-background-insets: 0; "
-                            + "-fx-background-radius: 2;");
+            maeEncoderPathField.setStyle("-fx-control-inner-background: " + ThemeColors.PANEL_BG + "; -fx-text-fill: "
+                    + ThemeColors.MUTED + "; -fx-background-insets: 0; " + "-fx-background-radius: 2;");
             maeEncoderPathField.setPromptText("(no file selected -- click Browse to choose)");
             maeEncoderPathField.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(maeEncoderPathField, Priority.ALWAYS);
@@ -1123,7 +1125,7 @@ public class TrainingDialog {
 
             maeEncoderInfoLabel = new Label();
             maeEncoderInfoLabel.setWrapText(true);
-            maeEncoderInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #336699;");
+            maeEncoderInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.INFO + ";");
             maeEncoderInfoLabel.setVisible(false);
             maeEncoderInfoLabel.setManaged(false);
 
@@ -1146,9 +1148,8 @@ public class TrainingDialog {
             sslEncoderPathField.setEditable(false);
             sslEncoderPathField.setFocusTraversable(false);
             sslEncoderPathField.setMouseTransparent(true);
-            sslEncoderPathField.setStyle(
-                    "-fx-control-inner-background: #f4f4f4; -fx-text-fill: #555; -fx-background-insets: 0; "
-                            + "-fx-background-radius: 2;");
+            sslEncoderPathField.setStyle("-fx-control-inner-background: " + ThemeColors.PANEL_BG + "; -fx-text-fill: "
+                    + ThemeColors.MUTED + "; -fx-background-insets: 0; " + "-fx-background-radius: 2;");
             sslEncoderPathField.setPromptText("(no file selected -- click Browse to choose)");
             sslEncoderPathField.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(sslEncoderPathField, Priority.ALWAYS);
@@ -1204,7 +1205,7 @@ public class TrainingDialog {
 
             sslEncoderInfoLabel = new Label();
             sslEncoderInfoLabel.setWrapText(true);
-            sslEncoderInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #336699;");
+            sslEncoderInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.INFO + ";");
             sslEncoderInfoLabel.setVisible(false);
             sslEncoderInfoLabel.setManaged(false);
 
@@ -1258,11 +1259,11 @@ public class TrainingDialog {
                             + "  - Files named checkpoint_*.pt or best_in_progress_*.pt");
 
             loadedModelLabel = new Label();
-            loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
+            loadedModelLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-style: italic;");
 
             continueRequiresModelLabel =
                     new Label("No model selected -- click 'Select model...' or 'Load checkpoint...'");
-            continueRequiresModelLabel.setStyle("-fx-text-fill: #c0392b; -fx-font-weight: bold;");
+            continueRequiresModelLabel.setStyle("-fx-text-fill: " + ThemeColors.ERROR + "; -fx-font-weight: bold;");
             continueRequiresModelLabel.setVisible(false);
             continueRequiresModelLabel.setManaged(false);
 
@@ -1731,7 +1732,7 @@ public class TrainingDialog {
 
             String checkpointPath = selected.getAbsolutePath();
             loadedModelLabel.setText("Recovering checkpoint...");
-            loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
+            loadedModelLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-style: italic;");
 
             // Determine output directory for the recovered model
             String modelOutputDir = null;
@@ -1792,7 +1793,8 @@ public class TrainingDialog {
                                         updateValidation();
                                     }
                                     loadedModelLabel.setText("Recovered from: " + selected.getName());
-                                    loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
+                                    loadedModelLabel.setStyle(
+                                            "-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-style: italic;");
                                     logger.info(
                                             "Loaded settings from recovered checkpoint: {} "
                                                     + "(ptPath={}, arch={}, backbone={})",
@@ -1802,7 +1804,8 @@ public class TrainingDialog {
                                             finalRecovered.getBackbone());
                                 } else {
                                     loadedModelLabel.setText("Recovered but could not load metadata");
-                                    loadedModelLabel.setStyle("-fx-text-fill: #cc6600; -fx-font-style: italic;");
+                                    loadedModelLabel.setStyle(
+                                            "-fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-style: italic;");
                                     logger.warn(
                                             "Checkpoint finalized to {} but metadata not found", result.modelPath());
                                 }
@@ -1811,7 +1814,8 @@ public class TrainingDialog {
                             logger.error("Failed to recover checkpoint: {}", ex.getMessage(), ex);
                             Platform.runLater(() -> {
                                 loadedModelLabel.setText("Recovery failed: " + ex.getMessage());
-                                loadedModelLabel.setStyle("-fx-text-fill: #cc0000; -fx-font-style: italic;");
+                                loadedModelLabel.setStyle(
+                                        "-fx-text-fill: " + ThemeColors.ERROR + "; -fx-font-style: italic;");
                             });
                         }
                     },
@@ -2261,12 +2265,12 @@ public class TrainingDialog {
             if (pretrainedModelPtPath == null) {
                 logger.warn("No model.pt found for '{}' -- continue training not available", metadata.getName());
                 loadedModelLabel.setText("No model.pt found for: " + metadata.getName());
-                loadedModelLabel.setStyle("-fx-text-fill: #cc6600; -fx-font-style: italic;");
+                loadedModelLabel.setStyle("-fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-style: italic;");
             } else {
                 // Auto-select continue training since user picked a model
                 selectWeightInitStrategy(ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING);
                 loadedModelLabel.setText("Loaded from: " + metadata.getName());
-                loadedModelLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
+                loadedModelLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-style: italic;");
                 // Defer compatibility check -- backbone combo is set via
                 // Platform.runLater (line ~994) and hasn't updated yet.
                 Platform.runLater(() -> {
@@ -2303,7 +2307,7 @@ public class TrainingDialog {
                 loadedModelLabel.setText(String.format(
                         "Loaded: %s (architecture mismatch: %s/%s)",
                         loadedModelLabel.getText().replace("Loaded from: ", ""), currentArch, currentBackbone));
-                loadedModelLabel.setStyle("-fx-text-fill: #cc6600; -fx-font-style: italic;");
+                loadedModelLabel.setStyle("-fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-style: italic;");
                 // Clear the path so validation blocks training
                 pretrainedModelPtPath = null;
                 if (getSelectedWeightInitStrategy() == ClassifierHandler.WeightInitStrategy.CONTINUE_TRAINING) {
@@ -2388,7 +2392,7 @@ public class TrainingDialog {
             content.setPadding(new Insets(10));
 
             Label info = new Label("Select project images to include in training:");
-            info.setStyle("-fx-text-fill: #666;");
+            info.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
             imageSelectionList = new ListView<>();
             imageSelectionList.setCellFactory(lv -> new ImageSelectionCell(advancedMode));
@@ -2563,7 +2567,8 @@ public class TrainingDialog {
 
             tileEstimateLabel = new Label("Tile count will appear after 'Load Classes from Selected Images'.");
             tileEstimateLabel.setWrapText(true);
-            tileEstimateLabel.setStyle("-fx-text-fill: #555; -fx-font-size: 11px; -fx-font-style: italic;");
+            tileEstimateLabel.setStyle(
+                    "-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px; -fx-font-style: italic;");
             // Visible from the start as a placeholder; updateTileEstimateLabel()
             // overrides with the real estimate once classes load.
             tileEstimateLabel.setVisible(true);
@@ -2574,7 +2579,7 @@ public class TrainingDialog {
             // All-Both buttons are advanced-only, so a basic user otherwise
             // never sees that the split was assigned for them on dialog open.
             basicSplitStatusLabel = new Label();
-            basicSplitStatusLabel.setStyle("-fx-text-fill: #2a4a7a; -fx-font-size: 11px;");
+            basicSplitStatusLabel.setStyle("-fx-text-fill: " + ThemeColors.INFO + "; -fx-font-size: 11px;");
             basicSplitStatusLabel.setWrapText(true);
             Button basicSplitChangeBtn = new Button("Change...");
             basicSplitChangeBtn.setOnAction(e -> {
@@ -2607,7 +2612,7 @@ public class TrainingDialog {
             // Show a message if no annotated images found
             if (imageSelectionList.getItems().isEmpty()) {
                 Label noImagesLabel = new Label("No project images with classified annotations found.");
-                noImagesLabel.setStyle("-fx-text-fill: #cc6600; -fx-font-style: italic;");
+                noImagesLabel.setStyle("-fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-style: italic;");
                 content.getChildren().add(1, noImagesLabel);
             }
 
@@ -3023,8 +3028,8 @@ public class TrainingDialog {
         private void applyAutoDistributeHighlight(boolean active) {
             if (autoDistributeBtn == null) return;
             if (active) {
-                autoDistributeBtn.setStyle("-fx-background-color: #fff3cd; "
-                        + "-fx-border-color: #d39e00; "
+                autoDistributeBtn.setStyle("-fx-background-color: " + ThemeColors.WARNING_BG + "; "
+                        + "-fx-border-color: " + ThemeColors.WARNING_BORDER + "; "
                         + "-fx-border-width: 2; "
                         + "-fx-border-radius: 3; "
                         + "-fx-background-radius: 3; "
@@ -3257,7 +3262,7 @@ public class TrainingDialog {
                     + "Medium: Best balance of speed and accuracy (recommended).\n"
                     + "Large: Most capacity, needs more data and VRAM.");
             basicModelHint.setWrapText(true);
-            basicModelHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            basicModelHint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             basicModelHint.visibleProperty().bind(advancedMode.not());
             basicModelHint.managedProperty().bind(advancedMode.not());
             grid.add(basicModelHint, 0, row, 2, 1);
@@ -3584,15 +3589,15 @@ public class TrainingDialog {
                 lrInfoLabel.setText("OneCycleLR: LR Finder will auto-adjust peak lr "
                         + "(capped at 10x this value). This value sets the "
                         + "base for discriminative LR ratios.");
-                lrInfoLabel.setStyle("-fx-text-fill: #856404; -fx-font-size: 0.85em; "
-                        + "-fx-background-color: #FFF3CD; -fx-padding: 4 6; "
+                lrInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.WARNING_ON_BG + "; -fx-font-size: 0.85em; "
+                        + "-fx-background-color: " + ThemeColors.WARNING_BG + "; -fx-padding: 4 6; "
                         + "-fx-background-radius: 3;");
             } else if ("None".equals(sched)) {
                 lrInfoLabel.setText("Constant lr throughout training.");
-                lrInfoLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 0.85em;");
+                lrInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 0.85em;");
             } else {
                 lrInfoLabel.setText("Starting lr -- scheduler adjusts during training.");
-                lrInfoLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 0.85em;");
+                lrInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 0.85em;");
             }
             // Visibility controlled by advancedMode binding -- do not set here
         }
@@ -3688,8 +3693,8 @@ public class TrainingDialog {
                 // Strong warning: changing freeze settings here can either help the
                 // model adapt to a new data distribution or destroy features that
                 // took the original training run to learn. Spell out both directions.
-                layerFreezeInfoLabel.setStyle("-fx-text-fill: #856404; "
-                        + "-fx-background-color: #fff3cd; -fx-padding: 6 8; "
+                layerFreezeInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.WARNING_ON_BG + "; "
+                        + "-fx-background-color: " + ThemeColors.WARNING_BG + "; -fx-padding: 6 8; "
                         + "-fx-background-radius: 3; -fx-font-size: 11px;");
                 layerFreezeInfoLabel.setText("Continuing training inherits the freeze list from the loaded "
                         + "model. Changing it has real consequences:\n"
@@ -3705,7 +3710,7 @@ public class TrainingDialog {
                         + "If your new data comes from a different microscope, "
                         + "stain, or downsample, prefer unfreezing the encoder.");
             } else if (selected == ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED) {
-                layerFreezeInfoLabel.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
+                layerFreezeInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
                 layerFreezeInfoLabel.setText("Freezing early encoder layers preserves ImageNet/MAE features "
                         + "and trains faster, but limits how much the model can adapt "
                         + "to your data. Unfreeze more layers if your images differ "
@@ -3804,7 +3809,7 @@ public class TrainingDialog {
             // Epochs hint (basic mode only)
             Label epochsHint = new Label("Training passes over all data. Early stopping halts if no improvement.");
             epochsHint.setWrapText(true);
-            epochsHint.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
+            epochsHint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             epochsHint.visibleProperty().bind(advancedMode.not());
             epochsHint.managedProperty().bind(advancedMode.not());
             // Reactive hint: text flips based on whether ES is enabled. Wired
@@ -3818,7 +3823,7 @@ public class TrainingDialog {
             // usual recommendation, and is equally free to ignore it.
             epochAdvisoryLabel = new Label();
             epochAdvisoryLabel.setWrapText(true);
-            epochAdvisoryLabel.setStyle("-fx-text-fill: #8a6d00; -fx-font-size: 11px;");
+            epochAdvisoryLabel.setStyle("-fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-size: 11px;");
             epochAdvisoryLabel.setVisible(false);
             epochAdvisoryLabel.setManaged(false);
             grid.add(epochAdvisoryLabel, 0, row, 2, 1);
@@ -3829,7 +3834,7 @@ public class TrainingDialog {
             // instead of a hard-coded "patience: 15, metric: Mean IoU".
             earlyStoppingStatusLabel = new Label();
             earlyStoppingStatusLabel.setWrapText(true);
-            earlyStoppingStatusLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
+            earlyStoppingStatusLabel.setStyle("-fx-text-fill: " + ThemeColors.SUCCESS + "; -fx-font-size: 11px;");
             earlyStoppingStatusLabel.visibleProperty().bind(advancedMode.not());
             earlyStoppingStatusLabel.managedProperty().bind(advancedMode.not());
             grid.add(earlyStoppingStatusLabel, 0, row, 2, 1);
@@ -3875,7 +3880,7 @@ public class TrainingDialog {
             // per-image roles, and explains why the spinner is disabled
             // when all selected images have fixed roles.
             validationSplitObservedLabel = new Label();
-            validationSplitObservedLabel.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
+            validationSplitObservedLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             validationSplitObservedLabel.setWrapText(true);
             validationSplitObservedLabel.setMaxWidth(280);
             validationSplitObservedLabel.setVisible(false);
@@ -3896,8 +3901,9 @@ public class TrainingDialog {
                     + "better than the model really does on images it has not seen.");
             allBothBadgeLabel.setWrapText(true);
             allBothBadgeLabel.setMaxWidth(360);
-            allBothBadgeLabel.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
-                    + "-fx-padding: 4 8; -fx-border-color: #d39e00; "
+            allBothBadgeLabel.setStyle("-fx-text-fill: " + ThemeColors.WARNING_ON_BG + "; -fx-background-color: "
+                    + ThemeColors.WARNING_BG + "; "
+                    + "-fx-padding: 4 8; -fx-border-color: " + ThemeColors.WARNING_BORDER + "; "
                     + "-fx-border-width: 0 0 0 4; -fx-font-size: 11px;");
             allBothBadgeLabel.setVisible(false);
             allBothBadgeLabel.setManaged(false);
@@ -4170,7 +4176,7 @@ public class TrainingDialog {
             seedSpinner.visibleProperty().bind(advancedMode);
             seedSpinner.managedProperty().bind(advancedMode);
             Label seedRandomHint = new Label("(non-deterministic)");
-            seedRandomHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            seedRandomHint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             Runnable updateSeedHint = () -> {
                 Integer v = seedSpinner.getValue();
                 boolean show = v != null && v == 0 && advancedMode.get();
@@ -4273,7 +4279,7 @@ public class TrainingDialog {
             // Batch size hint (basic mode only)
             Label batchHint = new Label("Images processed at once. Larger = faster but more GPU memory.");
             batchHint.setWrapText(true);
-            batchHint.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
+            batchHint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             batchHint.visibleProperty().bind(advancedMode.not());
             batchHint.managedProperty().bind(advancedMode.not());
             grid.add(batchHint, 0, row, 2, 1);
@@ -4370,7 +4376,7 @@ public class TrainingDialog {
                     tileSizeLabel,
                     tileSizeSpinner);
             Label tileSizeRecommendedHint = new Label("(recommended: 512)");
-            tileSizeRecommendedHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            tileSizeRecommendedHint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             Runnable updateTileSizeHint = () -> {
                 Integer v = tileSizeSpinner.getValue();
                 boolean show = v != null && v != 512;
@@ -4383,7 +4389,7 @@ public class TrainingDialog {
             // Whole-image checkbox
             wholeImageCheck = new CheckBox("Whole image\n(small images only)");
             wholeImageCheck.setWrapText(true);
-            wholeImageCheck.setStyle("-fx-text-fill: #CC7A00; -fx-font-weight: bold;");
+            wholeImageCheck.setStyle("-fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-weight: bold;");
             TooltipHelper.install(
                     wholeImageCheck,
                     "Use the entire image as a single training tile.\n"
@@ -4417,7 +4423,7 @@ public class TrainingDialog {
             // Info label shown when whole-image mode is checked and architecture
             // has a tile size cap (ViT models)
             wholeImageInfoLabel = new Label();
-            wholeImageInfoLabel.setStyle("-fx-text-fill: #CC7A00; -fx-font-size: 11px;");
+            wholeImageInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-size: 11px;");
             wholeImageInfoLabel.setWrapText(true);
             wholeImageInfoLabel.setVisible(false);
             wholeImageInfoLabel.setManaged(false);
@@ -4438,7 +4444,7 @@ public class TrainingDialog {
             // Tile size hint (basic mode only)
             Label tileHint = new Label("Pixel size of patches the model learns from.");
             tileHint.setWrapText(true);
-            tileHint.setStyle("-fx-text-fill: #555; -fx-font-size: 11px;");
+            tileHint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             tileHint.visibleProperty().bind(advancedMode.not());
             tileHint.managedProperty().bind(advancedMode.not());
             grid.add(tileHint, 0, row, 2, 1);
@@ -4511,7 +4517,7 @@ public class TrainingDialog {
                             + "will see during training.");
 
             Label resRecommendedHint = new Label("(recommended)");
-            resRecommendedHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            resRecommendedHint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             Runnable updateResHint = () -> {
                 String v = downsampleCombo.getValue();
                 boolean show = v != null && v.startsWith("1x");
@@ -4529,7 +4535,7 @@ public class TrainingDialog {
 
             // Resolution info label
             resolutionInfoLabel = new Label();
-            resolutionInfoLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            resolutionInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             resolutionInfoLabel.setWrapText(true);
             grid.add(resolutionInfoLabel, 0, row, 2, 1);
             row++;
@@ -4614,7 +4620,7 @@ public class TrainingDialog {
 
             // Context info label
             contextInfoLabel = new Label();
-            contextInfoLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            contextInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             contextInfoLabel.setWrapText(true);
             grid.add(contextInfoLabel, 0, row, 2, 1);
             row++;
@@ -4865,7 +4871,7 @@ public class TrainingDialog {
             lrInfoLabel = new Label();
             lrInfoLabel.setWrapText(true);
             lrInfoLabel.setMaxWidth(Double.MAX_VALUE);
-            lrInfoLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 0.85em;");
+            lrInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 0.85em;");
             lrInfoLabel.visibleProperty().bind(advancedMode);
             lrInfoLabel.managedProperty().bind(advancedMode);
             grid.add(lrInfoLabel, 0, row, 2, 1);
@@ -4910,7 +4916,7 @@ public class TrainingDialog {
             discriminativeLrSpinner.visibleProperty().bind(advancedMode);
             discriminativeLrSpinner.managedProperty().bind(advancedMode);
             discLrNotApplicableHint = new Label("(N/A from scratch)");
-            discLrNotApplicableHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            discLrNotApplicableHint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             discLrNotApplicableHint.setVisible(false);
             discLrNotApplicableHint.setManaged(false);
             HBox discLrBox = new HBox(8, discriminativeLrSpinner, discLrNotApplicableHint);
@@ -4923,7 +4929,7 @@ public class TrainingDialog {
             // Effective per-group LR display (advanced only)
             effectiveLrLabel = new Label();
             effectiveLrLabel.setWrapText(true);
-            effectiveLrLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            effectiveLrLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             effectiveLrLabel.visibleProperty().bind(advancedMode);
             effectiveLrLabel.managedProperty().bind(advancedMode);
             grid.add(effectiveLrLabel, 0, row, 2, 1);
@@ -4999,7 +5005,7 @@ public class TrainingDialog {
             // Scheduler behavior description -- updates when selection changes
             Label schedulerDesc = new Label();
             schedulerDesc.setWrapText(true);
-            schedulerDesc.setStyle("-fx-text-fill: #666666; -fx-font-size: 0.9em;");
+            schedulerDesc.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 0.9em;");
             schedulerDesc.setMaxWidth(Double.MAX_VALUE);
             Runnable updateSchedulerDesc = () -> {
                 String sel = schedulerCombo.getValue();
@@ -5132,7 +5138,7 @@ public class TrainingDialog {
                     lossFunctionCombo);
 
             Label lossRecommendedHint = new Label("(recommended)");
-            lossRecommendedHint.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+            lossRecommendedHint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             Runnable updateLossHint = () -> {
                 String v = lossFunctionCombo.getValue();
                 boolean show = "Cross Entropy + Dice".equals(v);
@@ -5561,7 +5567,7 @@ public class TrainingDialog {
             content.setPadding(new Insets(10));
 
             Label infoLabel = new Label("Select annotation classes to use for training:");
-            infoLabel.setStyle("-fx-text-fill: #666;");
+            infoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
             // Pie chart showing per-class annotation area distribution
             classDistributionChart = new PieChart();
@@ -5745,14 +5751,15 @@ public class TrainingDialog {
 
         private VBox createErrorSummaryPanel() {
             errorSummaryPanel = new VBox(5);
-            errorSummaryPanel.setStyle("-fx-background-color: #fff3cd; " + "-fx-border-color: #ffc107; "
+            errorSummaryPanel.setStyle("-fx-background-color: " + ThemeColors.WARNING_BG + "; " + "-fx-border-color: "
+                    + ThemeColors.WARNING_BORDER + "; "
                     + "-fx-border-width: 1px; "
                     + "-fx-padding: 10px;");
             errorSummaryPanel.setVisible(false);
             errorSummaryPanel.setManaged(false);
 
             Label errorTitle = new Label("Please fix the following errors:");
-            errorTitle.setStyle("-fx-font-weight: bold; -fx-text-fill: #856404;");
+            errorTitle.setStyle("-fx-font-weight: bold; -fx-text-fill: " + ThemeColors.WARNING + ";");
 
             errorListBox = new VBox(3);
 
@@ -5981,7 +5988,7 @@ public class TrainingDialog {
             // shown -- BEFORE the cache estimate, which sets orange or red when
             // the cache will be declined or overflow RAM. This used to run
             // after it, so the warning colour was always painted over green.
-            tileEstimateLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
+            tileEstimateLabel.setStyle("-fx-text-fill: " + ThemeColors.SUCCESS + "; -fx-font-size: 11px;");
             appendInMemoryCacheEstimate(sb, est);
             tileEstimateLabel.setText(sb.toString());
             tileEstimateLabel.setVisible(true);
@@ -6000,7 +6007,7 @@ public class TrainingDialog {
                     : DLClassifierPreferences.getDefaultInMemoryDataset();
             if ("off".equals(mode)) {
                 sb.append(" In-memory cache: off.");
-                tileEstimateLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
+                tileEstimateLabel.setStyle("-fx-text-fill: " + ThemeColors.SUCCESS + "; -fx-font-size: 11px;");
                 return;
             }
             int tile = tileSizeSpinner != null ? tileSizeSpinner.getValue() : 512;
@@ -6023,7 +6030,7 @@ public class TrainingDialog {
 
             if (availableBytes <= 0) {
                 sb.append(String.format(" In-memory cache: ~%.2f GB (mode=%s).", estGb, mode));
-                tileEstimateLabel.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
+                tileEstimateLabel.setStyle("-fx-text-fill: " + ThemeColors.SUCCESS + "; -fx-font-size: 11px;");
                 return;
             }
             double availGb = availableBytes / 1e9;
@@ -6280,7 +6287,7 @@ public class TrainingDialog {
         /** Visual indicator when images change after classes were already loaded. */
         private void markClassesStale() {
             loadClassesButton.setText("Reload Classes (images changed)");
-            loadClassesButton.setStyle("-fx-font-weight: bold; -fx-text-fill: #cc6600;");
+            loadClassesButton.setStyle("-fx-font-weight: bold; -fx-text-fill: " + ThemeColors.WARNING + ";");
         }
 
         /**
@@ -6725,7 +6732,8 @@ public class TrainingDialog {
 
             if (willBeTiled) {
                 // RED: images exceed max tile size -- whole-image mode will be ignored
-                wholeImageInfoLabel.setStyle("-fx-text-fill: #CC0000; -fx-font-size: 11px; -fx-font-weight: bold;");
+                wholeImageInfoLabel.setStyle(
+                        "-fx-text-fill: " + ThemeColors.ERROR + "; -fx-font-size: 11px; -fx-font-weight: bold;");
                 wholeImageInfoLabel.setText(String.format(
                         "WARNING: \"%s\" is %dpx at %.0fx downsample, exceeding the %dpx max. "
                                 + "This image WILL BE TILED, not processed whole. "
@@ -6733,7 +6741,8 @@ public class TrainingDialog {
                         largestImageName, maxDimAtDs, downsample, maxTile, maxTile));
             } else {
                 // ORANGE: informational -- images fit, but there is a cap
-                wholeImageInfoLabel.setStyle("-fx-text-fill: #CC7A00; -fx-font-size: 11px; -fx-font-weight: normal;");
+                wholeImageInfoLabel.setStyle(
+                        "-fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-size: 11px; -fx-font-weight: normal;");
                 if (maxDimAtDs > 0) {
                     wholeImageInfoLabel.setText(String.format(
                             "%s limits tiles to %dpx max. Your largest selected image is "
@@ -7039,8 +7048,9 @@ public class TrainingDialog {
         private void showTemporaryNotification(String message) {
             Label note = new Label(message);
             note.setWrapText(true);
-            note.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
-                    + "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
+            note.setStyle(
+                    "-fx-text-fill: " + ThemeColors.WARNING_ON_BG + "; -fx-background-color: " + ThemeColors.WARNING_BG
+                            + "; " + "-fx-padding: 4 8; -fx-background-radius: 3; -fx-font-size: 11px;");
             // Insert before the error summary panel (which is near the bottom)
             VBox dialogContent = (VBox) errorSummaryPanel.getParent();
             if (dialogContent != null) {
@@ -7144,7 +7154,7 @@ public class TrainingDialog {
                 errorListBox.getChildren().clear();
                 validationErrors.forEach((fieldId, errorMsg) -> {
                     Label errorLabel = new Label("- " + errorMsg);
-                    errorLabel.setStyle("-fx-text-fill: #856404;");
+                    errorLabel.setStyle("-fx-text-fill: " + ThemeColors.WARNING + ";");
                     errorListBox.getChildren().add(errorLabel);
                 });
 
@@ -7923,7 +7933,8 @@ public class TrainingDialog {
                 VramEstimator.Fit fit = VramEstimator.classify(estimatedMb, gpuTotalMb);
                 if (fit == VramEstimator.Fit.EXCEEDS) {
                     // Genuinely will not fit -- red
-                    vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #CC0000; -fx-font-weight: bold;");
+                    vramEstimateLabel.setStyle(
+                            "-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.ERROR + "; -fx-font-weight: bold;");
                     // Find max batch that fits by linearly scaling the
                     // activation term.  Both estimators above are linear in
                     // batchSize so divide the "above budget" excess out.
@@ -7936,11 +7947,12 @@ public class TrainingDialog {
                     }
                 } else if (fit == VramEstimator.Fit.TIGHT) {
                     // Fits, but with little room -- orange
-                    vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #CC7A00; -fx-font-weight: bold;");
+                    vramEstimateLabel.setStyle(
+                            "-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-weight: bold;");
                     text += "  --  tight; little headroom for validation or augmentation spikes";
                 } else {
                     // OK -- normal color
-                    vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #228B22;");
+                    vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.SUCCESS + ";");
                 }
 
                 vramEstimateLabel.setText(text);
@@ -8869,14 +8881,14 @@ public class TrainingDialog {
                         .collect(Collectors.joining(", "));
                 Label note = new Label(hiddenTotal + " other model(s) hidden (" + breakdown
                         + "). Change the architecture combo to see them.");
-                note.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
+                note.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
                 note.setWrapText(true);
                 root.getChildren().add(note);
             } else if (visible.isEmpty() && currentArchitecture != null) {
                 Label note = new Label("No saved models match architecture '"
                         + currentArchitecture + "'. Change the architecture combo to load "
                         + "a model from a different architecture.");
-                note.setStyle("-fx-text-fill: #cc6600; -fx-font-size: 11px;");
+                note.setStyle("-fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-size: 11px;");
                 note.setWrapText(true);
                 root.getChildren().add(note);
             }
@@ -8953,7 +8965,7 @@ public class TrainingDialog {
             colorBox.setStrokeWidth(1);
 
             weightLabel = new Label("Weight:");
-            weightLabel.setStyle("-fx-text-fill: #666;");
+            weightLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
             weightSpinner = new Spinner<>(0.1, 10.0, 1.0, 0.1);
             weightSpinner.setPrefWidth(80);

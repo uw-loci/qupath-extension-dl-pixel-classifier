@@ -222,7 +222,7 @@ public class InferenceDialog {
             titleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
 
             Label subtitleLabel = new Label("Select a trained classifier and configure output options");
-            subtitleLabel.setStyle("-fx-text-fill: #666;");
+            subtitleLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
             headerBox.getChildren().addAll(titleLabel, subtitleLabel, new Separator());
             dialog.getDialogPane().setHeader(headerBox);
@@ -287,7 +287,7 @@ public class InferenceDialog {
 
             // Info label
             classifierInfoLabel = new Label("Select a classifier to see details");
-            classifierInfoLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
+            classifierInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-style: italic;");
             classifierInfoLabel.setWrapText(true);
 
             content.getChildren().addAll(classifierTable, classifierInfoLabel);
@@ -653,27 +653,27 @@ public class InferenceDialog {
                                     + "wider halo costs time. GAUSSIAN or LINEAR reach a similar result at "
                                     + "your own overlap.",
                             floorPercent, overlapPercent));
-                    overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #F57C00;");
+                    overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.WARNING + ";");
                 } else {
                     overlapWarningLabel.setText("Enough halo for CENTER_CROP -- each pixel comes from one "
                             + "tile, far from that tile's edge.");
-                    overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #388E3C;");
+                    overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.SUCCESS + ";");
                 }
                 syncOverlapPixels(overlapPercent);
                 return;
             }
             if (overlapPercent == 0.0) {
                 overlapWarningLabel.setText("WARNING: Objects will NOT be merged across tile boundaries");
-                overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #D32F2F;");
+                overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.ERROR + ";");
             } else if (overlapPercent < 10.0) {
                 overlapWarningLabel.setText("Note: Low overlap may result in visible seams in output");
-                overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #F57C00;");
+                overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.WARNING + ";");
             } else if (overlapPercent >= 25.0) {
                 overlapWarningLabel.setText("High overlap -- best quality, eliminates edge artifacts");
-                overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #388E3C;");
+                overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.SUCCESS + ";");
             } else {
                 overlapWarningLabel.setText("Good overlap for seamless blending");
-                overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #388E3C;");
+                overlapWarningLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.SUCCESS + ";");
             }
 
             syncOverlapPixels(overlapPercent);
@@ -817,7 +817,7 @@ public class InferenceDialog {
         private void onClassifierSelected(ClassifierMetadata classifier) {
             if (classifier == null) {
                 classifierInfoLabel.setText("Select a classifier to see details");
-                classifierInfoLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
+                classifierInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-style: italic;");
                 channelPanel.setRequiredChannelCount(-1);
                 channelPanel.clearModelNormalization();
                 channelMappingPanel.setVisible(false);
@@ -851,7 +851,7 @@ public class InferenceDialog {
             info.append("Classes: ").append(String.join(", ", classifier.getClassNames()));
 
             classifierInfoLabel.setText(info.toString());
-            classifierInfoLabel.setStyle("-fx-text-fill: #333;");
+            classifierInfoLabel.setStyle("-fx-text-fill: " + ThemeColors.TEXT + ";");
 
             // Update channel requirements
             channelPanel.setRequiredChannelCount(classifier.getInputChannels());
@@ -888,11 +888,11 @@ public class InferenceDialog {
 
             // Header row
             Label headerExpected = new Label("Expected");
-            headerExpected.setStyle("-fx-font-weight: bold; -fx-text-fill: #333;");
+            headerExpected.setStyle("-fx-font-weight: bold; -fx-text-fill: " + ThemeColors.TEXT + ";");
             Label headerMapped = new Label("Mapped To");
-            headerMapped.setStyle("-fx-font-weight: bold; -fx-text-fill: #333;");
+            headerMapped.setStyle("-fx-font-weight: bold; -fx-text-fill: " + ThemeColors.TEXT + ";");
             Label headerStatus = new Label("Status");
-            headerStatus.setStyle("-fx-font-weight: bold; -fx-text-fill: #333;");
+            headerStatus.setStyle("-fx-font-weight: bold; -fx-text-fill: " + ThemeColors.TEXT + ";");
             grid.addRow(0, headerExpected, new Label("->"), headerMapped, headerStatus);
 
             int unmatchedCount = 0;
@@ -903,7 +903,7 @@ public class InferenceDialog {
 
                 Label expectedLabel = new Label(name);
                 Label arrowLabel = new Label("->");
-                arrowLabel.setStyle("-fx-text-fill: #999;");
+                arrowLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
                 Label mappedLabel;
                 Label statusIndicator;
@@ -912,23 +912,23 @@ public class InferenceDialog {
                     // Exact match
                     mappedLabel = new Label(match);
                     statusIndicator = new Label("[OK]");
-                    statusIndicator.setStyle("-fx-text-fill: #388E3C; -fx-font-weight: bold;");
+                    statusIndicator.setStyle("-fx-text-fill: " + ThemeColors.SUCCESS + "; -fx-font-weight: bold;");
                     grid.addRow(i + 1, expectedLabel, arrowLabel, mappedLabel, statusIndicator);
                 } else if (match != null) {
                     // Fuzzy match -- show with ComboBox override
                     mappedLabel = new Label(match);
-                    mappedLabel.setStyle("-fx-text-fill: #F57C00;");
+                    mappedLabel.setStyle("-fx-text-fill: " + ThemeColors.WARNING + ";");
                     statusIndicator = new Label("[?]");
-                    statusIndicator.setStyle("-fx-text-fill: #F57C00; -fx-font-weight: bold;");
+                    statusIndicator.setStyle("-fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-weight: bold;");
 
                     ComboBox<String> overrideCombo = createOverrideComboBox(available, match, i);
                     grid.addRow(i + 1, expectedLabel, arrowLabel, mappedLabel, statusIndicator, overrideCombo);
                 } else {
                     // No match
                     mappedLabel = new Label("(unmapped)");
-                    mappedLabel.setStyle("-fx-text-fill: #D32F2F;");
+                    mappedLabel.setStyle("-fx-text-fill: " + ThemeColors.ERROR + ";");
                     statusIndicator = new Label("[X]");
-                    statusIndicator.setStyle("-fx-text-fill: #D32F2F; -fx-font-weight: bold;");
+                    statusIndicator.setStyle("-fx-text-fill: " + ThemeColors.ERROR + "; -fx-font-weight: bold;");
                     unmatchedCount++;
 
                     ComboBox<String> overrideCombo = createOverrideComboBox(available, null, i);
@@ -941,14 +941,14 @@ public class InferenceDialog {
             summaryLabel.setPadding(new Insets(5, 0, 0, 0));
             if (unmatchedCount == 0) {
                 summaryLabel.setText("All channels matched");
-                summaryLabel.setStyle("-fx-text-fill: #388E3C;");
+                summaryLabel.setStyle("-fx-text-fill: " + ThemeColors.SUCCESS + ";");
             } else {
                 summaryLabel.setText(unmatchedCount + " channel(s) need manual mapping");
-                summaryLabel.setStyle("-fx-text-fill: #D32F2F; -fx-font-weight: bold;");
+                summaryLabel.setStyle("-fx-text-fill: " + ThemeColors.ERROR + "; -fx-font-weight: bold;");
             }
 
             Label titleLabel = new Label("Channel Mapping:");
-            titleLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #333;");
+            titleLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: " + ThemeColors.TEXT + ";");
 
             channelMappingPanel.getChildren().addAll(titleLabel, grid, summaryLabel);
             channelMappingPanel.setVisible(true);

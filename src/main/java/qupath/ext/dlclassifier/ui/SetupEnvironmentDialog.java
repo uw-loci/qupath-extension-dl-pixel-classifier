@@ -48,9 +48,10 @@ public class SetupEnvironmentDialog {
     private static final ResourceBundle res = ResourceBundle.getBundle("qupath.ext.dlclassifier.ui.strings");
 
     /** Orange callout styling, shared by the GPU advisory and the fallback notice. */
-    private static final String CALLOUT_STYLE = "-fx-text-fill: #e65100; -fx-font-size: 11px; "
-            + "-fx-border-color: #ffcc80; -fx-border-width: 1; "
-            + "-fx-background-color: #fff3e0; -fx-padding: 8;";
+    private static final String CALLOUT_STYLE =
+            "-fx-text-fill: " + ThemeColors.WARNING_ON_BG + "; -fx-font-size: 11px; "
+                    + "-fx-border-color: " + ThemeColors.WARNING_BORDER + "; -fx-border-width: 1; "
+                    + "-fx-background-color: " + ThemeColors.WARNING_BG + "; -fx-padding: 8;";
 
     private final Stage stage;
     private final Runnable onComplete;
@@ -350,7 +351,7 @@ public class SetupEnvironmentDialog {
 
         Label completeLabel = new Label("[OK] " + res.getString("setup.complete"));
         completeLabel.setFont(Font.font(null, FontWeight.BOLD, 13));
-        completeLabel.setStyle("-fx-text-fill: #2e7d32;");
+        completeLabel.setStyle("-fx-text-fill: " + ThemeColors.SUCCESS + ";");
 
         // Split on literal \n from properties file
         String detail = res.getString("setup.completeDetail").replace("\\n", "\n");
@@ -461,7 +462,7 @@ public class SetupEnvironmentDialog {
 
         Label failedLabel = new Label(res.getString("setup.failed"));
         failedLabel.setFont(Font.font(null, FontWeight.BOLD, 13));
-        failedLabel.setStyle("-fx-text-fill: #c62828;");
+        failedLabel.setStyle("-fx-text-fill: " + ThemeColors.ERROR + ";");
 
         Label errorLabel = new Label(errorMessage);
         errorLabel.setWrapText(true);
@@ -496,7 +497,8 @@ public class SetupEnvironmentDialog {
         if (gpu == null) {
             detectedLabel.setText("Checking for an NVIDIA GPU...");
             adviceLabel.setText(res.getString("setup.gpuRecommended"));
-            adviceLabel.setStyle("-fx-text-fill: #2e7d32; -fx-font-size: 11px; -fx-font-weight: bold;");
+            adviceLabel.setStyle(
+                    "-fx-text-fill: " + ThemeColors.SUCCESS + "; -fx-font-size: 11px; -fx-font-weight: bold;");
             return;
         }
         detectedLabel.setText(gpu.summary());
@@ -504,7 +506,7 @@ public class SetupEnvironmentDialog {
                 gpu.nvidiaPresent() ? res.getString("setup.gpuRecommended") : res.getString("setup.gpuNotDetected"));
         adviceLabel.setStyle(
                 gpu.nvidiaPresent()
-                        ? "-fx-text-fill: #2e7d32; -fx-font-size: 11px; -fx-font-weight: bold;"
+                        ? "-fx-text-fill: " + ThemeColors.SUCCESS + "; -fx-font-size: 11px; -fx-font-weight: bold;"
                         : CALLOUT_STYLE);
         if (!variantChosenByUser && gpu.nvidiaPresent()) {
             gpuRadio.setSelected(true);

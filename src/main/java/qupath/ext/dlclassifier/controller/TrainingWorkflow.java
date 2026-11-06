@@ -52,6 +52,7 @@ import qupath.ext.dlclassifier.service.OverlayService;
 import qupath.ext.dlclassifier.ui.DialogOwner;
 import qupath.ext.dlclassifier.ui.ProgressMonitorController;
 import qupath.ext.dlclassifier.ui.PythonConsoleWindow;
+import qupath.ext.dlclassifier.ui.ThemeColors;
 import qupath.ext.dlclassifier.ui.TrainingAreaIssuesDialog;
 import qupath.ext.dlclassifier.ui.TrainingDialog;
 import qupath.ext.dlclassifier.ui.UserErrors;
@@ -2932,7 +2933,7 @@ public class TrainingWorkflow {
         // Show how many epochs have been completed
         if (epochsCompleted > 0) {
             Label completedLabel = new Label(epochsCompleted + " epochs completed so far");
-            completedLabel.setStyle("-fx-text-fill: #666; -fx-font-style: italic;");
+            completedLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-style: italic;");
             grid.add(completedLabel, 0, row, 2, 1);
             row++;
         }
@@ -2952,7 +2953,7 @@ public class TrainingWorkflow {
         // Reassure the user that other hyperparameters are unchanged on resume
         // (they still take effect through currentLR / currentBatch below).
         Label hint = new Label("Learning rate and batch size are unchanged from the original run.");
-        hint.setStyle("-fx-text-fill: #666; -fx-font-style: italic; -fx-font-size: 11px;");
+        hint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-style: italic; -fx-font-size: 11px;");
         hint.setWrapText(true);
         grid.add(hint, 0, row, 2, 1);
 

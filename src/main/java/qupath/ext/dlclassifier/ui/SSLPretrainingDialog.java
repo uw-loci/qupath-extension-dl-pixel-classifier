@@ -225,7 +225,7 @@ public class SSLPretrainingDialog {
 
         sourceModelInfoLabel = new Label();
         sourceModelInfoLabel.setWrapText(true);
-        sourceModelInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #336699;");
+        sourceModelInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.INFO + ";");
         sourceModelInfoLabel.setVisible(false);
         sourceModelInfoLabel.setManaged(false);
 
@@ -444,7 +444,7 @@ public class SSLPretrainingDialog {
                         + "SSL benefits from diversity: 50k+ tiles is recommended.\n"
                         + "Tiny pools (<10k) risk BYOL representation collapse on long runs.");
 
-        projectSummaryLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        projectSummaryLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.MUTED + ";");
         projectSummaryLabel.setWrapText(true);
 
         // --- Folder-mode controls ---
@@ -457,7 +457,7 @@ public class SSLPretrainingDialog {
                         + "Subdirectories are scanned recursively.");
 
         datasetInfoLabel = new Label();
-        datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.MUTED + ";");
         datasetInfoLabel.setWrapText(true);
 
         // --- Output controls ---
@@ -1223,16 +1223,18 @@ public class SSLPretrainingDialog {
             String text = String.format("Est. VRAM: ~%.0f MB / %,d MB (%.0f%%)", estimatedMb, gpuTotalMb, pct);
 
             if (estimatedMb > budgetMb) {
-                vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #CC0000; -fx-font-weight: bold;");
+                vramEstimateLabel.setStyle(
+                        "-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.ERROR + "; -fx-font-weight: bold;");
                 // Suggest max batch that fits
                 double perBatchMb = estimatedMb / batchSize;
                 int maxBatch = Math.max(1, (int) (budgetMb / perBatchMb));
                 text += String.format("  --  EXCEEDS GPU! Try batch %d or smaller tiles", maxBatch);
             } else if (pct > 75) {
-                vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #CC7A00; -fx-font-weight: bold;");
+                vramEstimateLabel.setStyle(
+                        "-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-weight: bold;");
                 text += "  --  tight, may OOM";
             } else {
-                vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #228B22;");
+                vramEstimateLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.SUCCESS + ";");
             }
 
             vramEstimateLabel.setText(text);
@@ -1350,7 +1352,8 @@ public class SSLPretrainingDialog {
                 sb.append("\n  - ").append(w);
             }
             configWarningLabel.setText(sb.toString());
-            configWarningLabel.setStyle("-fx-text-fill: #856404; -fx-background-color: #fff3cd; "
+            configWarningLabel.setStyle("-fx-text-fill: " + ThemeColors.WARNING_ON_BG + "; -fx-background-color: "
+                    + ThemeColors.WARNING_BG + "; "
                     + "-fx-padding: 6 8; -fx-background-radius: 3; "
                     + "-fx-font-size: 11px;");
             configWarningLabel.setVisible(true);

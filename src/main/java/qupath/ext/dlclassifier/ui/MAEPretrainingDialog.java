@@ -243,7 +243,7 @@ public class MAEPretrainingDialog {
                         + "randomly discarded. Prevents a single large WSI from\n"
                         + "overwhelming the pretraining pool.");
 
-        projectSummaryLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        projectSummaryLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.MUTED + ";");
         projectSummaryLabel.setWrapText(true);
 
         // Folder-mode controls
@@ -257,7 +257,7 @@ public class MAEPretrainingDialog {
                         + "Subdirectories are scanned recursively.");
 
         datasetInfoLabel = new Label();
-        datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.MUTED + ";");
         datasetInfoLabel.setWrapText(true);
 
         // Output controls
@@ -912,10 +912,10 @@ public class MAEPretrainingDialog {
             checkBox.setText(item.entry.getImageName());
             if (item.tissueRegions > 0) {
                 info.setText("(Tissue: " + item.tissueRegions + ")");
-                info.setStyle("-fx-text-fill: #2a7a2a; -fx-font-size: 11px;");
+                info.setStyle("-fx-text-fill: " + ThemeColors.SUCCESS + "; -fx-font-size: 11px;");
             } else {
                 info.setText("(no Tissue annotations)");
-                info.setStyle("-fx-text-fill: #cc6600; -fx-font-size: 11px;");
+                info.setStyle("-fx-text-fill: " + ThemeColors.WARNING + "; -fx-font-size: 11px;");
             }
             setGraphic(root);
         }
@@ -942,10 +942,10 @@ public class MAEPretrainingDialog {
         }
         if (count == 0) {
             datasetInfoLabel.setText("No supported images found in directory.");
-            datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #c00;");
+            datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.ERROR + ";");
             return;
         }
-        datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        datasetInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: " + ThemeColors.MUTED + ";");
         int suggestedEpochs;
         String sizeCategory;
         if (count < 50) {

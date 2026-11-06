@@ -212,7 +212,7 @@ public class ChannelSelectionPanel extends VBox {
 
         // Status label
         statusLabel = new Label();
-        statusLabel.setStyle("-fx-text-fill: #666;");
+        statusLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
         // Add all components
         getChildren().addAll(searchToolbar, listsBox, normBox, perChannelNormCheck, statusLabel);
@@ -547,12 +547,12 @@ public class ChannelSelectionPanel extends VBox {
 
         if (selected == 0) {
             statusLabel.setText("Please select at least one channel");
-            statusLabel.setStyle("-fx-text-fill: #cc0000;");
+            statusLabel.setStyle("-fx-text-fill: " + ThemeColors.ERROR + ";");
             valid = false;
         } else if (requiredChannelCount > 0 && selected != requiredChannelCount) {
             statusLabel.setText(
                     String.format("Selected %d channels (classifier expects %d)", selected, requiredChannelCount));
-            statusLabel.setStyle("-fx-text-fill: #cc0000;");
+            statusLabel.setStyle("-fx-text-fill: " + ThemeColors.ERROR + ";");
             valid = false;
         } else {
             // Show "X of Y" when there are more available than selected
@@ -561,7 +561,7 @@ public class ChannelSelectionPanel extends VBox {
             } else {
                 statusLabel.setText(String.format("%d channel(s) selected", selected));
             }
-            statusLabel.setStyle("-fx-text-fill: #006600;");
+            statusLabel.setStyle("-fx-text-fill: " + ThemeColors.SUCCESS + ";");
             valid = true;
         }
 
@@ -590,10 +590,10 @@ public class ChannelSelectionPanel extends VBox {
                     }
                 }
                 statusLabel.setText(String.format("Pattern matched %d new channel(s)", matched));
-                statusLabel.setStyle("-fx-text-fill: #006600;");
+                statusLabel.setStyle("-fx-text-fill: " + ThemeColors.SUCCESS + ";");
             } catch (PatternSyntaxException e) {
                 statusLabel.setText("Invalid regex: " + e.getMessage());
-                statusLabel.setStyle("-fx-text-fill: #cc0000;");
+                statusLabel.setStyle("-fx-text-fill: " + ThemeColors.ERROR + ";");
             }
         });
     }
