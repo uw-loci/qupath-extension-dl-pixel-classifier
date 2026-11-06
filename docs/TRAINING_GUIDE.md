@@ -281,7 +281,7 @@ The following optimizations are applied automatically, no configuration needed:
 
 ### Training HUD: see what a change did
 
-Click **Training HUD** in the dialog's button row to open a small instrument panel beside the
+Click **Training HUD** at the top of the dialog to open a small instrument panel beside the
 dialog. Change any setting and the panel shows what that change did, without you having to set
 it back to compare:
 
@@ -523,8 +523,8 @@ After pretraining completes, load the encoder weights when training a MuViT clas
 
 #### What happens under the hood
 
-Selecting "Use MAE pretrained encoder" (or "Continue training from saved
-model") does three things automatically:
+Selecting "Use MAE pretrained encoder" (or "Continue training one of your
+saved models") does three things automatically:
 
 1. Loads the saved weights into the model.
 2. Flags the run as `use_pretrained=true` so the optimizer setup splits

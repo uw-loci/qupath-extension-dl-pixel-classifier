@@ -6,7 +6,7 @@ Every figure on this page is the HUD as it appeared for these exact steps on thi
 each gauge means, see the [Training Guide](TRAINING_GUIDE.md#training-hud-see-what-a-change-did).
 
 > The Training HUD arrives in the release after 0.9.26. If your **Train DL Pixel Classifier**
-> dialog has no **Training HUD** button in its bottom row, update the extension first.
+> dialog has no **Training HUD** button at the top of the dialog, update the extension first.
 
 ## What you need
 
@@ -36,7 +36,7 @@ each gauge means, see the [Training Guide](TRAINING_GUIDE.md#training-hud-see-wh
    to **Train** and **Val**, so one image trains and the other validates. The role drop-downs
    appear in the full view: click **Show All Settings** at the top right if you do not see them.
 4. **Click Load Classes from Selected Images.**
-5. **Click Training HUD** in the dialog's bottom row. The panel opens beside the dialog.
+5. **Click Training HUD** at the top of the dialog, beside **Load profile...**. The panel opens beside the dialog.
 
 <img src="images/hud-walkthrough-01-at-rest.png" alt="The Training HUD at rest. The header reads READY, Change any option to see what it does, with a vs last change button at the right. Two dials, EPOCH SPEED with SLOWER on the left and FASTER on the right, and LEARNING STEPS with FEWER on the left and MORE on the right, both have their pale yellow needles pointing straight up at a REF mark. Below them, GPU MEMORY and RAM CACHE bars are partly filled in pale yellow, with TIGHT and 100 percent marks on the GPU bar and auto 50% and 100 percent marks on the RAM bar, and three small bars for TRAINING DATA, VALIDATION DETAIL and TOTAL TIME (MAX)" width="440">
 

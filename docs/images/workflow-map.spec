@@ -53,7 +53,7 @@ label = Train DL Pixel Classifier...
 note = Weight Initialization -- pick one
 
 [init.pretrained]
-label = Use pretrained backbone weights
+label = Continue from provided weights
 tag = ImageNet, histology, foundation
 default = yes
 
@@ -66,8 +66,8 @@ label = Use SSL pretrained encoder
 tag = from SSL Pretrain Encoder...
 
 [init.continue]
-label = Continue training from saved model
-tag = from a classifier you already have
+label = Continue training one of your saved models
+tag = trained here earlier
 note = locks architecture, backbone, tile size, downsample
 
 [init.scratch]

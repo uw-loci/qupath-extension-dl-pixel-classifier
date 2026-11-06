@@ -584,16 +584,10 @@ public class TrainingDialog {
 
             Region spacer = new Region();
             HBox.setHgrow(spacer, Priority.ALWAYS);
+            // Training HUD and Load profile sit in the header (createHeaderBox): both
+            // are wanted before working down the dialog, not after.
             HBox buttonBar = new HBox(
-                    8,
-                    copyScriptButton,
-                    hudToggle,
-                    saveProfileButton,
-                    loadProfileButton,
-                    resetDefaultsButton,
-                    spacer,
-                    okButton,
-                    cancelButton);
+                    8, copyScriptButton, saveProfileButton, resetDefaultsButton, spacer, okButton, cancelButton);
             buttonBar.setPadding(new Insets(10, 0, 0, 0));
 
             // Create content
@@ -672,7 +666,7 @@ public class TrainingDialog {
             content.getChildren()
                     .addAll(
                             checkpointRecoveryBanner,
-                            createHeaderBox(),
+                            createHeaderBox(loadProfileButton, hudToggle),
                             imageSourceSection,
                             gatedSectionsHint,
                             modelSection,
@@ -895,7 +889,11 @@ public class TrainingDialog {
             return days + "d";
         }
 
-        private VBox createHeaderBox() {
+        /**
+         * The title row, with the controls a user wants before working down the dialog:
+         * loading a saved profile, the Training HUD, and the basic/advanced switch.
+         */
+        private VBox createHeaderBox(Button loadProfileButton, ToggleButton hudButton) {
             VBox headerBox = new VBox(5);
             headerBox.setPadding(new Insets(0, 0, 5, 0));
 
@@ -920,8 +918,8 @@ public class TrainingDialog {
 
             Region headerSpacer = new Region();
             javafx.scene.layout.HBox.setHgrow(headerSpacer, Priority.ALWAYS);
-            javafx.scene.layout.HBox titleRow =
-                    new javafx.scene.layout.HBox(10, titleLabel, headerSpacer, advancedToggle);
+            javafx.scene.layout.HBox titleRow = new javafx.scene.layout.HBox(
+                    10, titleLabel, headerSpacer, loadProfileButton, hudButton, advancedToggle);
             titleRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
             Label subtitleLabel = new Label("Train a deep learning model to classify pixels in your images");
