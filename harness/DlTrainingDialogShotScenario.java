@@ -118,6 +118,12 @@ public final class DlTrainingDialogShotScenario {
         Thread.sleep(6000);
 
         onFx(() -> {
+            // The checkpoint-recovery banner reports interrupted runs on THIS
+            // machine; it is not part of the dialog a reader will open.
+            hideBannerContaining(stage.getScene().getRoot(), "Unfinished training detected");
+            return null;
+        });
+        onFx(() -> {
             // Model Architecture holds the architecture row and the
             // pretrained-only checkbox; Weight Initialization is where the
             // pretrained choices themselves live. The figure is about both.
@@ -206,6 +212,29 @@ public final class DlTrainingDialogShotScenario {
             }
         }
         return null;
+    }
+
+    /** Hides the top-level box holding a label with this text, if one is showing. */
+    private static boolean hideBannerContaining(Node root, String text) {
+        if (root instanceof javafx.scene.control.Label l && l.getText() != null && l.getText().startsWith(text)) {
+            Node box = l;
+            while (box.getParent() != null && !(box.getParent() instanceof javafx.scene.layout.VBox v && v.getChildren().size() > 3)) {
+                box = box.getParent();
+            }
+            box.setVisible(false);
+            box.setManaged(false);
+            System.out.println("[note] hid the '" + text + "' banner (this machine's checkpoints)");
+            return true;
+        }
+        if (root instanceof Parent p) {
+            for (Node child : p.getChildrenUnmodifiable()) {
+                if (hideBannerContaining(child, text)) return true;
+            }
+            if (root instanceof ScrollPane sp && sp.getContent() != null) {
+                return hideBannerContaining(sp.getContent(), text);
+            }
+        }
+        return false;
     }
 
     /** First button-like node at or under {@code root} whose text starts with {@code prefix}. */
