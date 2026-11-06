@@ -219,19 +219,19 @@ public final class TrainingHudView extends Region {
      */
     public void setOnCompareTo(Consumer<String> onCompareTo) {
         this.onCompareTo = onCompareTo;
-        rebuildCompareMenu();
+        rebuildCompareMenu(true);
     }
 
     /** @param onPinCurrent runs when the user asks to keep the current settings as a baseline */
     public void setOnPinCurrent(Runnable onPinCurrent) {
         this.onPinCurrent = onPinCurrent;
-        rebuildCompareMenu();
+        rebuildCompareMenu(true);
     }
 
     /** @param onRemoveBaseline runs with the baseline the user asked to forget */
     public void setOnRemoveBaseline(Consumer<String> onRemoveBaseline) {
         this.onRemoveBaseline = onRemoveBaseline;
-        rebuildCompareMenu();
+        rebuildCompareMenu(true);
     }
 
     /**
@@ -290,9 +290,22 @@ public final class TrainingHudView extends Region {
      * open menu is not rebuilt out from under the pointer.
      */
     private void rebuildCompareMenu() {
+        rebuildCompareMenu(false);
+    }
+
+    /**
+     * @param actionsChanged true when an action was wired or unwired. The items
+     *                       carry their enabled state from the moment they were
+     *                       built, so they must be rebuilt then even though the
+     *                       baselines did not change: the view is built before the
+     *                       dialog wires its actions, and skipping this left every
+     *                       item disabled for good.
+     */
+    private void rebuildCompareMenu(boolean actionsChanged) {
         List<String> baselines = state == null ? List.of() : state.baselines();
         String current = state == null ? null : state.comparedTo();
-        if (compareMenu.getItems().isEmpty()
+        if (actionsChanged
+                || compareMenu.getItems().isEmpty()
                 || !Objects.equals(menuBaselines, baselines)
                 || !Objects.equals(menuComparedTo, current)) {
             menuBaselines = baselines;
