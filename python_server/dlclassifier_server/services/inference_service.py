@@ -1485,6 +1485,42 @@ class InferenceService:
         self._cleanup_after_inference()
         logger.info("Model cache cleared")
 
+    #: EMA step for running statistics during AdaBN calibration (BatchNorm's default).
+    ADABN_MOMENTUM = 0.1
+
+    @staticmethod
+    def _prepare_adabn(model, momentum: float = None):
+        """Put every BatchNorm and BatchRenorm2d layer in train mode for AdaBN.
+
+        Everything else goes to eval mode. Each batch-norm-style layer's
+        momentum is set to ``momentum`` (default ``ADABN_MOMENTUM``) for the
+        calibration; the caller restores the returned originals afterward.
+
+        Args:
+            model: the loaded PyTorch model.
+            momentum: EMA step for the running statistics during calibration.
+
+        Returns:
+            List of (layer, original momentum) for every layer that will be
+            calibrated; empty when the model has none.
+        """
+        from torch.nn.modules.batchnorm import _BatchNorm
+
+        from dlclassifier_server.utils.batchrenorm import BatchRenorm2d
+
+        step = InferenceService.ADABN_MOMENTUM if momentum is None else momentum
+        saved = []
+        # modules() yields a container before its children, so a layer's
+        # train() is never undone by an ancestor's eval() afterward.
+        for m in model.modules():
+            if isinstance(m, (_BatchNorm, BatchRenorm2d)):
+                m.train()
+                saved.append((m, m.momentum))
+                m.momentum = step
+            else:
+                m.eval()
+        return saved
+
     def calibrate_batchnorm(
         self,
         model_path: str,
@@ -1521,7 +1557,6 @@ class InferenceService:
             Absolute path to the calibrated model.pt.
         """
         import shutil
-        from torch.nn.modules.batchnorm import _BatchNorm
 
         src = Path(model_path)
         dst = Path(output_dir)
@@ -1541,20 +1576,19 @@ class InferenceService:
                 "load the .pt source instead." % model_type
             )
 
-        # All BN modules in train mode (running stats update via
-        # forward pass), everything else in eval (frozen layers etc.).
-        n_bn = 0
-        for m in model.modules():
-            if isinstance(m, _BatchNorm):
-                m.train()
-                n_bn += 1
-            else:
-                m.eval()
+        # Every batch-norm-style layer in train mode (running stats update
+        # via forward pass), everything else in eval (frozen layers etc.).
+        # This must include BatchRenorm2d: training swaps every BatchNorm2d
+        # for it, so a _BatchNorm-only test found no layers in any model
+        # this extension trains and saved an unchanged copy as "calibrated".
+        saved_momentum = self._prepare_adabn(model)
+        n_bn = len(saved_momentum)
         if n_bn == 0:
-            logger.warning(
-                "Source model has no BatchNorm layers; AdaBN will be "
-                "a no-op. Save anyway so the user gets the expected "
-                "_adabn artifact."
+            raise RuntimeError(
+                "This model has no BatchNorm or BatchRenorm layers, so there "
+                "are no image statistics to calibrate (models built with "
+                "GroupNorm or LayerNorm, such as MuViT, cannot be calibrated "
+                "this way). No calibrated copy was saved."
             )
         logger.info(
             "AdaBN: %d BatchNorm modules set to train mode, %d tiles "
@@ -1565,9 +1599,10 @@ class InferenceService:
         )
 
         # Stream tiles in batches; no_grad so we do not update weights.
-        # The forward pass updates BN running_mean/running_var via the
-        # standard EMA -- momentum default 0.1 means each batch nudges
-        # the running stat 10% toward the batch stat.
+        # The forward pass updates running_mean/running_var by EMA at
+        # ADABN_MOMENTUM: each batch nudges the running stat 10% toward the
+        # batch stat (BatchRenorm2d's own 0.01 would move it about 17% over
+        # 300 tiles in batches of 16).
         with torch.no_grad():
             buf = []
             for tp in tile_paths:
@@ -1592,6 +1627,10 @@ class InferenceService:
             if buf:
                 batch = torch.stack(buf, dim=0)
                 model(batch)
+
+        # Back to each layer's own momentum before saving.
+        for m, momentum in saved_momentum:
+            m.momentum = momentum
 
         # Save new state dict + metadata copy with provenance field.
         torch.save(model.state_dict(), str(dst / "model.pt"))
