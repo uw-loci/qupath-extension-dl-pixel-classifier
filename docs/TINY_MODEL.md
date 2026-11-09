@@ -1,7 +1,6 @@
 # Tiny UNet: lightweight fast-to-train pixel classifier
 
-Tiny UNet is a hand-rolled depthwise-separable U-Net architecture added in
-version 0.6.1. It targets simple 2-5 class microscopy segmentation tasks
+Tiny UNet is a hand-rolled depthwise-separable U-Net architecture. It targets simple 2-5 class microscopy segmentation tasks
 where the standard ResNet-UNet (~24M params) is 50-100x more capacity than
 the task needs.
 
@@ -42,6 +41,11 @@ All presets require tile size divisible by `2^depth` (16 for depth=4,
 Tiny UNet supports three normalization options. The choice controls
 how the network handles channel statistics during training and eval.
 
+The Train dialog has no control for this. Every Tiny UNet trains with
+BatchRenorm unless the handler parameter `tiny_unet_norm` is set to `gn`
+(GroupNorm) or `bn` (BatchNorm), for example from a script through
+`TrainingConfig.builder().handlerParameters(["tiny_unet_norm": "gn"])`.
+
 ### BatchRenorm (default)
 
 BatchRenorm is the default because it delivers the best empirical
@@ -52,12 +56,12 @@ applies unchanged.
 
 Trade-offs to be aware of:
 - `torch.compile` has known graph-break risk on BRN's in-place buffer
-  updates. If you plan to enable the experimental `torch.compile` path
-  (Phase 3+), switch to GroupNorm.
+  updates. If you plan to enable the experimental `torch.compile` option,
+  switch to GroupNorm.
 - The `channels_last` memory format can be silently undone by BRN's
   internal reshape ops. `channels_last` is not auto-enabled for BRN
   models.
-- For INT8 post-training quantization (Phase 4), BRN must be folded to
+- For INT8 post-training quantization, BRN must be folded to
   plain BatchNorm at export time. Handled automatically by the export
   helper.
 
@@ -76,7 +80,7 @@ may not have enough samples.
 Trade-offs:
 - Typically ~0.5-1.5 mIoU below BatchRenorm on RGB H&E.
 - Composes cleanly with `torch.compile` and `channels_last`.
-- No running-stat drift, same behaviour in train and eval mode.
+- No running-stat drift, same behavior in train and eval mode.
 
 Reference: Wu and He, "Group Normalization", ECCV 2018.
 
@@ -95,7 +99,7 @@ datasets:
 | Setting            | Default    | Why                                      |
 | ------------------ | ---------- | ---------------------------------------- |
 | Epochs             | 30         | Tiny models converge fast                |
-| Batch size         | 16         | Fits easily in memory, good gradient     |
+| Batch size         | 16         | Small enough for most GPUs, good gradient |
 | Learning rate      | 3e-3       | Matches OneCycleLR + small model heuristic |
 | Tile size          | 256        | Good balance of context and speed        |
 | Pretrained weights | Off        | No ImageNet encoder to load              |
@@ -132,9 +136,11 @@ labeled and off by default.
 
 At inference time the extension also enables `channels_last` memory
 format on CUDA when the architecture benefits (typical 1.1-1.3x on
-conv-heavy models). This is automatic; no UI toggle.
+conv-heavy models). This is automatic; no UI toggle. It is skipped for
+any model containing BatchRenorm layers, which includes the default
+Tiny UNet, so in practice it applies to GroupNorm and BatchNorm Tiny UNets.
 
-## Experimental inference acceleration (Phase 4)
+## Experimental inference acceleration
 
 Two opt-in preferences under **Edit > Preferences > DL Pixel Classifier**
 sit behind the label "Experimental" because they depend on GPU driver
@@ -144,7 +150,7 @@ stack quirks and can fail silently on atypical setups.
   `TensorrtExecutionProvider` on CUDA. Requires `onnxruntime-gpu`
   built with TRT support and a compatible CUDA toolkit. On first
   inference TRT builds an engine from `model_static.onnx` (the static
-  variant exported in Phase 3b) and caches it under
+  ONNX variant exported after training) and caches it under
   `~/.dlclassifier/tensorrt_cache`. Typical speedup: 2-4x over plain
   `CUDAExecutionProvider`. If TRT is not available, the extension
   silently falls back to the standard provider and logs a warning.
@@ -158,7 +164,7 @@ stack quirks and can fail silently on atypical setups.
 
 Windows caveats: `onnxruntime-gpu` wheels with TRT support exist but
 lag upstream, and cuDNN/CUDA/TRT version combinations are fussy. If
-the TRT provider fails to load, check the server logs for the
+the TRT provider fails to load, check the **Python Console** (Utilities menu) for the
 "TensorrtExecutionProvider not in [...], using
 CUDAExecutionProvider instead" line and verify
 `onnxruntime.get_available_providers()`. Report issues if you hit an
@@ -173,8 +179,3 @@ The design of Tiny UNet draws on:
   for Mobile Vision Applications", 2017 (depthwise separable convs).
 - Smith and Topin, "Super-Convergence: Very Fast Training of Neural
   Networks Using Large Learning Rates", 2019 (OneCycleLR).
-
-Agent reports backing the design decisions:
-- A1 (minimalist TinyUNet design)
-- A2 (counterpoint: SMP + lightweight pretrained encoder)
-- B2 (safe-default training speedups)

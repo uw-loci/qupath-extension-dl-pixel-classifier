@@ -12,6 +12,23 @@ Training a classifier involves:
 5. Continuing training if needed (optional)
 6. Verifying the trained model
 
+## Words used in these guides
+
+- **Tile (patch):** a small square cut from your image. The model learns from, and predicts, one tile at a time.
+- **Epoch:** one pass through every training tile.
+- **Batch size:** how many tiles the model looks at before it adjusts itself once.
+- **Learning step (weight update):** one such adjustment. Each epoch makes (training tiles / batch size, rounded up) of them, fewer when Gradient Accumulation is above 1, so a large batch on few tiles gives very few.
+- **Training and validation tiles:** validation tiles are held back and never learned from. The scores on them estimate how the model will do on images it has not seen.
+- **Loss:** the number training tries to make smaller. Lower means the predictions agree more with your annotations. Compare it within one run, not between runs.
+- **IoU (intersection over union):** for one class, the area where the model and your annotation agree, divided by the area either of them calls that class. 1.0 is perfect agreement, 0 is none. **Mean IoU** averages it over the classes.
+- **Encoder (backbone):** the part of the model that picks out edges, textures and shapes. **Pretrained** means it has already learned these from other images (everyday photos for ImageNet, H&E slides for the histology encoders).
+- **Freezing a layer:** keeping that part of the pretrained encoder unchanged during training.
+- **Overfitting:** the model memorizes the training tiles. Training loss keeps falling while validation loss rises.
+- **GPU memory (VRAM):** the memory on the graphics card. Running out of it stops training.
+- **Learning rate:** how large each adjustment is.
+- **Mixed precision (AMP):** on NVIDIA GPUs, does part of the arithmetic at lower precision, which trains about twice as fast and uses less GPU memory.
+- **Augmentation:** random flips, rotations and color changes applied to training tiles so the model does not depend on orientation or exact color.
+
 ## Step 1: Prepare Annotations
 
 ### Create annotation classes
@@ -36,29 +53,32 @@ Training a classifier involves:
 
 ## Step 2: Open the Training Dialog
 
-Go to **Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**
-
-The dialog opens in **Basic mode** by default, showing only the essentials: Training Data Source, Annotation Classes, and Classifier Name. Click **"Show All Settings"** in the header to reveal all configuration options. The mode is remembered across sessions.
+1. **Open Extensions > DL Pixel Classifier > Train DL Pixel Classifier...** The dialog opens in **Basic mode**: the image list, a model size (Fast, Small, Medium or Large), the weight initialization, epochs and the main tile and memory settings, the classes and the classifier name.
+2. Optional: **click Show All Settings** in the title row to see every option. The dialog remembers your choice.
 
 ![Configure Classifier Training dialog in its advanced view. The title row holds Load profile..., Training HUD and Show Basic View buttons. Training Data Source lists the project images, each with a checkbox and a Train/Val role dropdown, above Select All, Select None, Auto-Distribute and All Both buttons, a Load Classes from Selected Images button, and an orange line giving the estimated training tiles and warning that the in-memory cache would exceed half of free RAM. Model Architecture holds an Architecture dropdown set to unet, a checkbox reading Only architectures with pretrained weights, and an Encoder dropdown set to ResNet-34. Weight Initialization offers Train from scratch, Continue from provided weights (selected, described as starting from ImageNet weights), Use MAE pretrained encoder, Use SSL pretrained encoder and Continue training one of your saved models, followed by a Transfer Learning Configuration panel with a Retraining preset dropdown and a scrolling list of encoder blocks with per-block freeze checkboxes and parameter counts. The remaining sections are collapsed, and a button row runs along the bottom: Copy as Groovy Script, Save profile, Reset to defaults, Start Training and Cancel](images/train-dialog-configure-classifier.png)
 
-In advanced mode, the dialog has collapsible titled pane sections:
+The dialog's sections, top to bottom:
 
-1. **TRAINING DATA SOURCE**: select images and load classes
-2. **MODEL ARCHITECTURE**: architecture and encoder selection
-3. **WEIGHT INITIALIZATION**: how to initialize model weights
-4. **TRAINING PARAMETERS**: epochs, batch size, tile size, etc.
-5. **TRAINING STRATEGY**: scheduler, loss, early stopping (collapsed)
-6. **CHANNEL CONFIGURATION**: input channel selection and normalization
-7. **ANNOTATION CLASSES**: class selection and weight balancing
-8. **DATA AUGMENTATION**: flip, rotation, intensity augmentation (collapsed)
-9. **NAME YOUR CLASSIFIER**: name and description
+1. **Training Data Source**: select images and load classes
+2. **Model Architecture**: architecture and encoder selection
+3. **Weight Initialization**: how to initialize model weights
+4. **Tiles & Resolution**: tile size, resolution, surrounding context, overlap
+5. **Duration & Stopping**: epochs, validation split, early stopping, focus class
+6. **Batch Size & Memory**: batch size, gradient accumulation, mixed precision
+7. **Learning Rate & Optimizer**: learning rate, scheduler (Show All Settings only)
+8. **Loss Function**: loss and hard-pixel options (Show All Settings only)
+9. **Performance**: in-memory dataset, progressive resizing and other speed options (Show All Settings only)
+10. **Channel Configuration**: input channel selection and normalization
+11. **Annotation Classes**: class selection and weight balancing
+12. **Data Augmentation**: flip, rotation, intensity augmentation (Show All Settings only)
+13. **Name Your Classifier**: name and description
 
 ## Loading Settings from a Previous Model
 
 To pre-populate dialog settings from a previously trained classifier:
 
-1. In the **WEIGHT INITIALIZATION** section, select the **"Continue training one of your saved models"** radio button
+1. In the **Weight Initialization** section, select the **"Continue training one of your saved models"** radio button
 2. Click **"Select model..."** to open the model picker
 3. Select a model from the table (sorted by date, newest first)
 4. Click **OK**
@@ -66,7 +86,7 @@ To pre-populate dialog settings from a previously trained classifier:
 This populates:
 - **Architecture, backbone, tile size, downsample, context scale, epochs** from the model metadata
 - **Learning rate, batch size, augmentation, scheduler, loss function, early stopping, and all other hyperparameters** from the model's saved training settings
-- **Classifier name** auto-generated as `Retrain_OriginalName_YYYYMMDD`
+- **Classifier name** set to the original model's name (or `Retrain_<name>_YYYYMMDD` when the original had an automatic name ending in "Classifier"); change it if you want to keep both models
 - **Class auto-matching** after you load classes from images, classes matching the source model are auto-selected
 
 All fields can be adjusted before training. Older models (trained before this feature) will only populate the architecture-level settings; hyperparameters will keep their preference defaults.
@@ -75,14 +95,14 @@ All fields can be adjusted before training. Older models (trained before this fe
 
 When **Continue training one of your saved models** is selected and a model is loaded, the following controls are **locked** because the saved weights require an exact architecture match:
 
-- Architecture (UNet, MuViT, Custom ONNX)
+- Architecture
 - Backbone/Encoder (resnet34, resnet50, etc.)
 - MuViT handler parameters (model size, patch size, level scales, position encoding)
 - Tile Size
 - Resolution (Downsample)
 - Context Scale
 
-You **can** still adjust: learning rate, epochs, batch size, augmentation, training strategy, channel configuration, and class selection/weights.
+You **can** still adjust: learning rate, epochs, batch size, augmentation, the scheduler, loss and early-stopping settings, channel configuration, and class selection/weights.
 
 ## Step 3: Configure Basic Settings
 
@@ -93,7 +113,7 @@ Check the project images to include in training. Only images with classified ann
 | Step | Description |
 |------|-------------|
 | **1. Select images** | Check images in the list. Use "Select All" / "Select None" for bulk selection. |
-| **2. Load Classes** | Click **"Load Classes from Selected Images"** to populate the class list and initialize channels from the first image. |
+| **2. Load Classes** | Click **"Load Classes from Selected Images"** to populate the class list and initialize channels from the first image. Until you do, the sections below stay grayed out under the note *Load classes from the section above to unlock the rest of the dialog.* Afterward, a line under the button gives the number of classes, the estimated training tiles and, when it applies, a memory warning. |
 
 ![QuPath project image list showing multiple .svs slides available for training](images/project-image-list.png)
 
@@ -101,14 +121,16 @@ Multi-image training combines patches from all selected images into one training
 
 #### Per-image train/val roles and how the split is recorded
 
-In advanced mode each selected image has a **Train / Val / Both** role dropdown (or use **Auto Distribute** to assign whole images automatically). Images set to **Train** or **Val** go entirely to that side; images left as **Both** have their tiles split within the image by the Validation Split fraction.
+In advanced mode each selected image has a **Train / Val / Both** role dropdown. Click **Auto-Distribute** to assign whole images automatically, or **All Both** to set every selected image back to Both. Images set to **Train** or **Val** go entirely to that side; images left as **Both** have their tiles split within the image by the Validation Split fraction.
+
+If every image is left at **Both**, the validation tiles come from the same images as the training tiles, often from the same annotations. The validation score will then look better than the model really does on images it has not seen. To get an honest score, set at least one whole image to **Val**.
 
 When training finishes, the split is recorded in two places so you never have to guess how a model was trained:
 
 - **Classifier metadata** (Manage Classifiers info panel): the split method (`image_roles` vs `tile_stratified`) and the exact train-only / val-only image lists.
 - **Project image metadata**: each training image's project entry is tagged with a `DL role: <classifier name>` column set to `Train`, `Val`, or `Both`. Add that column in the QuPath **Project** pane to sort or filter your slides by training status. Each classifier gets its own column, and re-training a classifier refreshes its column to reflect the most recent run. (A run left entirely in the default **Both** role tags every image `Both`, that is expected, not a bug.)
 
-Loading settings from such a model (see below) restores these per-image roles to the dialog, so continuing training in a later session keeps the original split.
+Loading settings from such a model (see [Loading Settings from a Previous Model](#loading-settings-from-a-previous-model)) restores these per-image roles to the dialog, so continuing training in a later session keeps the original split.
 
 ### Classifier Info
 
@@ -127,7 +149,8 @@ Loading settings from such a model (see below) restores these per-image roles to
 | **Tiny UNet** | Lightweight depthwise-separable UNet for simple 2-5 class tasks, especially non-RGB data. No pretrained weights. Fast to train. | [Tiny UNet](TINY_MODEL.md) |
 | **Fast Pretrained** | Compact UNet with mobile ImageNet-pretrained encoders (EfficientNet-Lite0, MobileNetV3-Small). Best for small RGB H&E datasets. | [Fast Pretrained](FAST_PRETRAINED.md) |
 | **MuViT (Transformer)** | Multi-scale feature fusion with Vision Transformer encoder. Supports optional MAE pretraining. | - |
-| **Custom ONNX Model** | Importing externally trained models. Advanced users. | - |
+
+Imported ONNX models are not trainable in this release, so the Train dialog does not list Custom ONNX.
 
 ### Encoder (UNet)
 
@@ -194,57 +217,63 @@ When MuViT (Transformer) is selected, the encoder combo is hidden and model-spec
 
 ## Step 5: Configure Weight Initialization
 
-The **WEIGHT INITIALIZATION** section controls how model weights are initialized. Choose one of five strategies:
+The **Weight Initialization** section controls how model weights are initialized. Choose one of five strategies:
 
 | Strategy | When to use |
 |----------|-------------|
 | **Train from scratch** | Very large datasets or custom architectures. Rarely needed. |
 | **Continue from provided weights** | **Recommended for most cases.** Starts from the weights that come with the selected encoder (ImageNet, histology or a foundation model; the line under the option says which) and trains them further on your annotations. This is how you fine-tune ImageNet weights. Shows a layer freeze panel for fine-grained control. |
 | **Use MAE pretrained encoder** | MuViT only. Load encoder weights from a self-supervised MAE pretrained .pt file. Click "Browse..." to select. Architecture locks to match the encoder. |
-| **Use SSL pretrained encoder** | UNet only. Load encoder weights from a SimCLR/BYOL self-supervised pretrained .pt file. Use when you have domain-specific unlabeled images (different microscope, staining, tissue type) and want the encoder to recognize those visual patterns before supervised training. Run **Utilities > SSL Pretrain Encoder** first. See [Domain Adaptation Guide](DOMAIN_ADAPTATION_GUIDE.md). |
+| **Use SSL pretrained encoder** | UNet only. Load encoder weights from a SimCLR/BYOL self-supervised pretrained .pt file. Use when you have domain-specific unlabeled images (different microscope, staining, tissue type) and want the encoder to recognize those visual patterns before supervised training. Run **Utilities > SSL Pretrain Encoder...** first. That menu item is hidden until you tick **Edit > Preferences > DL Pixel Classifier > Show Developer Pretraining Options** and restart QuPath. Shown only after **Show All Settings**. See [Domain Adaptation Guide](DOMAIN_ADAPTATION_GUIDE.md). |
 | **Continue training one of your saved models** | Resume from a previously trained classifier. Click "Select model..." to pick the model. All settings populate from the saved model. |
 
 ![Transfer Learning Configuration panel: per-layer freeze checkboxes for encoder blocks with parameter counts, a retraining preset dropdown, and Keep All Pretrained / Retrain Everything / Use Recommended buttons](images/train-dialog-transfer-learning-layers.png)
 
 When **Continue from provided weights** is selected, a layer freeze panel appears:
 - Per-layer checkboxes to freeze/unfreeze individual encoder layers
-- **Freeze All** / **Unfreeze All** / **Use Recommended** buttons
+- **Keep All Pretrained** / **Retrain Everything** / **Use Recommended** buttons, plus a **Retraining:** preset list with an **Apply** button
 - Small datasets (<500 tiles): freeze most layers; large datasets (>5000): unfreeze nearly all
 
 ## Step 6: Configure Training Parameters
 
 ### Core parameters
 
-| Parameter | Default | Guidance |
-|-----------|---------|----------|
-| **Epochs** | 50 | 50-200 for small datasets, 20-100 for large. Early stopping prevents overfitting. |
-| **Batch Size** | 8 | 4-8 for 8GB VRAM with 512px tiles. Reduce if out-of-memory. |
-| **Learning Rate** | 0.0001 | Safe default for AdamW. Reduce further if loss oscillates. When using OneCycleLR, an LR finder auto-runs to suggest the optimal max learning rate. |
-| **Validation Split** | 20% | 15-25% typical. Uses stratified sampling for balanced splits. |
-| **Tile Size** | 512 | Must be divisible by 32. 256 for cell-level, 512 for tissue-level. |
-| **Whole image** | Off | Checkbox. Uses entire image as one tile (small images only). Disables tile size, overlap, and context scale, but downsample stays unlocked so you can adjust resolution to fit within the max tile size. A dynamic warning shows orange (images fit) or red (images will be tiled) based on your actual image dimensions at the current downsample. |
-| **Resolution** | 1x | 1x, 2x, 4x, 8x, 16x. Higher = more context, less detail. Locked when continuing from a saved model. "Preview" button shows the image at selected resolution. |
-| **Context Scale** | 4x (Recommended) | None, 2x, 4x, 8x, 16x. Adds surrounding context at lower resolution alongside the main tile. Hidden for MuViT (handles multi-scale internally). |
-| **Tile Overlap** | 0% | 10-25% generates more patches from limited annotations. |
-| **Line Stroke Width** | QuPath's stroke | Width for polyline annotation masks (minimum 1px). Increase for sparse lines. |
+| Parameter | Section | Default | Guidance |
+|-----------|---------|---------|----------|
+| **Epochs** | Duration & Stopping | 50 | 50-200 for small datasets, 20-100 for large. Early stopping prevents overfitting. |
+| **Batch Size** | Batch Size & Memory | 8 | 4-8 for 8GB VRAM with 512px tiles. Reduce if out-of-memory. |
+| **Learning Rate** | Learning Rate & Optimizer | 0.0001 | How large each adjustment is. 0.0001 is a safe default; lower it if the loss chart jumps up and down. With the One Cycle scheduler, **Auto-find learning rate (LR Finder)** (on by default) tests a range of rates before training and uses the one it finds as the peak rate. |
+| **Validation Split** | Duration & Stopping | 20% | 15-25% typical. Uses stratified sampling for balanced splits. Not used for images given a fixed **Train** or **Val** role. |
+| **Random Seed** | Duration & Stopping | 0 | 0 starts from a new random state every run. Weight initialization, augmentation and tile order are random, so two runs with the same settings give different models unless the seed is above 0. The train/validation split of **Both** images does not depend on the seed: for the same annotations it is always the same. A seed makes the run repeatable on the same machine with the same data and settings, and can slow training by 10-20%. Results can still differ slightly between machines or software versions. Shown after **Show All Settings**. |
+| **Tile Size** | Tiles & Resolution | 512 | Must be divisible by 32. 256 for cell-level, 512 for tissue-level. |
+| **Whole image** | Tiles & Resolution | Off | Checkbox. Uses entire image as one tile (small images only). Disables tile size, overlap, and context scale, but downsample stays unlocked so you can adjust resolution to fit within the max tile size. A dynamic warning shows orange (images fit) or red (images will be tiled) based on your actual image dimensions at the current downsample. |
+| **Resolution** | Tiles & Resolution | 1x | 1x, 2x, 4x, 8x, 16x. Higher = more context, less detail. Locked when continuing from a saved model. "Preview" button shows the image at selected resolution. |
+| **Surrounding context** (context scale) | Tiles & Resolution | None (single scale) | None, 2x, 4x, 8x, 16x; the list marks 4x as recommended. Adds surrounding context at lower resolution alongside the main tile. Hidden for MuViT (handles multi-scale internally). |
+| **Tile Overlap** | Tiles & Resolution | 13% (from the shared 12.5% tile-overlap preference) | 10-25% generates more patches from limited annotations. Shown after **Show All Settings**. |
+| **Line Stroke Width** | Tiles & Resolution | QuPath's stroke | Width for polyline annotation masks (minimum 1px). Increase for sparse lines. |
 
 ![Tiles and Resolution settings (tile size, resolution/downsample, surrounding context, overlap, line stroke width, minimum annotation coverage) with a resolution preview of an H&E tile](images/train-dialog-tiles-resolution-preview.png)
 
-### Training Strategy (collapsed by default)
+### Scheduler, loss, stopping and memory settings
 
-| Parameter | Default | Guidance |
-|-----------|---------|----------|
-| **LR Scheduler** | One Cycle | Best default. "Reduce on Plateau" is a good alternative when training is noisy. |
-| **Loss Function** | Cross Entropy + Dice | Recommended. Dice optimizes IoU directly. See "Loss function options" below for alternatives including Focal, Boundary-softened CE, and Lovasz-Softmax. |
-| **Early Stop Metric** | Mean IoU | More reliable than validation loss. |
-| **Early Stop Patience** | 15 | Epochs without improvement before stopping. |
-| **Focus Class** | (none) | Select a class whose IoU overrides mean IoU for best-model selection. |
-| **Min Focus IoU** | 0.0 | Minimum IoU threshold for focus class before early stopping kicks in. |
-| **Mixed Precision** | Enabled | FP16/BF16 mixed precision. ~2x speedup on NVIDIA GPUs. |
-| **Gradient Accumulation** | 1 | Accumulate over N batches. Set 2-4 to simulate larger batches on limited VRAM. |
-| **Progressive Resizing** | Off | Train at half resolution first (40% of epochs), then full resolution. |
+| Parameter | Section | Default | Guidance |
+|-----------|---------|---------|----------|
+| **LR Scheduler** | Learning Rate & Optimizer | One Cycle | Best default. "Reduce on Plateau" is a good alternative when training is noisy. |
+| **Loss Function** | Loss Function | Cross Entropy + Dice | Recommended. Scores both individual pixels and the overlap of whole regions. See "Loss function options" below for alternatives including Focal, Boundary-softened CE, and Lovasz-Softmax. |
+| **Early Stop Metric** | Duration & Stopping | Mean IoU | Stops when the overlap with your validation annotations stops improving. More reliable than validation loss. |
+| **Early Stop Patience** | Duration & Stopping | 15 | Epochs without improvement before stopping. |
+| **Focus Class** | Duration & Stopping | (none) | The class that matters most to you. The saved model is the epoch where this class scored best, not the average of all classes. |
+| **Min Focus IoU** | Duration & Stopping | 0.5 | Minimum IoU threshold for focus class before early stopping kicks in. Shown once a focus class is set. |
+| **Mixed Precision** | Batch Size & Memory | Enabled | **Enable mixed precision (AMP)**. Trains about twice as fast on NVIDIA GPUs and uses less GPU memory. |
+| **Gradient Accumulation** | Batch Size & Memory | 1 | Accumulate over N batches. Set 2-4 to simulate larger batches on limited VRAM. |
+| **Progressive Resizing** | Performance | Off | Train at half resolution first (40% of epochs), then full resolution. |
 
 ### Loss function options
+
+Leave Loss Function at **Cross Entropy + Dice** unless [BEST_PRACTICES.md](BEST_PRACTICES.md) suggests otherwise for your problem.
+
+<details>
+<summary>What the loss options do (advanced)</summary>
 
 The Loss Function combo exposes eight variants. OHEM composes with
 most of them (focal modulation and boundary weighting applied
@@ -269,57 +298,93 @@ variant. See also the "Option interaction" runtime watcher that
 shows a popup when a known-risky composition is detected (e.g.
 tile overlap > 0 combined with no per-image split role).
 
+</details>
+
 ### Automatic Optimizations
+
+<details>
+<summary>What the extension sets up for you (advanced)</summary>
 
 The following optimizations are applied automatically, no configuration needed:
 
 - **Context padding**: Training tiles are automatically extracted with a border of real surrounding image data, matching the geometry used during inference (where QuPath provides real context via `inputPadding`). The padding amount is computed as `max(64, min(max(overlap, tileSize/4), tileSize * 3/8))` pixels per side. The mask border is filled with 255 (ignore_index) so the loss only computes on the annotated center region. This eliminates train/inference geometry mismatch and tile edge artifacts. Disabled for whole-image mode.
-- **AdamW optimizer** with fast.ai-tuned hyperparameters (betas=0.9/0.99, eps=1e-5, weight_decay=0.01). AdamW decouples weight decay from the gradient update, producing better generalization than Adam.
-- **Discriminative learning rates**: When using pretrained weights, the encoder automatically receives 1/10th of the base learning rate while the decoder and segmentation head train at the full rate. This prevents catastrophic forgetting of pretrained features.
-- **LR Finder**: When using the One Cycle scheduler on a new training run (not resuming from checkpoint), an automatic learning rate range test runs before training to find the optimal max learning rate. The suggested LR is logged and used as the OneCycleLR max_lr.
+- **AdamW optimizer** with fast.ai-tuned hyperparameters (betas=0.9/0.99, eps=1e-5; weight decay 0.01 by default, set by **Weight Decay**). AdamW decouples weight decay from the gradient update, producing better generalization than Adam.
+- **Discriminative learning rates**: When using pretrained weights, the encoder receives a fraction of the base learning rate (**Encoder LR Factor**, default 0.1) while the decoder and segmentation head train at the full rate. This prevents catastrophic forgetting of pretrained features.
+- **LR Finder**: When **Auto-find learning rate (LR Finder)** is ticked (the default) and the scheduler is One Cycle, a new training run (not resuming from checkpoint) starts with a learning rate range test. The suggested LR is logged and used as the OneCycleLR max_lr.
 - **BF16 auto-detection**: On Ampere+ GPUs (RTX 3000 series and newer), training and inference automatically use BF16 mixed precision instead of FP16. BF16 has a larger dynamic range and does not require gradient scaling, improving stability.
+
+</details>
 
 ### Training HUD: see what a change did
 
-Click **Training HUD** at the top of the dialog to open a small instrument panel beside the
-dialog. Change any setting and the panel shows what that change did, without you having to set
-it back to compare:
+The Training HUD is a small instrument panel that shows what each setting change does, without
+you having to set it back to compare. The [Training HUD walkthrough](TRAINING_HUD_WALKTHROUGH.md)
+takes the workshop's brightfield tiles through two single changes and two presets, with the panel
+at each step.
 
-- **LAST CHANGE** names what you changed, for example `Resolution 1x -> 8x`.
-- Every gauge the change moved keeps a faint mark where it was and gets a chip with the size of
-  the move. **Blue** with a check means better for you (`✓ ×9 faster`); **orange** with an
-  exclamation mark means worse (`! ×4 fewer`). Gauges it did not move stay pale yellow and step
-  back.
-- The highlight stays until your next change, so you can look away and come back.
+#### Open the HUD
 
-**Comparing against a set of configurations.** The button at the top right (`vs last change`)
-chooses what changes are measured against:
+1. **Click Training HUD** in the title row of the dialog, beside **Load profile...**. A panel
+   opens beside the dialog, reading **READY**.
+2. **Change any setting.** The panel shows what that change did:
 
-- **Start** is recorded when classes are loaded, so you can always see everything you have
-  changed since, without having planned for it.
+   - **LAST CHANGE** names what you changed, for example `Resolution 1x -> 8x`.
+   - Every gauge the change moved keeps a faint mark where it was and gets a chip with the size
+     of the move. **Blue** with a check means better for you (`✓ ×9 faster`); **orange** with an
+     exclamation mark means worse (`! ×4 fewer`). Gauges it did not move stay pale yellow and
+     step back.
+   - The highlight stays until your next change, so you can look away and come back.
+
+#### Compare against a saved state
+
+The button at the top right of the panel (`vs last change`) chooses what changes are measured
+against:
+
+- **Start** is recorded when you open the panel and again whenever classes are loaded, so you
+  can see everything you have changed since then.
 - **Every profile you load** (Load profile..., or settings taken from a saved model) is recorded
-  under its name. Loading one is shown as a single change, `<profile>: N settings changed`, with
-  the full list in the tooltip, however many settings differ.
+  under the classifier name saved in it (for a model, the model's name). Loading one is shown as
+  a single change, `<profile>: N settings changed`, with the full list in the tooltip, however
+  many settings differ.
 - **Pin current settings** records what you have now as `Pin 1`, `Pin 2`, and so on.
 
 Pick any of them and the gauges redraw against it at once, with each dial's REF mark moved to it.
 So you can load profile A, then profile B, then ask how far your current settings are from either.
-Reloading classes clears the list back to a fresh Start.
+
+The list lives only while the panel is open. Closing the HUD, or reloading classes, clears it
+back to a fresh Start, and a profile loaded while the panel is closed is not added.
+
+#### Reading the gauges
 
 The gauges are **relative**. They tell you which way and by how much a run moves, not how many
 minutes it will take: that depends on your machine. The memory bars show the share of your GPU
 and of free RAM, with the point where the GPU gets tight and where the in-memory cache's `auto`
 mode stops caching (50% of free RAM) marked on them.
 
-**Epoch speed and learning steps sit side by side on purpose,** and on both dials the good end is
-on the right. A coarser resolution makes each epoch faster only because there are fewer patches
-to learn from: the speed needle swings right in blue while the learning-steps needle swings left
-in orange, and both are true. A configuration that is fast because it is starved is the one that
-cannot learn.
+The two dials are **Epoch speed** and **Learning steps**, and on both the good end is on the
+right. A coarser resolution makes each epoch faster only
+because there are fewer patches to learn from, so the speed needle swings right in blue while the
+learning-steps needle swings left in orange.
 
-**Worked example:** the [Training HUD walkthrough](TRAINING_HUD_WALKTHROUGH.md) takes the
-workshop's brightfield tiles through two single changes and two presets, with the panel at each
-step.
+- **Learning steps** is how many times the model's weights are updated in the whole run: epochs
+  x (training patches / batch size, rounded up), divided by Gradient Accumulation. It is a
+  ceiling, since early stopping can end the run sooner.
+- **Epoch speed** follows the pixels one epoch processes: training patches, plus validation
+  patches at a third of the cost, times the tile area with its padding, doubled when Surrounding
+  context is on.
+
+Hover over a gauge for an explanation and the numbers behind it.
+
+#### Hard limits
+
+- **TOO FEW STEPS** lights on the learning-steps dial when each epoch would make fewer than two
+  weight updates (too few training patches for the batch size). Training still runs, but raising
+  the epochs cannot make up for it. Lower **Batch Size** or add training patches; the tooltip
+  gives the numbers.
+- The bars mark their own limits. On **GPU memory** and **RAM cache**, the mark a bar has passed
+  lights up (`TIGHT` or `100%` on the GPU bar; on the RAM bar `100%`, or the cache mode's own mark, `auto 50%` or `cap 40%`). The small
+  **Training data** and **Validation detail** bars are hatched end to end when there are no
+  training patches, or at most one validation patch.
 
 Two things it will not do. Time cannot be compared across architectures or encoders (the panel
 shows `?` rather than guess). And patch counts are estimated from your annotations before any
@@ -355,24 +420,24 @@ export.
 
 ## Step 8: Start Training
 
-Click **Start Training**. A progress window shows:
-- Patch extraction progress
-- Epoch-by-epoch training and validation loss
-- Live loss chart with separate colors for train (blue) and validation (red) loss
-- Per-class IoU metrics
-- Early stopping status
+1. **Click Start Training.** A progress window opens and shows:
+   - Patch extraction progress
+   - Epoch-by-epoch training and validation loss
+   - Live loss chart with separate colors for train (blue) and validation (red) loss
+   - Per-class IoU metrics
+   - Early stopping status
 
 ![Training Classifier window with a Training Progress loss chart (train and validation curves) and a Per-Class IoU chart over epochs, plus a log panel](images/training-progress-charts.png)
 
 > **Settings are remembered:** When you train a model and later load it to continue training, all training dialog settings (architecture, tile size, learning rate, loss function, gradient accumulation, progressive resize, augmentation, etc.) are restored from the model's saved metadata. This means you can iterate quickly without re-entering parameters.
 
-### Cancelling training
+### Canceling training
 
 Click **Cancel** at any time. A dialog offers three choices:
 
 | Option | What it saves |
 |--------|--------------|
-| **Best Epoch** | The model from the epoch with the highest mean IoU |
+| **Best Epoch** | The model from the epoch with the best validation score (the Early Stop Metric, or the focus class's IoU when one is set) |
 | **Last Epoch** | The model from the most recently completed epoch |
 | **Do Not Save** | Discards all progress |
 
@@ -421,11 +486,13 @@ The dialog has two tabs: the tile list described above, and a **Confusion Matrix
 
 ![Training Area Issues dialog Confusion Matrix tab: ground-truth rows vs predicted columns for tissue classes, cells shaded by error percentage with diagonal correct-classification values](images/training-area-issues-confusion-matrix.png)
 
-**Click any cell** to filter the tile list to only the tiles that contain that specific ground-truth-to-prediction confusion. A banner at the top of the tile list shows the active confusion filter with a **Clear** link to remove it. This makes it easy to jump from a systematic error in the matrix to the exact tiles where it occurs.
+**Click any cell** to filter the tile list to only the tiles that contain that specific ground-truth-to-prediction confusion. A banner at the top of the tile list shows the active confusion filter with a **Clear** link to remove it.
 
 ### Annotation Adjustment
 
 The **Annotation Adjustment** panel proposes corrections to your annotations based on where the model disagrees with them. It presents a list of **per-transition checkboxes**: each checkbox is a single class-to-class transition (e.g., "Stroma -> Tumor") with the pixel count that would be reassigned. All transitions are checked by default. Toggling any checkbox updates the preview overlay live so you can see exactly which pixels each transition affects before committing the adjustment.
+
+Only pixels where the model's confidence is above the **Confidence** threshold (50% to 99%) are proposed. Set it with the slider, or click or drag on the **Model Confidence** color legend; the pixels that would change show in green.
 
 The action button's label tells you which it will do. With **Preview changes before applying** ticked it reads **Preview annotation adjustment areas** and only shows you what would change; untick it and the button reads **Adjust annotations in current tile** and edits directly. Either way, committing raises a confirmation dialog titled **Apply Annotation Adjustment** that reports the pixel count and reminds you the change is limited to the current tile. **Undo last adjustment** reverses it.
 
@@ -443,6 +510,7 @@ The action button's label tells you which it will do. With **Preview changes bef
 While a row is selected, the tile's diagnostic image is overlaid in the QuPath viewer:
 
 - **Loss Heatmap** (default): per-pixel loss intensity, colored blue (low) -> yellow -> red (high)
+- **Confidence**: per-pixel model confidence in the same colors. This is what the adjustment threshold acts on.
 - **Disagreement**: pixels where the prediction differs from the ground truth, colored by the predicted class
 - Switch modes with the **Overlay** dropdown in the preview panel
 - The overlay respects QuPath's **View > Overlay opacity** slider. If opacity drops below 10%, or if **View > Show pixel classification** is off, a yellow warning banner appears at the top of the dialog explaining why the overlay may be invisible.
@@ -474,11 +542,11 @@ See [BEST_PRACTICES.md](BEST_PRACTICES.md#interpreting-tile-evaluation-results) 
 
 When training completes successfully, a **"Continue Training..."** button appears alongside "Review Training Areas..." in the progress dialog. This allows you to extend training with adjusted parameters:
 
-1. Click **"Continue Training..."**
-2. A resume dialog lets you adjust epochs, learning rate, and batch size
-3. Training continues from the best checkpoint with the new settings
+1. **Click Continue Training...** The **Resume Training** dialog opens.
+2. **Set Additional Epochs** and click **OK**. Learning rate and batch size stay as they were in the original run.
+3. Training picks up from the last completed epoch.
 
-This is useful when training stopped early but the model could benefit from more epochs or a different learning rate.
+This is useful when training stopped early but the model could benefit from more epochs.
 
 ## MAE Pretraining (MuViT Encoder)
 
@@ -517,11 +585,12 @@ After pretraining completes, load the encoder weights when training a MuViT clas
 
 1. Open **Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**
 2. Select the **MuViT (Transformer)** architecture
-3. In **WEIGHT INITIALIZATION**, select **"Use MAE pretrained encoder"**
+3. Click **Show All Settings**, then in **Weight Initialization** select **"Use MAE pretrained encoder"**
 4. Click **"Browse..."** and select the pretrained .pt file
 5. Architecture settings will auto-lock to match the encoder's metadata
 
-#### What happens under the hood
+<details>
+<summary>What happens under the hood (advanced)</summary>
 
 Selecting "Use MAE pretrained encoder" (or "Continue training one of your
 saved models") does three things automatically:
@@ -537,9 +606,12 @@ saved models") does three things automatically:
 If you see an epoch-by-epoch loss that decreases for ~20-30 epochs and then
 *suddenly* spikes back up with `acc` near 1% and per-class IoUs collapsing
 to ~0, that's the classic "discriminative LRs weren't applied, MAE features
-got wrecked" signature. Verify the training-config log line on the next run
-includes `discriminative LRs (ratio=0.1, ...)` rather than just
+got wrecked" signature. Check the training-config line on the next run (in
+the log panel of the training progress window, or **View > Show log**): it
+should include `discriminative LRs (ratio=0.1, ...)` rather than just
 `AdamW (lr=0.0001, ...)`.
+
+</details>
 
 ### Dataset size guidance
 
@@ -561,9 +633,19 @@ When training completes, the classifier is saved to your QuPath project under `c
 ### Quick verification
 
 1. Apply the classifier to a test annotation (see [INFERENCE_GUIDE.md](INFERENCE_GUIDE.md))
-2. Check results visually using the RENDERED_OVERLAY output type (recommended) or OVERLAY for live preview
+2. Check the result visually with **Extensions > DL Pixel Classifier > Toggle Prediction Overlay**, or apply it with OBJECTS output and look at the objects
 3. If results are poor, see [BEST_PRACTICES.md](BEST_PRACTICES.md) for improvement strategies
 
-## Copy as Script
+## Reproducing a run
 
-Click the **"Copy as Script"** button (left side of the button bar) in the training dialog to generate a Groovy script matching your current settings. Paste into QuPath's Script Editor for reproducible and batch training workflows. See [SCRIPTING.md](SCRIPTING.md) for details.
+Keep the model folder (`model.pt`, `metadata.json`, `training_history.json`). `metadata.json`
+records the training settings, the random seed (when it was above 0), the per-image Train/Val
+roles, and the PyTorch version, CUDA version and device the run used. Record yourself: the
+extension version (**Extensions > Manage extensions**), the QuPath version, and the project with
+its annotations. **Copy as Groovy Script** (below) captures the settings and the image list in
+one runnable file. Without a nonzero **Random Seed**, a rerun starts from a different random
+state and gives a slightly different model.
+
+## Copy as Groovy Script
+
+Click the **Copy as Groovy Script** button (left side of the button bar) in the training dialog to generate a Groovy script matching your current settings. Paste into QuPath's Script Editor for reproducible and batch training workflows. See [SCRIPTING.md](SCRIPTING.md) for details.

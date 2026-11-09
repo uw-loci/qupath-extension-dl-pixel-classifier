@@ -1,6 +1,6 @@
 # Appose Developer Guide
 
-> For the project-wide canonical Appose guide (Java service lifecycle, TCCL/ServiceLoader, pixi.toml, NDArray IPC, version dance, console window, concurrency), see `claude-reports/design/appose/APPOSE_REFERENCE.md`. **This document is the DL-Pixel-Classifier-specific deep dive on the Python side** -- the constraints below (num_workers, NaN/JSON, progress reporting, the five-site version sync) are extension-specific detail that complements the general reference.
+> For the project-wide canonical Appose guide (Java service lifecycle, TCCL/ServiceLoader, pixi.toml, NDArray IPC, version dance, console window, concurrency), see `claude-reports/design/appose/APPOSE_REFERENCE.md` (in the maintainers' monorepo only, not in this repository). **This document is the DL-Pixel-Classifier-specific deep dive on the Python side** -- the constraints below (num_workers, NaN/JSON, progress reporting, the five-site version sync) are extension-specific detail that complements the general reference.
 
 Developer reference for writing Python code that runs inside the Appose embedded Python environment. This documents constraints, pitfalls, and required patterns that differ from standalone Python scripts.
 
@@ -34,7 +34,8 @@ dataloader = DataLoader(dataset, batch_size=8, num_workers=0)
 
 **Why:** Python multiprocessing spawns child processes that need to import the `__main__` module. In embedded Python (Appose), there is no proper `__main__` module and no `if __name__ == '__main__':` guard. On Windows (which uses `spawn` rather than `fork`), this causes a **silent deadlock** -- the DataLoader hangs indefinitely at the first iteration with no error, no exception, and no log message.
 
-**Symptoms when violated:**
+#### Symptoms when violated
+
 - Progress stuck at "Starting first epoch..." with no GPU utilization
 - Elapsed timer increases but nothing else happens
 - No error in logs -- the hang is completely silent
@@ -59,7 +60,8 @@ task.update(message=json.dumps({"loss": safe_loss}))
 
 **Why:** Python's `json.dumps()` serializes `float('nan')` as the bare token `NaN` and `float('inf')` as `Infinity`. These are **not valid JSON** (JSON only allows `null`, `true`, `false`, numbers, strings, arrays, objects). On the Java side, Gson's `JsonParser.parseString()` throws `JsonSyntaxException`, and because the progress listener catches exceptions, the update is **silently dropped**. One NaN value causes the entire progress message to be lost.
 
-**Standard pattern for progress callbacks:**
+#### Standard pattern for progress callbacks
+
 
 ```python
 import math
@@ -81,13 +83,15 @@ task.update(message=json.dumps({
 }))
 ```
 
-**When NaN/Inf can occur:**
+#### When NaN/Inf can occur
+
 - Training loss when gradients explode (diverging training)
 - Learning rate during warmup edge cases
 - Division by zero in metric calculations (e.g., IoU with empty classes)
 - Per-class loss when a class has zero pixels in a batch
 
-**Symptoms when violated:**
+#### Symptoms when violated
+
 - Progress monitor stuck showing the last successfully parsed update
 - Status bar shows a stale message (e.g., setup phase name)
 - No errors visible at default log level (parse failure logged at WARN)
@@ -210,6 +214,18 @@ Check `inference_service is not None` at script start to verify initialization s
 
 The Appose environment supports Python threading but not multiprocessing (see Constraint 1). Background threads work fine for cancellation watchers and similar lightweight tasks.
 
+## Constraint 7: The worker ignores user site-packages and PYTHONPATH
+
+**Rule: Install code into the pixi environment, not with `pip install --user` or `PYTHONPATH`.**
+
+Every worker starts through `ApposeGpu.forWorker`, which sets:
+
+- `PYTHONNOUSERSITE=1`, so `~/.local/lib/pythonX.Y/site-packages` is not on the path and a `pip install --user` of numpy, torch or opencv cannot replace the locked version.
+- `PYTHONPATH` and `PYTHONHOME` emptied when QuPath was started with them.
+- On Linux, `LD_LIBRARY_PATH` rewritten to the environment's `lib` folder plus only the inherited folders that hold the NVIDIA driver.
+
+A developer who injects code into the worker through user site-packages or `PYTHONPATH` will find it ignored. Use an editable install into the environment instead (and restart the worker after editing).
+
 ## Checklist for New Appose Scripts
 
 Before submitting a new `.py` script in `src/main/resources/.../scripts/`:
@@ -229,12 +245,12 @@ The `dlclassifier-server` Python package is pip-installed via pixi from GitHub a
 
 ### How it works
 
-Version enforcement uses exact semver comparison:
+Version enforcement compares semver tuples:
 
 - **Python side:** `dlclassifier_server/__init__.py` exports `__version__` (e.g. `"0.3.4"`)
 - **Java side:** `init_services.py` (bundled in the JAR, always current) declares `_REQUIRED_PYTHON_VERSION` (e.g. `"0.3.4"`)
 
-At startup, `init_services.py` parses both version strings into tuples and compares them. If the installed version is older than required:
+At startup, `init_services.py` parses both version strings into tuples and compares them. A release build requires an exact match (an older or a newer package both block); a `-dev` build requires only matching major.minor. On a mismatch:
 
 1. `inference_service` is set to `None` (blocks all operations)
 2. `version_warning` is set with a descriptive error message
@@ -247,7 +263,7 @@ At startup, `init_services.py` parses both version strings into tuples and compa
 When the Python package is out of date:
 - An error notification appears: "Python environment is out of date. Go to DL Pixel Classifier > Utilities > Rebuild DL Environment to update."
 - Training and inference menu items fail their health check and refuse to open
-- The QuPath log shows: `PYTHON PACKAGE OUT OF DATE: installed dlclassifier-server vX.Y.Z but the extension requires vA.B.C or newer`
+- The QuPath log shows: `PYTHON PACKAGE OUT OF DATE: installed dlclassifier-server vX.Y.Z but the extension requires vA.B.C.` (or `PYTHON PACKAGE VERSION MISMATCH ... expects vA.B.C.` when the installed package is newer)
 
 ### When to bump versions
 
@@ -257,7 +273,7 @@ When the Python package is out of date:
 - Changes to model loading, export, or architecture handling
 - Dependency version changes in pyproject.toml
 
-**How to bump:**
+#### How to bump
 
 The version string is duplicated across **five** sites. All five must be bumped together:
 
@@ -267,7 +283,7 @@ The version string is duplicated across **five** sites. All five must be bumped 
 4. `version` in `build.gradle.kts` (the `qupathExtension { ... }` block)
 5. `DL_SERVER_VERSION` in `src/main/java/qupath/ext/dlclassifier/service/ApposeService.java`
 
-All five locations must match. The `_REQUIRED_PYTHON_VERSION` in the JAR script is the enforcement point -- it is the source of truth for "what Python version does this JAR need?" Note that `ApposeService.DL_SERVER_VERSION` also drives the pip install URL (master branch for `-dev` builds, the matching `vX.Y.Z` tag for releases), so a missed bump there fetches the wrong Python code.
+All five locations must match. The `_REQUIRED_PYTHON_VERSION` in the JAR script is the enforcement point -- it is the source of truth for "what Python version does this JAR need?" Note that `ApposeService.DL_SERVER_VERSION` also drives the pip install URL (the `main` branch for `-dev` builds, the matching `vX.Y.Z` tag for releases), so a missed bump there fetches the wrong Python code.
 
 ## Checklist for New Python Services
 

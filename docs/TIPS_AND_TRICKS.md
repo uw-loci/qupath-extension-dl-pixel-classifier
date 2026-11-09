@@ -4,7 +4,7 @@ Practical workflow tips for getting the best results from the DL Pixel Classifie
 
 ## Iterative Training: Quick Runs to Fix Annotations
 
-**Don't commit to a long training run before checking your annotations.**
+Check your annotations with a short run before you commit to a long one.
 
 1. **Run a short 5-10 epoch training** with your initial annotations
 2. **Toggle the overlay** to see where the model makes mistakes
@@ -17,41 +17,49 @@ Practical workflow tips for getting the best results from the DL Pixel Classifie
 
 This iterative approach saves hours compared to training for 200 epochs only to discover that an annotation was wrong. Even a few epochs is enough for the model to reveal gross labeling errors.
 
-**Pro tip:** After the short run, use **Review Training Areas** to see which tiles the model classified correctly and which it struggled with. The worst-performing tiles often point directly to annotation issues.
+**Tip:** After the short run, use **Review Training Areas** to see which tiles the model classified correctly and which it struggled with. The worst-performing tiles often point directly to annotation issues.
 
-## Hard Pixel % (OHEM): Large Homogeneous Regions
+## Hard Pixel End % (OHEM): Large Homogeneous Regions
 
 If your training images have **large uniform regions** (e.g., background glass, tissue interiors, empty space), most pixels in each batch are "easy", the model classifies them correctly very early in training. Without intervention, the model spends most of its training time on these easy pixels, gaining almost nothing.
 
-**When to use Hard Pixel %:**
+#### When to use Hard Pixel End %
+
 - Your annotations include large area annotations where most of the interior is homogeneous
-- The model quickly reaches high accuracy but stops improving on difficult boundary regions
+- The validation score quickly gets high but stops improving on difficult boundary regions
 - You see the model correctly classifying tissue interiors but struggling at class boundaries
 
-**Recommended workflow:**
-1. Start training WITHOUT Hard Pixel % (100%, the default) for the first run
-2. If the model plateaus on easy regions but boundary accuracy is poor, reduce to 25-50%
+#### Recommended workflow
+
+1. Start training with **Hard Pixel End %** at 100% (the default, which keeps every pixel) for the first run
+2. If the model stops improving and the overlay shows poor boundaries, reduce it to 25-50%
 3. For very large homogeneous regions, try 5-10% to focus almost entirely on boundaries
 
-**Why not always use it?** For small annotations or images with few easy pixels, OHEM can be too aggressive. It may discard pixels the model genuinely needs to learn. If your annotations are primarily lines or narrow polygons along class boundaries, OHEM provides little benefit because most pixels are already "hard."
+#### Why not always use it?
 
-**Alternative: Focal Loss** is a softer approach that down-weights easy pixels rather than completely ignoring them. Try Focal Loss first if you're unsure; switch to OHEM if Focal Loss doesn't focus enough on the hard cases.
+ For small annotations or images with few easy pixels, OHEM can be too aggressive. It may discard pixels the model genuinely needs to learn. If your annotations are primarily lines or narrow polygons along class boundaries, OHEM provides little benefit because most pixels are already "hard."
+
+#### Alternative: Focal Loss
+
+Focal Loss is a softer approach that down-weights easy pixels rather than completely ignoring them. Try Focal Loss first if you're unsure; switch to OHEM if Focal Loss doesn't focus enough on the hard cases.
 
 ## Line Annotations vs. Area Annotations
 
-**Line annotations along class boundaries are often more effective than large area fills:**
+Line annotations along class boundaries are often more effective than large area fills:
 
 - Lines focus training on the pixels that matter most, the boundaries between classes
-- Area annotations overrepresent the easy interior pixels (see Hard Pixel % above)
+- Area annotations overrepresent the easy interior pixels (see Hard Pixel End % above)
 - Lines are faster to draw and easier to correct
 - The model learns "this is where class A meets class B" rather than "here are 50,000 pixels of class A interior"
 
-**When to use area annotations:**
+#### When to use area annotations
+
 - The class has no clear boundary (e.g., "tissue vs. background")
 - The interior texture varies and needs to be learned (e.g., heterogeneous tumor)
 - You have very few annotations and need more training pixels
 
-**When to use line annotations:**
+#### When to use line annotations
+
 - Classes are defined by their boundaries (e.g., "vein margin", "epithelial border")
 - The interior of each class is relatively uniform
 - You want to train faster with less annotation effort
@@ -68,7 +76,7 @@ The **Toggle Prediction Overlay** is your primary tool for evaluating classifier
    - **Systematic errors**: entire regions consistently misclassified = annotation problem
    - **Noisy boundaries**: ragged, speckled edges = model needs more epochs or smoother annotations
    - **Missing classes**: a class never appears in the overlay = check that it's in the training data
-4. The overlay and Apply Classifier (OBJECTS) use the exact same inference pipeline, so what the overlay shows is what you'll get as objects
+4. The overlay and **Apply DL Pixel Classifier** (OBJECTS) use the exact same inference pipeline, so what the overlay shows is what you'll get as objects
 
 ## Choosing Tile Size
 
@@ -76,34 +84,36 @@ The **Toggle Prediction Overlay** is your primary tool for evaluating classifier
 |-----------|----------|------------|
 | 256 | Cell-level features, small structures | Fast training, more tiles needed for coverage |
 | 512 | General purpose (recommended default) | Good balance of context and memory |
-| 1024 | Large tissue structures, architecture patterns | Slower training, requires more VRAM |
+| 1024 | Large tissue structures, architecture patterns | Slower training, requires more GPU memory |
 
 **Rule of thumb:** the tile should be large enough that a human could classify the center pixel by looking at the tile. If you need to see more surrounding context to make the classification, increase the tile size.
 
 ## When Training Stalls
 
-If validation loss or mIoU plateaus early:
+If validation loss or mean IoU (the overlap score between predictions and your validation annotations) stops improving early:
 
 1. **Check class balance**: use "Rebalance Classes" to auto-weight underrepresented classes
 2. **Add more annotations**: especially for the worst-performing class
 3. **Try a different backbone**: resnet50 has more capacity than resnet34
 4. **Increase tile size**: the model may need more spatial context
-5. **Enable Hard Pixel %**: if easy pixels are dominating the loss (see above)
-6. **Lower learning rate**: if loss oscillates wildly, check that LR is 1e-4 (the default)
+5. **Lower Hard Pixel End %**: if easy pixels are dominating the loss (see above)
+6. **Lower learning rate**: if loss oscillates wildly, check that the learning rate is 1e-4 (the default)
 
 ## Learning Rate: Leave It at 0.0001
 
-The default learning rate of **0.0001 (1e-4)** works well for nearly all cases. With discriminative learning rates enabled (automatic when using pretrained or frozen layers), the encoder gets 1/10th the rate (1e-5) while the decoder and head get the full 1e-4. This is a proven balance that:
+The default learning rate of **0.0001 (1e-4)** works well for nearly all cases. With discriminative learning rates enabled (automatic when using pretrained or frozen layers), the encoder gets 1/10th the rate (1e-5) while the decoder and head get the full 1e-4. This setting:
 
 - Prevents catastrophic forgetting of pretrained encoder features
 - Gives the decoder enough gradient to learn your specific task
 - Works for both fresh training and continue-training from a saved model
 
-**When you might increase it:**
-- You're using **OneCycleLR scheduler** (not ReduceOnPlateau). OneCycleLR runs an automatic LR finder that safely determines the optimal peak rate
+#### When you might increase it
+
+- You're using the **OneCycleLR scheduler** (not ReduceOnPlateau). OneCycleLR runs an automatic learning-rate finder that picks the peak rate for you
 - Training is converging **very slowly** after 50+ epochs with no improvement
 
-**When you might decrease it:**
+#### When you might decrease it
+
 - **Continue-training** from a model that already achieved good results, try 1e-5 for gentle fine-tuning
 - Training with **all encoder layers unfrozen**, the full network is more sensitive to large updates
 
@@ -113,31 +123,32 @@ The default learning rate of **0.0001 (1e-4)** works well for nearly all cases. 
 
 Trained classifiers are portable. You can copy them between projects on the same machine or share them with collaborators. This is the key mechanism for the **recommended workflow of separating training and production projects** (see [Best Practices: Training vs. Production Projects](BEST_PRACTICES.md#training-vs-production-projects)).
 
-**To copy a classifier to another project (or share with someone else):**
+#### To copy a classifier to another project (or share with someone else)
+
 
 1. Navigate to `{project}/classifiers/dl/{model_name}/`
 2. Copy **only** `model.pt` and `metadata.json`, these two files are all that is needed for inference
 3. Place both files in a new folder under the target project's `classifiers/dl/` directory (e.g., `{production_project}/classifiers/dl/{model_name}/`)
-4. Open the target project in QuPath: the classifier appears in the Apply Classifier dialog
+4. Open the target project in QuPath: the classifier appears in the **Apply DL Pixel Classifier** dialog
 5. Files named `best_in_progress_*.pt` and `checkpoint_*.pt` are training artifacts (5x larger) and are NOT needed for inference, safe to delete
-
-**Why this matters:** Your training project should stay clean, only hand-drawn annotations, no generated objects. Copy the finished classifier to a production project where you can freely apply it across images, generate objects, and run analysis without risking your curated training data.
 
 ## Multi-Scale Context
 
-Enable **Context Scale** (2x-16x) when classification depends on what surrounds a region, not just the region itself:
+Set **Surrounding context** (2x context to 16x context) when classification depends on what surrounds a region, not just the region itself:
 
 - **Tumor vs. stroma**: the tissue architecture around a cell cluster helps distinguish tumor from benign
 - **Tissue type classification**: knowing you're in liver vs. kidney helps classify individual structures
 - **Anatomical regions**: large-scale spatial patterns that a single tile can't capture
 
-Context scale adds minimal memory overhead (~5-10%) by interleaving a downsampled wide-view with the detail tile. Both the overlay and Apply Classifier handle context tiles automatically.
+Each tile gets a second, downsampled wide view of its surroundings. This adds about 5-10% GPU memory, and doubles the RAM the in-memory patch cache needs for images. Both the overlay and **Apply DL Pixel Classifier** handle context tiles automatically.
 
 ## Feed Training Logs to an LLM for Analysis
 
 After a training run, copy the training log from the QuPath log window and paste it into an LLM (ChatGPT, Claude, Gemini, etc.) for analysis. The model can identify patterns you might miss: validation instability, class-specific bottlenecks, learning rate issues, and annotation problems.
 
-**Example prompt:**
+The log contains file paths, which can include your user name and image names. Remove anything you would not post publicly before you paste it.
+
+#### Example prompt
 
 > I am training a deep learning pixel classifier for H&E histology images using the [DL Pixel Classifier extension for QuPath](https://github.com/uw-loci/qupath-extension-dl-pixel-classifier). The training configuration and parameter documentation is here: [PARAMETERS.md](https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/blob/main/docs/PARAMETERS.md) and [TRAINING_GUIDE.md](https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/blob/main/docs/TRAINING_GUIDE.md).
 >
@@ -150,7 +161,7 @@ Then paste the full training log output (everything from "Starting training for 
 
 ```
 Starting training for classifier: Classifier_20260321
-Export directory: C:\Users\MICHAE~1\AppData\Local\Temp\dl-training6088532274938927794
+Export directory: C:\Users\<you>\AppData\Local\Temp\dl-training6088532274938927794
 Context padding: 128px per side (tiles will be 768x768)
 Exporting from 12 project images...
 Exported 3638 training patches
@@ -219,7 +230,7 @@ Loss: 0.3644 | Accuracy: 96.04% | mIoU: 0.8975
 
 </details>
 
-**Tips for getting better LLM analysis:**
+#### Tips for getting better LLM analysis
 
 - Include the **full log**, not just a summary, the per-epoch per-class breakdown is where the insights are
 - Mention how many images and what tissue type you're working with

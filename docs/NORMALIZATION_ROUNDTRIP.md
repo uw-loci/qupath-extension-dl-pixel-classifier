@@ -1,5 +1,7 @@
 # Normalization round-trip contract
 
+> **Audience:** developers changing preprocessing.
+
 **Read this before adding or changing any preprocessing field** (normalization
 strategy, per-channel flag, clip percentile, channel selection, bit depth,
 context scale, downsample, resampling, ...).
@@ -32,7 +34,7 @@ train/inference desync.
    `ApposeClassifierBackend.buildInputConfig`, which passes the user's
    `channelConfig.isPerChannelNormalization()` through unchanged. Python applies
    it per batch in `SegmentationDataset._normalize` ->
-   `utils/normalization.normalize_image`. **This is the source of truth.**
+   `utils/normalization.normalize` (imported there as `normalize_image`). **This is the source of truth.**
 
    `AnnotationExtractor` also writes a `channel_config.normalization` block into
    the export `config.json` with `per_channel` hardcoded `false`, but that block
@@ -51,15 +53,21 @@ train/inference desync.
 4. **Metadata carrier**: `ClassifierMetadata` exposes a getter, and `toMap()`
    re-emits the field so a re-saved model keeps it.
 5. **Apply-path build**: every place that builds a `ChannelConfiguration` for
-   inference (`SetupDLClassifier`, `DLClassifierScripts`, overlay/objects paths)
+   inference (`SetupDLClassifier`, `DLClassifierScripts`, overlay/objects paths,
+   and the Apply dialog through `ChannelConfiguration.withNormalizationOf(metadata)`)
    sets the field from the metadata getter, never from a live UI default.
+   `withNormalizationOf` rebuilds the configuration field by field, so a new field
+   not copied there is silently dropped on the Apply dialog path. Known gap: the
+   metadata does not store FIXED_RANGE bounds, so `withNormalizationOf` takes
+   `fixedMin`/`fixedMax` from the dialog's panel, not from the model.
 6. **Handler build**: the per-architecture handlers
    (`UNetHandler`, `TinyUNetHandler`, `FastPretrainedHandler`, `MuViTHandler`,
    `CustomONNXHandler`) that construct the trained `ClassifierMetadata` copy the
    field from the training `ChannelConfiguration`.
 7. **Inference config**: `ApposeClassifierBackend.buildInputConfig` emits the
-   field into the `input_config` sent to Python, which the inference scripts and
-   `InferenceService._normalize` consume.
+   field into the `input_config` sent to Python. The inference scripts pass each
+   tile to `InferenceService._normalize`, which calls the same
+   `utils/normalization.normalize` that training uses.
 
 `ChannelConfiguration`'s builder defaults are set to the **training-safe**
 values (`perChannelNormalization=false`, `clipPercentile=99.0`) so that any
@@ -73,11 +81,13 @@ actually used, not an arbitrary UI default.
 - [ ] Parse it in `ModelManager` with a training-safe default + `WARN` when absent.
 - [ ] Add field + getter + builder + `toMap()` entry in `ClassifierMetadata`.
 - [ ] Add field + builder default (training-safe) in `ChannelConfiguration`, and
-      copy it in `withPrecomputedStats`.
+      copy it in `withPrecomputedStats` **and `withNormalizationOf`** (from the
+      metadata getter).
 - [ ] Set it from metadata in every apply-path `ChannelConfiguration.builder()`.
 - [ ] Copy it from the training `ChannelConfiguration` in every handler.
 - [ ] Emit it in `ApposeClassifierBackend.buildInputConfig`.
-- [ ] Consume it in `InferenceService._normalize` / the inference scripts.
+- [ ] Consume it in `utils/normalization.normalize`, which training and
+      `InferenceService._normalize` share.
 
 ## How to verify the loop is intact
 

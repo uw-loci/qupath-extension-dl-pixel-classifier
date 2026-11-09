@@ -1,9 +1,9 @@
 # Fast Pretrained: small U-Net with mobile ImageNet encoders
 
-Fast Pretrained is a compact pixel classifier architecture added in
-version 0.6.1. It pairs a small ImageNet-pretrained mobile encoder
-(EfficientNet-Lite0 or MobileNetV3-Small) with a scaled-down U-Net
-decoder for fast training on small RGB datasets.
+Fast Pretrained is a compact pixel classifier architecture. It pairs a
+small ImageNet-pretrained mobile encoder (six choices, EfficientNet-Lite0
+by default) with a scaled-down U-Net decoder for fast training on small
+RGB datasets.
 
 ## When to use Fast Pretrained
 
@@ -42,15 +42,11 @@ the dropdown shows.
 | `timm-tf_efficientnet_lite0`     | 3.37M   | 5.62M       | Default, best balance. No SE blocks or hard-swish, so it compiles and exports cleanly. |
 | `tu-repghostnet_050`             | 0.15M   | 1.64M       | Smallest on offer. Reach for this before Tiny UNet when the data is RGB. |
 | `tu-efficientvit_b0`             | 0.68M   | 2.35M       | Very small, with attention in the deeper stages. |
-| `timm-mobilenetv3_small_100`     | 0.93M   | 3.59M       | Small and widely used, a safe pick when VRAM or latency is tight. |
+| `timm-mobilenetv3_small_100`     | 0.93M   | 3.59M       | Small and widely used, a safe pick when GPU memory or latency is tight. |
 | `tu-mobilenetv4_conv_small`      | 1.26M   | 4.98M       | Newer design; worth a try when lite0 underfits. |
 | `timm-mobilenetv3_large_100`     | 2.97M   | 6.69M       | Largest here, still well under ResNet-18's 14.3M. |
 
-An earlier version of this table gave 4.2M and 2.0M for the first two. Those
-were encoder-ish figures that matched neither the encoder nor the U-Net.
-
-Several appealing candidates did not make the list, and the reason is worth
-recording so nobody re-adds them: `ghostnet_050` and `lcnet_035` have no
+Several appealing candidates did not make the list: `ghostnet_050` and `lcnet_035` have no
 published ImageNet weights, and `efficientvit_m1` and `xcit_nano_12_p16_224`
 reject the downsampling pattern a U-Net decoder needs.
 
@@ -62,9 +58,9 @@ Decoder channels are fixed at `[128, 64, 32, 16, 8]` for every encoder
 Every pretrained encoder is fetched from the HuggingFace Hub on first use and
 cached in `~/.cache/huggingface/hub`. That cache sits **outside the Appose
 environment**, so rebuilding the environment does not carry the weights with
-it, and the next training run needs the network to fetch them again. At a
-workshop venue, or on a machine behind a proxy, that is a live failure mode --
-and it presents as the extension being broken rather than as a download.
+it, and the next training run needs the network to fetch them again. Without
+a network connection (at a workshop venue, or behind a proxy) that first
+training run fails, and the failure does not look like a download problem.
 
 **Extensions > DL Pixel Classifier > Utilities > Download Pretrained
 Encoders...** fetches all six ahead of time. It is safe to re-run: anything
@@ -106,19 +102,16 @@ decoder alone has ~5M parameters, which dwarfs any of the mobile encoders
 above. Rule of thumb: keep decoder parameters under ~1.5x encoder
 parameters.
 
-Our chosen `[128, 64, 32, 16, 8]` yields a ~1.2M-parameter decoder. Total
-model size:
-- EfficientNet-Lite0 + decoder: ~4.2M + ~1.2M = ~5.4M params
-- MobileNetV3-Small + decoder: ~2.0M + ~1.2M = ~3.2M params
-
-This is still small compared to the default UNet + ResNet-34 (~24M params).
+Our chosen `[128, 64, 32, 16, 8]` keeps the whole U-Net between 1.64M
+(RepGhostNet-0.5) and 6.69M (MobileNetV3-Large) parameters; see the table
+above. This is still small compared to the default UNet + ResNet-34 (~24M params).
 
 ## Training defaults
 
 | Setting               | Default | Why                                      |
 | --------------------- | ------- | ---------------------------------------- |
 | Epochs                | 30      | Fine-tuning converges faster than scratch |
-| Batch size            | 16      | Fits easily in memory                    |
+| Batch size            | 16      | Small enough for most GPUs               |
 | Learning rate         | 1e-3    | Lower than Tiny UNet; we are fine-tuning |
 | Tile size             | 256     | Good context / speed balance             |
 | Weight initialization | ImageNet| Default; scratch available               |
@@ -126,13 +119,12 @@ This is still small compared to the default UNet + ResNet-34 (~24M params).
 
 ### Discriminative learning rates
 
-Fast Pretrained uses a 1/5 encoder-to-decoder LR ratio instead of the
-default 1/10 used for UNet + ResNet. Rationale (per agent report A2):
-small mobile encoders have less overspecialized ImageNet features and
+Fast Pretrained uses a 1/5 encoder-to-decoder learning-rate ratio instead
+of the default 1/10 used for UNet + ResNet. Rationale: small mobile encoders have less overspecialized ImageNet features and
 benefit from more aggressive adaptation. Concretely:
 
-- Decoder LR: `learning_rate` (default 1e-3)
-- Encoder LR: `learning_rate * 0.2` (default 2e-4)
+- Decoder learning rate: `learning_rate` (default 1e-3)
+- Encoder learning rate: `learning_rate * 0.2` (default 2e-4)
 
 This ratio is emitted by the handler via
 `architecture.discriminative_lr_ratio` and picked up by
@@ -163,10 +155,10 @@ adapting ImageNet weights.
 Fast Pretrained benefits from the same training-speed options as
 other architectures:
 - **Fused optimizer**: enabled by default, saves 2-5 ms/step on CUDA.
-- **In-memory dataset**: `auto` by default, preloads all patches to
-  RAM after pre-flight RAM check.
-- **Auto-find learning rate**: runs LR Finder presweep before
-  OneCycleLR; can be disabled to save ~10 s per training run.
+- **In-memory dataset**: `auto` by default; preloads all patches to
+  RAM when they fit in half the free RAM, otherwise reads them from disk.
+- **Auto-find learning rate (LR Finder)**: runs a short learning-rate
+  sweep before OneCycleLR; can be disabled to save ~10 s per training run.
 - **GPU augmentation (experimental)**: kornia-based augmentation on
   the GPU. See [TINY_MODEL.md](TINY_MODEL.md#training-speed-notes)
   for the shared notes.
@@ -175,16 +167,13 @@ other architectures:
   for requirements and caveats. Fast Pretrained's mobile encoders
   (EfficientNet-Lite0 without SE/hard-swish) compile cleanly.
 
-At inference time, `channels_last` memory format is enabled
-automatically on CUDA for both encoders here (no SE blocks or BRN
-reshape paths to undo the layout propagation).
+At inference time, `channels_last` memory format is skipped for any
+model that contains BatchRenorm layers, because their internal reshapes
+undo the layout. Every Fast Pretrained model this version trains uses
+BatchRenorm, so these models run in the default layout.
 
 ## References
 
-Agent reports backing the design:
-- A2 (counterpoint: SMP + lightweight pretrained encoder)
-
-External references:
 - Tan and Le, "EfficientNet: Rethinking Model Scaling for Convolutional
   Neural Networks", ICML 2019 (original EfficientNet, lite0 drops SE
   blocks and hard-swish for mobile-friendliness).

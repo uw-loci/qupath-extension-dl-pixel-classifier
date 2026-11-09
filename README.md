@@ -1,7 +1,4 @@
-# QuPath
-# Deep Learning
-# Pixel Classifier
-# Extension
+# QuPath Deep Learning Pixel Classifier Extension
 
 A QuPath extension for deep learning-based pixel classification, supporting both brightfield (RGB) and multi-channel fluorescence/spectral images.
 
@@ -14,8 +11,8 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 > Deep learning models are computationally demanding. The models available in this extension -- particularly **MuViT**, histology-pretrained encoders, and larger ResNet variants (ResNet-50, ResNet-101) -- were originally trained on large GPU clusters over extended periods. Running them on a typical workstation pushes hardware limits quickly.
 >
 > **What to expect:**
-> - **Without a dedicated NVIDIA GPU (CUDA)**, training will be extremely slow. Apple Silicon (MPS) can take 1-2+ hours per epoch for larger models. CPU training is impractical for anything beyond toy experiments.
-> - **Larger models + larger tile sizes + larger batch sizes = more memory.** It is easy to exceed your GPU's VRAM, causing QuPath to hang or crash. If training becomes unresponsive, you may need to **force-close QuPath** via Task Manager / Activity Monitor.
+> - **Without a dedicated NVIDIA GPU (CUDA)**, training will be extremely slow. Apple Silicon (MPS) can take 1-2+ hours per epoch (one pass through all training tiles) for larger models. CPU training is impractical for anything beyond toy experiments.
+> - **Larger models + larger tile sizes + larger batch sizes = more memory.** It is easy to exceed your graphics card's memory (VRAM), causing QuPath to hang or crash. If training becomes unresponsive, you may need to **force-close QuPath** via Task Manager / Activity Monitor.
 > - **Start small.** Use ResNet-18 or ResNet-34 with 256px tiles and a small batch size (2-4) first. Only scale up if your hardware handles it comfortably.
 > - **Monitor your system resources** (GPU memory, CPU usage) during training, especially the first time with new settings.
 >
@@ -34,38 +31,41 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 - Train across multiple project images in one run for more representative sampling
 - Works on brightfield (RGB) and multi-channel fluorescence/spectral images, with per-channel normalization
 - Eliminate tile-boundary artifacts by computing normalization statistics over the whole image instead of per tile
-- Choose your encoder backbone: ResNet / EfficientNet / MobileNet (UNet), MuViT (multi-scale Vision Transformer with multi-resolution feature fusion), or bring your own ONNX model
+- Choose your encoder backbone: ResNet / EfficientNet / MobileNet (UNet), or MuViT (multi-scale Vision Transformer with multi-resolution feature fusion)
 - Start from histology-pretrained weights (TCGA, Lunit, Kather100K) instead of ImageNet, for better tissue features out of the box
 - Use foundation-model encoders for richer features: h-optimus-0, virchow, hibou-l, hibou-b, midnight, dinov2-large; downloaded on demand from HuggingFace, all under commercially-permissive licenses (Apache 2.0, MIT). Integration inspired by LazySlide (Zheng et al. 2026, Nature Methods)
-- Tune the training recipe in one place: scheduler, loss, early-stopping metric and patience, and mixed precision live together in the collapsed "Training Strategy" panel
-- Better segmentation by default: combined cross-entropy + Dice loss
-- Stop training when segmentation quality plateaus, not just loss (mean-IoU-based early stopping)
-- Train roughly 2x faster on NVIDIA GPUs (mixed-precision training, AMP)
+- Tune the training recipe after clicking **Show All Settings**: the scheduler is in Learning Rate & Optimizer, the loss in Loss Function, early stopping and its patience in Duration & Stopping, and mixed precision in Batch Size & Memory
+- Learns region shapes well by default: the default loss scores both individual pixels and the overlap of whole regions
+- Stops training when the overlap between its predictions and your validation annotations stops improving, rather than when the loss number stops falling
+- Trains about twice as fast on NVIDIA GPUs (mixed precision)
 - Reuse a previous model's settings for fast retraining iterations, with class auto-matching
 
 ### Pretrain and adapt to your data
-- MAE pretraining for MuViT: masked-autoencoder self-supervised pretraining on your own unlabeled tiles, using tiles drawn from annotation classes you choose
-- Adapt an existing trained model to a new microscope, stain, or compression: domain-adaptive pretraining seeds MAE from a prior encoder, or AdaBN ("Calibrate model to current image") recomputes BatchNorm stats on a new acquisition in seconds with zero retraining. See [Domain Adaptation Guide](docs/DOMAIN_ADAPTATION_GUIDE.md)
+- Adapt a trained model to a new microscope, stain or acquisition batch: **Utilities > Calibrate model to current image...** re-tunes the model to a new image in seconds, with no new annotations and no retraining (not available for MuViT models). See the [Domain Adaptation Guide](docs/DOMAIN_ADAPTATION_GUIDE.md)
+
+<details>
+<summary>Advanced pretraining</summary>
+
+- MAE pretraining for MuViT: masked-autoencoder self-supervised pretraining on your own unlabeled tiles, using tiles drawn from annotation classes you choose. Domain-adaptive pretraining can seed MAE from a prior encoder
 - **Developer-only:** SimCLR / BYOL self-supervised pretraining for CNN backbones is available behind the "Show Developer Pretraining Options" preference. SSL pretraining is collapse-prone on small datasets and is rarely the right tool for end-user workflows; MAE is the recommended path for most users
 
+</details>
+
 ### Run inference
-- Pick your output: per-pixel measurements, detection objects, or classification overlays
-- Get full per-pixel probability maps for OBJECTS and OVERLAY outputs, not just argmax labels
-- Fast embedded Python inference with zero-copy tile transfer (Appose shared-memory IPC)
-- Efficient ROI merging via hierarchical geometry union
+- Pick your output in the Apply dialog: per-class area measurements on each annotation (MEASUREMENTS), or detection or annotation objects (OBJECTS). Preview the result live with **Toggle Prediction Overlay**
+- Each tile is classified with a margin of the surrounding image, and only its center is kept, which reduces seams at tile edges
 - Out-of-distribution check: warns before inference when the image's pixel distribution (mean, contrast, dynamic range) differs significantly from the training data, helping you catch gross appearance shifts (stain, exposure, sensor changes) that could degrade predictions
 
 ### Inspect and iterate
 - Find your worst annotations and hardest tiles automatically: post-training evaluation runs the model over every training tile, ranks by loss, and renders per-tile loss heatmaps and disagreement maps as viewer overlays. Sessions save per classifier version and reload without re-running
-- Visualize class confusions in a matrix: the Training Area Issues dialog includes a Confusion Matrix tab showing pixel-level GT x Predicted aggregates across all tiles, color-coded by error percentage. The matrix uses per-class ground-truth pixel totals from every tile (including those predicted correctly) as its denominator, ensuring accurate percentages; the subtitle indicates whether data is "full pixel-level" (precise) or "approximate" (from sessions saved before per-class totals were available). Click any off-diagonal cell to filter the Tiles tab to just those confusion pairs
-- Refine annotations with model suggestions: the Training Area Issues dialog's Adjust tab lets you preview how model predictions would update a tile's annotations, filtered by confidence threshold. The confidence legend shows a blue-to-yellow-to-red heatmap with a marker tracking your threshold; click or drag the legend directly to adjust it (selectable range is 50%–99%; the shaded left end is below that limit). The slider has a colored track showing the same heatmap; drag either control to see changes update live as a green overlay composited over the confidence visualization. The Adjust button's label updates to show what will happen: "Preview annotation adjustment areas" when preview is on (just shows which pixels would change), or "Adjust annotations in current tile" when preview is off (applies changes immediately). Toggle individual class transitions (e.g. "Background -> Nucleus") on/off to be selective. Three overlay modes available: Loss Heatmap (per-pixel loss intensity), Confidence (per-pixel model confidence, the exact quantity the slider controls), and Disagreement (where predictions differ from annotations)
+- See which classes the model confuses: a Confusion Matrix tab compares your annotations with the predictions, pixel by pixel; click a cell to list the tiles where that confusion happens. See [Confusion Matrix tab](docs/TRAINING_GUIDE.md#confusion-matrix-tab)
+- Refine annotations from the model's suggestions, previewing each change before it is applied. See [Annotation Adjustment](docs/TRAINING_GUIDE.md#annotation-adjustment)
 - See training progress live with separate train and validation loss charts
-- See what each setting costs before you train: the **Training HUD** button in the Train dialog opens a live panel that names your last change and shows its effect on GPU memory, RAM cache, epoch speed, and learning steps (blue = better, orange = worse). Use its "vs" menu to measure against the session start, a loaded profile, or settings you pinned instead of the last edit. See the [Training Guide](docs/TRAINING_GUIDE.md#training-hud-see-what-a-change-did), and the [walkthrough on the workshop data](docs/TRAINING_HUD_WALKTHROUGH.md) for two presets compared
+- See what each setting costs before you train: the **Training HUD** button in the Train dialog opens a live panel that names your last change and shows its effect on GPU memory, RAM cache, epoch speed, and learning steps (blue = better, orange = worse). Use its "vs" menu to measure against where you started, a loaded profile, or settings you pinned instead of the last edit. See the [Training Guide](docs/TRAINING_GUIDE.md#training-hud-see-what-a-change-did), and the [walkthrough on the workshop data](docs/TRAINING_HUD_WALKTHROUGH.md) for two presets compared
 
 ### Automate and reproduce
-- Run from Groovy scripts for batch processing across a project
-- Run headless via the builder API, no GUI required
-- "Copy as Script" buttons in every dialog turn a configured run into a reproducible Groovy snippet
+- Run from Groovy scripts for batch processing across a project, with the builder API for full control of each setting
+- The Train and Apply dialogs each have a button (**Copy as Groovy Script** in Train, **Copy as Script** in Apply) that turns a configured run into a reproducible Groovy script
 - Save and load training profiles: export your tuned training configuration (parameters, channel setup, name/description) to a JSON file for reuse across projects without retraining. **Note:** Class selection is not restored from profiles — classes always come from your current data loaded in the dialog
 - Settings persist across sessions so you don't re-enter the same training and inference parameters every time
 
@@ -78,13 +78,13 @@ A QuPath extension for deep learning-based pixel classification, supporting both
 
 | OS | Extensions path |
 |----|----------------|
-| Windows | `C:\Users\<you>\QuPath\v0.6\extensions\` (or `v0.7` for QuPath 0.7.0) |
-| macOS | `~/Library/Application Support/QuPath/v0.6/extensions/` (or `v0.7`) |
-| Linux | `~/.local/share/QuPath/v0.6/extensions/` (or `v0.7`) |
+| Windows | `C:\Users\<you>\QuPath\v0.7\extensions\` |
+| macOS | `~/QuPath/v0.7/extensions/` |
+| Linux | `~/QuPath/v0.7/extensions/` |
 
 3. **Restart QuPath** -- the extension appears under **Extensions > DL Pixel Classifier**
 
-> **Tip:** In QuPath, **Edit > Preferences > Extensions** shows the extensions directory path.
+> **Tip:** These are QuPath's default locations. If you chose a different QuPath user directory, **Edit > Preferences > Extensions** shows the extensions directory path.
 
 See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and GPU configuration.
 
@@ -98,7 +98,7 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and G
 
 ![DL Pixel Classifier menu under Extensions, showing Train, Apply, Select Overlay Model, Toggle Prediction Overlay, Manage Classifiers, Report a Bug, and the expanded Utilities submenu: Python Console, Where Are My Files?, System Info, Free GPU Memory, MAE Pretrain Encoder, Calibrate model to current image, Clean Up Storage, Load Saved Training Area Issues, Compute Environment (CPU / GPU), and Rebuild DL Environment](docs/images/menu-dl-pixel-classifier.png)
 
-1. **Set up the Python environment** -- go to **Extensions > DL Pixel Classifier > Setup DL Environment...** in the QuPath menu bar. This downloads and configures PyTorch and all dependencies automatically (~2-4 GB, first time only).
+1. **Set up the Python environment** -- go to **Extensions > DL Pixel Classifier > Setup DL Environment...** in the QuPath menu bar. This downloads and configures PyTorch and all dependencies automatically (~2-4 GB, first time only). When it finishes, the dialog reads **Environment setup complete!** and the Train and Apply items appear in the menu.
 
    The wizard checks for an NVIDIA GPU and asks which environment to install:
 
@@ -109,13 +109,19 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions and G
 
 2. **Changing CPU/GPU later** -- **Extensions > DL Pixel Classifier > Utilities > Compute Environment (CPU / GPU)...** switches variants. The setup wizard also offers a one-click switch on its completion screen whenever you end up on CPU. The two variants install side by side, so the one you switch away from is kept: the first switch to a variant downloads it (~2-4 GB), and switching back to one you already have does not. Once the new environment works, you are asked whether to remove the old one. Trained classifiers and settings are unaffected.
 
-   > **After updating the extension:** If you install a new version of this extension, you **must** rebuild the Python environment to match. The extension enforces version matching and will block training/inference if the environment is out of date. An error notification will appear with instructions. Go to **Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment...** to update.
+   > **After updating the extension:** the Python environment has to match the new version. By default the extension rebuilds it in the background the first time QuPath starts with the new version; the workflow menu items come back when it finishes. If you turned off **Auto-Rebuild Environment on Update** in the preferences, or the automatic rebuild fails, open **Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment...**
 
-3. **Train a classifier** -- create annotations, open **Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**, select images, load classes, name your classifier, and click Start Training. The dialog starts in a simplified Basic mode; click "Show All Settings" for advanced options.
+3. **Train a classifier:**
+   1. **Draw annotations** of at least two classes, then **File > Save**. Training reads the copy the project has saved for each image, not what is on screen, so annotations you have just imported or drawn are invisible to it until you save. The dialog warns when it sees more classified annotations in the viewer than the project has stored.
+   2. **Open Extensions > DL Pixel Classifier > Train DL Pixel Classifier...** The dialog starts in a simplified Basic mode; click **Show All Settings** for every option.
+   3. **Tick the images** to train on.
+   4. **Click Load Classes from Selected Images.** The rest of the dialog unlocks.
+   5. **Type a name** in Name Your Classifier (the last section).
+   6. **Click Start Training.** A progress window opens with a loss chart.
+
+   New to the terms (epoch, batch, loss, IoU)? See [Words used in these guides](docs/TRAINING_GUIDE.md#words-used-in-these-guides).
 
    > **Note:** When training from scratch (tiny-unet or without pretrained weights), an advisory appears beneath the Epochs spinner recommending a minimum epoch count. This is advice only — the spinner value is always what trains. You are free to follow the recommendation or set a different value.
-   >
-   > **Unsaved annotations:** Training reads the copy the project has saved for each image, not what is on screen, so annotations you have just imported or drawn are invisible to it until **File > Save**. The dialog warns when it sees more classified annotations in the viewer than the project has stored.
 
 4. **Apply the classifier** -- open **Extensions > DL Pixel Classifier > Apply DL Pixel Classifier...**, select a model, choose an output type, and click Apply
 
@@ -125,7 +131,8 @@ See [QUICKSTART.md](QUICKSTART.md) for a complete walkthrough (zero to classifie
 
 If you encounter an issue or have feedback, use the built-in bug reporter:
 
-**Extensions > DL Pixel Classifier > Report a Bug...**
+1. **Open Extensions > DL Pixel Classifier > Report a Bug...**
+2. Fill in the fields below and submit.
 
 This dialog requires:
 - **Summary** (8-80 characters): a one-line description of the issue, which becomes the GitHub issue title
@@ -152,7 +159,7 @@ success dialog links the issue either way.
 >
 > Training projects contain your carefully curated annotations -- the ground truth your model learns from. Running inference (especially OBJECTS output) in the same project adds thousands of generated objects alongside your annotations, making it difficult to retrain or refine the classifier later. Instead, once you are satisfied with a trained model, copy it to a production project and apply it there across all your images. This keeps your training data clean for future iterations and lets you freely re-run or compare classifiers in the production project without risk.
 >
-> See [Best Practices: Training vs. Production Projects](docs/BEST_PRACTICES.md#training-vs-production-projects) for details, and [Tips and Tricks: Sharing Models](docs/TIPS_AND_TRICKS.md#sharing-models) for how to move classifiers between projects.
+> See [Best Practices: Training vs. Production Projects](docs/BEST_PRACTICES.md#training-vs-production-projects) for details, and [Tips and Tricks: Sharing and Moving Models](docs/TIPS_AND_TRICKS.md#sharing-and-moving-models-between-projects) for how to move classifiers between projects.
 
 ## Requirements
 
@@ -179,9 +186,9 @@ If you choose the **GPU variant**, the extension bundles **PyTorch with CUDA 12*
 | **Minimum NVIDIA driver (Linux)** | **>= 525.60.13** |
 | **Minimum NVIDIA driver (Windows)** | **>= 528.33** |
 
-To check your NVIDIA driver version, run `nvidia-smi` in a terminal. If your driver is too old, update it from the [NVIDIA Driver Downloads](https://www.nvidia.com/Download/index.aspx) page.
+To check your NVIDIA driver version, run `nvidia-smi` in a terminal. If your driver is too old, update it from the [NVIDIA Driver Downloads](https://www.nvidia.com/en-us/drivers/) page.
 
-**Apple Silicon (M-series):** Choose the CPU variant -- the GPU variant is CUDA and will not install. Note the extension does not currently target the MPS backend: `system_info.py` reports whether MPS is available, but training and inference run on CPU. Expect this to be slow; see the note at the top.
+**Apple Silicon (M-series):** Choose the CPU variant -- the GPU variant is CUDA and will not install. When the installed PyTorch reports that the Mac's GPU (MPS) is available, training and inference use it automatically; **Utilities > System Info...** shows "MPS available" and the active device. Expect training to be slow either way; see the note at the top.
 
 **Intel Mac:** Not supported. Use Windows or Linux with an NVIDIA GPU for best results.
 
@@ -199,19 +206,23 @@ To check your NVIDIA driver version, run `nvidia-smi` in a terminal. If your dri
 | [Best Practices](docs/BEST_PRACTICES.md) | Backbone selection, annotation strategy, hyperparameter tuning |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Environment issues, GPU issues, training/inference issues, diagnostics |
 | [Preferences](docs/PREFERENCES.md) | All persistent preferences with defaults and keys |
+| [Tips and Tricks](docs/TIPS_AND_TRICKS.md) | Practical workflow tips: quick runs to fix annotations, tile size, sharing models |
+| [Domain Adaptation Guide](docs/DOMAIN_ADAPTATION_GUIDE.md) | What to do when a classifier does not work on images from a new microscope, stain or batch |
 | [Appose Dev Guide](docs/APPOSE_DEV_GUIDE.md) | Constraints and patterns for embedded Python scripts (developer reference) |
+| [Normalization round-trip contract](docs/NORMALIZATION_ROUNDTRIP.md) | Rules for any change to preprocessing, so training and inference stay in step (developer reference) |
+| [Context and downsample design](docs/CONTEXT_AND_DOWNSAMPLE_DESIGN.md) | How Resolution, Surrounding context and context padding shape tiles (developer reference) |
 | [Python Library](python_server/README.md) | Python deep learning library (training, inference, models) |
 
 ## GPU Support
 
-The extension has **two separate Python environments**. The setup wizard asks which one to install, checks for an NVIDIA GPU, and preselects GPU when it finds one. You can also set it directly in **Edit > Preferences > Extensions > DL Pixel Classifier > "Python environment: compute variant"**, or change it later from **Utilities > Compute Environment (CPU / GPU)...**:
+The extension has **two separate Python environments**. The setup wizard asks which one to install, checks for an NVIDIA GPU, and preselects GPU when it finds one. You can also set it directly in **Edit > Preferences > DL Pixel Classifier > "Python environment: compute variant"**, or change it later from **Utilities > Compute Environment (CPU / GPU)...**:
 
 - **CPU**: works on any machine, with no GPU acceleration. Training is much slower but functional. Choose it if you have no NVIDIA GPU or want the widest compatibility; it is also the automatic fallback when the GPU environment cannot be installed.
 - **GPU (CUDA)**: uses an NVIDIA GPU for training and inference. **Requires an NVIDIA GPU AND CUDA-compatible drivers. The environment cannot install without one.** See [CUDA / GPU Driver Requirements](#cuda--gpu-driver-requirements) below.
 
 Each variant installs as a separate environment (~2-4 GB) under its own name, so both can be installed at once. The first switch to a variant downloads it; switching back to one you already have does not. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for GPU detection issues or if your GPU is not being used.
 
-**Choosing a GPU on a multi-GPU machine.** The Python worker runs on one NVIDIA card. The preference **Edit > Preferences > Extensions > DL Pixel Classifier > "Python environment: GPU device (all Appose extensions)"** chooses which one. `auto` (the default) picks the card with the most free memory when the first worker starts; a number is the index `nvidia-smi` shows. The setting is shared with the other Appose extensions and applies to workers started after the change (restart QuPath to apply it to a running worker). If QuPath was started by a cluster scheduler that sets `CUDA_VISIBLE_DEVICES`, `auto` keeps that allocation. The cards found and the one chosen are written to the QuPath log when a worker starts.
+**Choosing a GPU on a multi-GPU machine.** Training and inference run on one NVIDIA card. The preference **Edit > Preferences > DL Pixel Classifier > "Python environment: GPU device (all Appose extensions)"** chooses which one. `auto` (the default) picks the card with the most free memory when the first worker starts; a number is the index `nvidia-smi` shows. The setting is shared with the other Appose extensions and applies to workers started after the change (restart QuPath to apply it to a running worker). If QuPath was started by a cluster scheduler that sets `CUDA_VISIBLE_DEVICES`, `auto` keeps that allocation. The cards found and the one chosen are written to the QuPath log when a worker starts.
 
 ## Supported Image Types
 
@@ -289,57 +300,26 @@ qupath-extension-dl-pixel-classifier/
 <details>
 <summary><h2>For Developers</h2></summary>
 
-### Building from source
-
-```bash
-git clone https://github.com/uw-loci/qupath-extension-dl-pixel-classifier.git
-cd qupath-extension-dl-pixel-classifier
-./gradlew build
-```
-
-This produces a JAR file in `build/libs/`. Copy it to your QuPath extensions directory and restart QuPath.
-
-For a shadow JAR that bundles all dependencies:
-
-```bash
-./gradlew shadowJar
-```
-
-### Running Python tests
-
-```bash
-cd python_server
-pip install -e ".[dev]"
-pytest tests/ -v
-```
-
-Current status: **78 tests passing, 5 skipped**
+Building the extension from source and running the Python tests are covered in [Installation, Part 5: Building from Source](docs/INSTALLATION.md#part-5-building-from-source-for-developers).
 
 </details>
 
 <details>
-<summary><h2>Acknowledgements</h2></summary>
+<summary><h2>Acknowledgments</h2></summary>
 
 This extension builds on many excellent open-source projects and pretrained models.
 
 ### Segmentation Framework
 
-- **[segmentation-models-pytorch (SMP)](https://github.com/qubvel-org/segmentation_models.pytorch)** (MIT) -- Pavel Iakubovskii. Provides all segmentation architectures (U-Net, U-Net++, DeepLab V3/V3+, FPN, PSPNet, MA-Net, LinkNet) and encoder backbone integration.
+- **[segmentation-models-pytorch (SMP)](https://github.com/qubvel-org/segmentation_models.pytorch)** (MIT) -- Pavel Iakubovskii. Provides the U-Net architecture and encoder backbone integration.
 - **[PyTorch](https://pytorch.org/)** (BSD) -- Meta AI. Deep learning framework used for training and inference.
-- **[TorchVision](https://pytorch.org/vision/)** (BSD) -- PyTorch team. Provides ImageNet-pretrained backbone weights (ResNet, EfficientNet, DenseNet, MobileNet, VGG, SE-ResNet).
+- **[TorchVision](https://docs.pytorch.org/vision/)** (BSD) -- PyTorch team. Provides ImageNet-pretrained backbone weights (ResNet, EfficientNet, MobileNet).
 
 ### Segmentation Architectures (via SMP)
 
 | Architecture | Original Paper |
 |---|---|
-| U-Net | Ronneberger et al., "U-Net: Convolutional Networks for Biomedical Image Segmentation" (MICCAI 2015) |
-| U-Net++ | Zhou et al., "UNet++: A Nested U-Net Architecture for Medical Image Segmentation" (DLMIA 2018) |
-| DeepLab V3 | Chen et al., "Rethinking Atrous Convolution for Semantic Image Segmentation" (2017) |
-| DeepLab V3+ | Chen et al., "Encoder-Decoder with Atrous Separable Convolution for Semantic Image Segmentation" (ECCV 2018) |
-| FPN | Lin et al., "Feature Pyramid Networks for Object Detection" (CVPR 2017) |
-| PSPNet | Zhao et al., "Pyramid Scene Parsing Network" (CVPR 2017) |
-| MA-Net | Fan et al., "MA-Net: A Multi-Scale Attention Network for Liver and Tumor Segmentation" (IEEE Access 2020) |
-| LinkNet | Chaurasia & Culurciello, "LinkNet: Exploiting Encoder Representations for Efficient Semantic Segmentation" (VCIP 2017) |
+| U-Net | Ronneberger et al., "U-Net: Convolutional Networks for Biomedical Image Segmentation" (MICCAI 2015), [arXiv:1505.04597](https://arxiv.org/abs/1505.04597) |
 
 ### Encoder Backbones (via SMP + TorchVision)
 
@@ -347,10 +327,7 @@ This extension builds on many excellent open-source projects and pretrained mode
 |---|---|
 | ResNet | He et al., "Deep Residual Learning for Image Recognition" (CVPR 2016) |
 | EfficientNet | Tan & Le, "EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks" (ICML 2019) |
-| SE-ResNet | Hu et al., "Squeeze-and-Excitation Networks" (CVPR 2018) |
-| DenseNet | Huang et al., "Densely Connected Convolutional Networks" (CVPR 2017) |
 | MobileNet V2 | Sandler et al., "MobileNetV2: Inverted Residuals and Linear Bottlenecks" (CVPR 2018) |
-| VGG | Simonyan & Zisserman, "Very Deep Convolutional Networks for Large-Scale Image Recognition" (ICLR 2015) |
 
 ### Histology-Pretrained Encoders
 
@@ -365,16 +342,16 @@ Histology-specific encoder weights are loaded via **[timm (PyTorch Image Models)
 
 ### Foundation Model Encoders
 
-Foundation model integration inspired by **[LazySlide](https://github.com/rendeirolab/LazySlide)** (Zheng et al. 2026, Nature Methods). All included models use commercially-permissive licenses (Apache 2.0 or MIT). Models are downloaded on-demand from HuggingFace, not bundled.
+Foundation model integration inspired by **[LazySlide](https://github.com/rendeirolab/LazySlide)** (Zheng et al. 2026, Nature Methods, [doi:10.1038/s41592-026-03044-7](https://doi.org/10.1038/s41592-026-03044-7)). All included models use commercially-permissive licenses (Apache 2.0 or MIT). Models are downloaded on-demand from HuggingFace, not bundled.
 
 | Encoder | Parameters | License | Reference |
 |---|---|---|---|
 | h-optimus-0 | 1.1B | Apache 2.0 | Bioptimus, "H-optimus-0" (2024) |
-| virchow | 632M | Apache 2.0 | Vorontsov et al., "Virchow: A Million-Slide Digital Pathology Foundation Model" (2024) |
-| hibou-l | 300M | Apache 2.0 | HistAI, "Hibou: A Family of Foundational Vision Transformers for Pathology" (2024) |
-| hibou-b | 86M | Apache 2.0 | HistAI, "Hibou" (2024) |
-| midnight | 1.1B | MIT | Vorontsov et al., "Midnight: A Family of Foundation Models" (2025) |
-| dinov2-large | 300M | Apache 2.0 | Oquab et al., "DINOv2: Learning Robust Visual Features without Supervision" (2024) |
+| virchow | 632M | Apache 2.0 | Vorontsov et al., "Virchow: A Million-Slide Digital Pathology Foundation Model" (2023), [arXiv:2309.07778](https://arxiv.org/abs/2309.07778) |
+| hibou-l | 300M | Apache 2.0 | Nechaev et al. (HistAI), "Hibou: A Family of Foundational Vision Transformers for Pathology" (2024), [arXiv:2406.05074](https://arxiv.org/abs/2406.05074) |
+| hibou-b | 86M | Apache 2.0 | Nechaev et al. (HistAI), "Hibou" (2024), [arXiv:2406.05074](https://arxiv.org/abs/2406.05074) |
+| midnight | 1.1B | MIT | Karasikov et al. (kaiko.ai), "Training state-of-the-art pathology foundation models with orders of magnitude less data" (2025), [arXiv:2504.05186](https://arxiv.org/abs/2504.05186) |
+| dinov2-large | 300M | Apache 2.0 | Oquab et al., "DINOv2: Learning Robust Visual Features without Supervision" (2024), [arXiv:2304.07193](https://arxiv.org/abs/2304.07193) |
 
 ### Data Augmentation
 

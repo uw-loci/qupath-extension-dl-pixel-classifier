@@ -5,8 +5,8 @@ This page follows one real training setup, from the BINA / I2K 2026 workshop, an
 Every figure on this page is the HUD as it appeared for these exact steps on this data. For what
 each gauge means, see the [Training Guide](TRAINING_GUIDE.md#training-hud-see-what-a-change-did).
 
-> The Training HUD arrives in the release after 0.9.26. If your **Train DL Pixel Classifier**
-> dialog has no **Training HUD** button at the top of the dialog, update the extension first.
+> The Training HUD was added in 0.9.27. If your **Train DL Pixel Classifier** dialog has no
+> **Training HUD** button at the top of the dialog, update the extension first.
 
 ## What you need
 
@@ -32,23 +32,30 @@ each gauge means, see the [Training Guide](TRAINING_GUIDE.md#training-hud-see-wh
    `Tile 4.ome.tif` with the validation file.** Then **`File > Save`**: the training dialog reads
    what the project has stored, not what is on screen.
 2. **Open `Extensions > DL Pixel Classifier > Train DL Pixel Classifier...`.**
-3. **In Training Data Source, tick `Tile 1.ome.tif` and `Tile 4.ome.tif`,** and set their roles
-   to **Train** and **Val**, so one image trains and the other validates. The role drop-downs
-   appear in the full view: click **Show All Settings** at the top right if you do not see them.
-4. **Click Load Classes from Selected Images.**
-5. **Click Training HUD** at the top of the dialog, beside **Load profile...**. The panel opens beside the dialog.
+3. **Click Show All Settings** at the top right if the dialog is in its basic view; the role
+   drop-downs appear only in the full view.
+4. **In Training Data Source, tick both images and set their roles,** so one image trains and
+   the other validates:
+
+   | Image | Tick | Role |
+   |---|---|---|
+   | `Tile 1.ome.tif` | yes | **Train** |
+   | `Tile 4.ome.tif` | yes | **Val** |
+
+5. **Click Load Classes from Selected Images.**
+6. **Click Training HUD** at the top of the dialog, beside **Load profile...**. The panel opens beside the dialog.
 
 <img src="images/hud-walkthrough-01-at-rest.png" alt="The Training HUD at rest. The header reads READY, Change any option to see what it does, with a vs last change button at the right. Two dials, EPOCH SPEED with SLOWER on the left and FASTER on the right, and LEARNING STEPS with FEWER on the left and MORE on the right, both have their pale yellow needles pointing straight up at a REF mark. Below them, GPU MEMORY and RAM CACHE bars are partly filled in pale yellow, with TIGHT and 100 percent marks on the GPU bar and auto 50% and 100 percent marks on the RAM bar, and three small bars for TRAINING DATA, VALIDATION DETAIL and TOTAL TIME (MAX)" width="440">
 
 Nothing is colored yet: nothing has changed. The **REF** mark on each dial is where you
 started. Your starting needles depend on your saved preferences, which set the dialog's
-defaults; the changes below are what matter.
+defaults, but the changes below move them the same way.
 
 ## A preset: one change, many settings
 
 **Click Load profile... and choose `Brightfield_TissueDetection_Resnet18.json`** (preset A).
 
-<img src="images/hud-walkthrough-02-preset-a.png" alt="The HUD after loading preset A. The header reads LAST CHANGE, Brightfield_TissueDetection_Resnet18, 7 settings changed. The epoch speed dial has a hollow needle and a grey chip reading question mark not comparable. The learning steps needle has swung far left in orange with a chip reading exclamation mark times 39 fewer. GPU memory and RAM cache are blue with chips reading check times 2.7 less and check times 39 less. Training data and validation detail are orange, times 9.6 and times 9.9 fewer, and total time is grey, not comparable" width="440">
+<img src="images/hud-walkthrough-02-preset-a.png" alt="The HUD after loading preset A. The header reads LAST CHANGE, Brightfield_TissueDetection_Resnet18, 7 settings changed. The epoch speed dial has a hollow needle and a gray chip reading question mark not comparable. The learning steps needle has swung far left in orange with a chip reading exclamation mark times 39 fewer. GPU memory and RAM cache are blue with chips reading check times 2.7 less and check times 39 less. Training data and validation detail are orange, times 9.6 and times 9.9 fewer, and total time is gray, not comparable" width="440">
 
 The profile set seven controls at once, and the HUD treats that as **one change** named after
 the profile. Hover over the header for the full list. Against the dialog's defaults it changed
@@ -57,11 +64,12 @@ epochs, the batch size and mixed precision.
 
 - **Epoch speed says `? not comparable`.** The encoder changed, and speeds of different networks
   cannot honestly be compared from settings alone, so the HUD does not guess.
-- **Learning steps: ! ×39 fewer.** 8x downsample leaves about a tenth of the patches, and batch
-  30 takes them thirty at a time.
+- **Learning steps: ! ×39 fewer.** Learning steps count how many times the model adjusts itself,
+  one per batch. 8x downsample leaves about a tenth of the patches, batch 30 takes them thirty at
+  a time, and the profile also lowers the epochs from 50 to 40.
 - **GPU memory ✓ ×2.7 less, RAM cache ✓ ×39 less.** It is a light run.
 
-This is the trap the HUD exists for: preset A is quick and light because it learns from much less.
+Preset A is quick and light because it learns from far fewer patches.
 For this two-class tissue-versus-background problem that is fine, and the workshop model trained
 well. For finer structures it would not be.
 
@@ -80,7 +88,7 @@ size; there are more of them.
 
 <img src="images/hud-walkthrough-04-batch-30-to-8.png" alt="The HUD after changing Batch Size from 30 to 8. The header reads LAST CHANGE, Batch Size 30 to 8. Learning steps is blue with a chip reading check times 3.7 more. GPU memory is blue with a chip reading check times 3.5 less. Epoch speed, RAM cache, training data, validation detail and total time are unchanged and pale" width="440">
 
-A smaller batch means more optimizer steps for the same data (✓ ×3.7 more) and much less GPU
+A smaller batch means more learning steps for the same data (✓ ×3.7 more) and much less GPU
 memory per step (✓ ×3.5 less). The speed dial does not move because it counts pixels processed,
 and the pixels are the same. In practice a smaller batch often runs somewhat slower on a GPU;
 the HUD does not model that, so take the unmoved speed needle as "about the same work", not as
@@ -103,15 +111,15 @@ Now **open the `vs last change` menu at the top right and choose
 
 <img src="images/hud-walkthrough-06-preset-b-compared-to-a.png" alt="The HUD comparing the current settings, preset B, against preset A. The header reads COMPARED TO BRIGHTFIELD_TISSUEDETECTION_R..., Resolution 8x to 4x, Validation Split (%) 50 to 20, Early stopping (cut off), and the button reads vs Brightfield_Tiss... Epoch speed is orange, times 3.3 slower. Learning steps is blue, times 22 more. GPU memory is blue, times 6.4 less. RAM cache is orange, times 3.3 more. Training data and validation detail are blue, times 3.3 and times 3.2 more. Total time is orange, times 3.3 slower" width="440">
 
-This is the comparison of the two presets themselves: four settings apart (resolution, validation
-split, early stopping, batch size). Preset B costs about 3.3 times the run time and 3.3 times the
+The two presets differ in four settings (resolution, validation split, early stopping, batch
+size). Preset B costs about 3.3 times the run time and 3.3 times the
 RAM for its cache. In return it trains on 3.3 times the data with 22 times the learning steps,
 and uses a sixth of the GPU memory. The REF mark on each dial has moved to preset A, so the
 needles read "B relative to A".
 
 Two more choices in the same menu:
 
-- **Start** shows everything you changed since you opened the panel.
+- **Start** shows everything you changed since you opened the panel or last loaded classes.
 - **last change** goes back to judging one edit at a time.
 
 ## What the numbers are, and are not

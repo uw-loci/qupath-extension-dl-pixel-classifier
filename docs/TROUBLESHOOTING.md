@@ -19,7 +19,7 @@ Before diving into specific issues, know where to find diagnostic information:
 - Python errors and stack traces
 - Normalization statistics and processing details
 
-Use **Copy to Clipboard** to capture the full log for bug reports.
+Use **Save to File...** to save the full log for a bug report.
 
 > **Tip:** Keep the Python Console open during training and inference to monitor the Python backend's activity.
 
@@ -35,10 +35,10 @@ Each training session creates a new timestamped log file. These persist after Qu
 
 ### System Info
 
-**Extensions > DL Pixel Classifier > Utilities > System Info** provides a complete diagnostic dump:
+**Extensions > DL Pixel Classifier > Utilities > System Info...** provides a complete diagnostic dump:
 
 - PyTorch version and build info
-- CUDA version and GPU details (name, VRAM, driver version)
+- CUDA version and GPU details (name, GPU memory, driver version)
 - Installed Python package versions
 - Backend mode and environment status
 
@@ -56,25 +56,26 @@ Use **Copy to Clipboard** to share the full output when reporting bugs.
 
 ### Setup completes but GPU not detected
 
-If the setup wizard reports CPU-only but you have an NVIDIA GPU:
+Setup installs one of two environments, chosen under **Compute environment** in the setup dialog: **GPU / CUDA (requires an NVIDIA GPU)** or **CPU (works everywhere)**. GPU is preselected only when an NVIDIA card is detected. The completion message says if the CPU environment was installed, including when the GPU environment could not be installed and setup fell back to CPU.
+
+If you ended up with the CPU environment but have an NVIDIA GPU:
 
 1. **Check the Python Console**: look for "CUDA available: False"
 2. **Verify NVIDIA drivers are installed**: open a terminal and run `nvidia-smi`. If this fails, install drivers first.
-3. **Drivers must be installed before environment setup**: the Appose environment installs PyTorch with CUDA support, but it needs to detect your GPU drivers during setup
-4. **If drivers were installed after setup**: Go to **Utilities > Rebuild DL Environment...** to delete and re-create the environment with GPU support
-5. **Windows-specific**: Install "Game Ready" or "Studio" drivers from [nvidia.com/drivers](https://www.nvidia.com/drivers)
+3. **Switch to the GPU environment**: use **Extensions > DL Pixel Classifier > Utilities > Compute Environment (CPU / GPU)...** and choose GPU. (Or use **Utilities > Rebuild DL Environment...** and keep GPU selected.)
+4. **Windows-specific**: Install "Game Ready" or "Studio" drivers from [nvidia.com/drivers](https://www.nvidia.com/drivers/)
 
-### Menu items don't appear after setup
+### Menu items stay grayed out after setup
 
-1. Verify the environment directory exists:
-   - Windows: `C:\Users\<you>\.local\share\appose\dl-pixel-classifier\.pixi\`
-   - macOS/Linux: `~/.local/share/appose/dl-pixel-classifier/.pixi/`
+1. Verify the environment directory exists (`dl-pixel-classifier` for the CPU environment, `dl-pixel-classifier-gpu` for the GPU environment; the default location is shown here, and you can choose another in setup):
+   - Windows: `C:\Users\<you>\.local\share\appose\dl-pixel-classifier\.pixi\` or `...\dl-pixel-classifier-gpu\.pixi\`
+   - macOS/Linux: `~/.local/share/appose/dl-pixel-classifier/.pixi/` or `~/.local/share/appose/dl-pixel-classifier-gpu/.pixi/`
 2. Close and reopen QuPath
 3. Check the QuPath log (**View > Show log**) for errors
 
-### Version mismatch error dialog
+### "Python environment is out of date"
 
-If you see an error dialog saying the Python package version does not match the extension version:
+If a notification says the Python environment is out of date (the Python package version does not match the extension version):
 
 1. This means the Java JAR is a different version than the installed Python environment
 2. Training and inference are blocked until the versions match, this prevents silent incompatibilities
@@ -93,31 +94,31 @@ If the environment does not update (e.g., still using an old Python version):
 
 | OS | Environment path |
 |----|-----------------|
-| Windows | `C:\Users\<you>\.local\share\appose\dl-pixel-classifier\` |
-| macOS / Linux | `~/.local/share/appose/dl-pixel-classifier/` |
+| Windows | `C:\Users\<you>\.local\share\appose\dl-pixel-classifier\` (CPU) or `...\dl-pixel-classifier-gpu\` (GPU) |
+| macOS / Linux | `~/.local/share/appose/dl-pixel-classifier/` (CPU) or `~/.local/share/appose/dl-pixel-classifier-gpu/` (GPU) |
 
-> **Tip:** This is the same path shown in the "Advanced Diagnostics" section at the bottom of this page.
+> **Tip:** These are the default locations; if you chose another location during setup, delete that folder instead. **Utilities > Where Are My Files?** shows where things are.
 
 Then reopen QuPath and run **Setup DL Environment...** again.
 
-> **Why this happens:** The extension manages its own embedded Python environment via pixi. When the bundled `pixi.toml` changes (e.g., Python version bumped from 3.10 to 3.11, new packages added), the extension detects the change and deletes `pixi.lock` and `.pixi/` to force pixi to re-resolve everything. On Windows, if the old Python process is still running, file locks can prevent deletion, the extension attempts a rename-fallback, but a full QuPath restart is sometimes needed.
+> **Why this happens:** The extension manages its own embedded Python environment via pixi. When the bundled `pixi.toml` changes (e.g., Python version bumped from 3.10 to 3.11, new packages added), the extension replaces the on-disk `pixi.toml` and `pixi.lock` with the bundled ones and reinstalls the exact pinned versions (`pixi install --frozen`). On Windows, if the old Python process is still running, file locks can prevent deletion, the extension attempts a rename-fallback, but a full QuPath restart is sometimes needed.
 
 ### Environment seems corrupted
 
 Use **Extensions > DL Pixel Classifier > Utilities > Rebuild DL Environment...** to delete the environment and re-run setup.
 
-### Only "Setup DL Environment..." is visible
+### Train and Apply are grayed out on first launch
 
-This is normal on first launch before the environment has been set up. Click it to begin the setup wizard.
+This is normal before the environment has been set up. **Setup DL Environment...** appears at the top of the menu; click it to begin the setup wizard.
 
 ## GPU Issues
 
 ### GPU not detected
 
 1. Open the **Python Console** (Utilities menu) and look for "CUDA available" or "MPS available"
-2. Run **System Info** (Utilities menu) and check the CUDA/GPU section
+2. Run **System Info...** (Utilities menu) and check the CUDA/GPU section
 3. Verify NVIDIA drivers are installed by running `nvidia-smi` in a terminal
-4. If drivers were installed **after** environment setup: use **Utilities > Rebuild DL Environment...** to reinstall
+4. If drivers were installed **after** environment setup, or setup installed the CPU environment: use **Utilities > Compute Environment (CPU / GPU)...** and choose GPU
 5. If still not detected: check that your NVIDIA driver's CUDA version is >= the PyTorch CUDA version shown in System Info
 6. **Apple Silicon:** MPS should be auto-detected. If not, verify you are running macOS 12.3+ and check System Info output
 
@@ -129,12 +130,12 @@ This is normal on first launch before the environment has been set up. Click it 
 | Reduce tile size | 256 instead of 512 |
 | Use smaller backbone | efficientnet-b0 instead of resnet50 |
 | Free GPU memory | Use the "Free GPU Memory" utility menu item |
-| Close other GPU programs | Other applications may be using VRAM |
+| Close other GPU programs | Other applications may be using GPU memory |
 | Disable mixed precision | Rarely helps, but try if nothing else works |
 
 ### GPU memory not freed after training
 
-Use **Extensions > DL Pixel Classifier > Utilities > Free GPU Memory** to force-clear all GPU state. This cancels running jobs, clears cached models, and frees VRAM.
+Use **Extensions > DL Pixel Classifier > Utilities > Free GPU Memory**. It unloads the models cached for inference and releases PyTorch's spare GPU memory. It does not stop a training run.
 
 ## Training Issues
 
@@ -145,8 +146,8 @@ Use **Extensions > DL Pixel Classifier > Utilities > Free GPU Memory** to force-
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | "No annotations found" | No classified annotations | Create annotations and assign them to classes |
-| "At least 2 classes required" | Only one class annotated | Add annotations for a second class |
-| "Server error" | Server connection failed | Check server is running and accessible |
+| "At least 2 classes must be selected for training" | Only one class annotated or selected | Add annotations for a second class, and tick at least two classes |
+| "Python environment is out of date" | Extension and Python environment versions differ | **Utilities > Rebuild DL Environment...** |
 | Dialog won't open | No image loaded | Open an image first |
 
 ### "No valid training patches could be extracted"
@@ -155,7 +156,7 @@ The extension exports training patches from the **saved** project file on disk, 
 
 **1. Project not saved.** If you created or edited annotations but never saved, the extractor reads an empty hierarchy from disk. Save first (`File > Save` or `Ctrl+S`) and re-run training. This is the most common cause when the hierarchy looks fine in QuPath but the error says 0 annotations.
 
-**2. Annotations have no class assigned.** The error message reports "Annotations WITHOUT a class." Every annotation must have a `PathClass` assigned (right-click > Set class, or use the Annotations tab). Unclassified annotations are silently skipped.
+**2. Annotations have no class assigned.** The error message reports "Annotations WITHOUT a class." Every annotation needs a class (right-click > Set class, or use the Annotations tab). Unclassified annotations are silently skipped.
 
 **3. Annotation class names do not match selected training classes.** The error message reports unmatched class names and the list of selected classes. Comparison is **exact and case-sensitive**: `Tumor` and `tumor` are different classes, and trailing whitespace also breaks the match. Either rename the annotations or adjust the selected class list in the training dialog.
 
@@ -172,7 +173,7 @@ The extension exports training patches from the **saved** project file on disk, 
 | Cause | Fix |
 |-------|-----|
 | Running on CPU | Open the Python Console and look for "CUDA available: True". If False, install NVIDIA drivers and rebuild the environment. |
-| Mixed precision disabled | Enable in Training Strategy section |
+| Mixed precision disabled | In **Batch Size & Memory**, tick **Enable mixed precision (AMP)** (NVIDIA GPUs only) |
 | Very large tile size | Reduce tile size (256 instead of 512) |
 | Very large batch size | Reduce batch size |
 | Too much augmentation | Disable elastic deformation (slowest augmentation) |
@@ -186,11 +187,9 @@ If training starts but stops making progress (no new epoch updates):
 3. **Kill QuPath and restart** if the process is deadlocked
 4. Try reducing batch size or tile size to lower GPU memory usage
 
-> **Note:** In versions before 0.3.5, a transient "thread death" error could cause the extension to retry training, creating two concurrent training processes on the same GPU that deadlock. This has been fixed, training no longer retries on thread death errors.
-
 ### What can I do if training is interrupted?
 
-If training is interrupted, whether by a crash, power outage, or accidental QuPath close. Your progress is automatically saved. The extension writes a full checkpoint to disk every time a new best epoch is found during training.
+If training is interrupted by a crash, a power outage or closing QuPath, your progress is saved automatically. The extension writes a full checkpoint to disk every time a new best epoch is found during training.
 
 #### Automatic crash-recovery checkpoint
 
@@ -214,27 +213,26 @@ The checkpoint is saved in the same format as the pause/resume checkpoint, so al
 
 #### Option 1: Recover the best model (no further training needed)
 
-If the model had already converged before the interruption, you can finalize it into a usable classifier:
+If the model had already converged before the interruption, you can save it as a usable classifier:
 
-1. Open QuPath with the DL Pixel Classifier extension
-2. Open the **Python Console** (Utilities menu)
-3. Use the `finalize_training.py` script with the checkpoint path:
+1. **Open Extensions > DL Pixel Classifier > Train DL Pixel Classifier...** If an interrupted run left a checkpoint, a banner at the top reads "Unfinished training detected" and lists it.
+2. **Click Recover** next to the run. The best epoch it reached is saved as a classifier in this project.
 
-The finalize script loads the checkpoint, extracts the best model weights, and saves a complete classifier (model.pt + metadata.json + ONNX export) that you can use for inference.
+Recovery loads the checkpoint, extracts the best model weights, and saves a complete classifier (model.pt + metadata.json + ONNX export) that you can use for inference.
 
 > **Tip:** Check the QuPath log from your interrupted session, it logs the checkpoint path each time a new best is saved:
 > `Best checkpoint saved to disk (epoch 42): C:\Users\you\.dlclassifier\checkpoints\best_in_progress_unet.pt`
 
 #### Option 2: Resume training from the checkpoint
 
-If you want to continue training from where it left off:
+If you want to keep training from the best epoch:
 
-1. Open the training dialog (**Extensions > DL Pixel Classifier > Train DL Pixel Classifier**)
-2. Select **Continue from checkpoint** in the Weight Initialization section
-3. Browse to the `best_in_progress_{model_type}.pt` file
-4. Training resumes from the last best epoch with all optimizer state intact
+1. **Open Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**
+2. Under **Weight Initialization**, choose **Continue training one of your saved models**.
+3. **Click Load checkpoint...** and pick `best_in_progress_{model_type}.pt`. The checkpoint is saved as a classifier named `recovered_...`, and its settings are loaded into the dialog.
+4. **Click Start Training.** A new run begins from the best epoch's weights.
 
-> **Note:** Training resumes from the epoch where the best model was saved, not from the epoch where the crash occurred. For example, if the best model was at epoch 30 and the crash happened at epoch 45, training resumes from epoch 30. Epochs 31-45 are re-trained, but the model's optimizer and scheduler state are preserved, so results should be similar.
+> **Note:** The new run starts from the weights of the epoch where the best model was saved, not from the epoch where the crash occurred. If the best model was at epoch 30 and the crash happened at epoch 45, the work of epochs 31-45 is lost.
 
 #### Option 3: Use the Pause feature to save progress intentionally
 
@@ -253,7 +251,8 @@ The pause checkpoint is stored both in memory (for immediate resume within the s
 
 The Resume Training dialog asks only for the number of **Additional Epochs**, learning rate and batch size stay at their original values. The rest of your training configuration is stored alongside the checkpoint and reused as-is on resume, so the resumed run behaves as if training had never been paused.
 
-**Preserved across pause/resume:**
+#### Preserved across pause/resume
+
 
 - Learning rate and batch size (from the original run)
 - OHEM hard-pixel ratio, adaptive per-class floor, and anneal schedule (including anneal start/end values, the anneal picks up at the correct point for the current epoch rather than restarting at the start value)
@@ -264,17 +263,19 @@ The Resume Training dialog asks only for the number of **Additional Epochs**, le
 - Class-weight multipliers and validation split
 - Optimizer state (momentum, adaptive parameters) and scheduler state
 
-**Re-exported on resume (to pick up annotation changes):**
+#### Re-exported on resume (to pick up annotation changes)
+
 
 - Training tiles are re-extracted from the current annotations so any new or modified annotations made while paused are included in the resumed run.
 
-**Behavior to be aware of when extending a run:**
+#### Behavior to be aware of when extending a run
 
-- **LR schedulers that span the full run** (cosine, one-cycle) are re-parameterized over the new total epoch count starting from the current epoch. They do not keep the original curve and tack extra epochs onto the end. If you were relying on a specific final-epoch LR, extending the run will change the LR trajectory.
+
+- **Learning-rate schedulers that span the full run** (cosine, one-cycle) are re-parameterized over the new total epoch count starting from the current epoch. They do not keep the original curve and tack extra epochs onto the end. If you were relying on a specific final-epoch learning rate, extending the run will change how the learning rate moves.
 - **Epoch-indexed schedules** (OHEM anneal) compute their value as a function of the current epoch over the anneal window, so extending the run past the original anneal end leaves the hard-pixel ratio at its final value for the extra epochs (the anneal does not re-run).
 - **Training resumes from the last best epoch**, not the epoch where Pause was clicked. If the best was at epoch 30 and you paused at epoch 45, the resumed run starts at epoch 30.
 
-If you need to change learning rate or batch size (e.g. you hit VRAM issues or want to switch to a fine-tuning LR), cancel the paused run and start a new training using **Continue from checkpoint** instead, that workflow gives you the full training dialog with all hyperparameters editable.
+If you need to change learning rate or batch size (e.g. you ran out of GPU memory or want a lower learning rate for fine-tuning), cancel the paused run and start a new training with **Load checkpoint...** (Option 2 above). That route gives you the full training dialog with every setting editable.
 
 #### What is NOT recoverable
 
@@ -284,9 +285,9 @@ If you need to change learning rate or batch size (e.g. you hit VRAM issues or w
 | Crash before any validation epoch completes | No | No |
 | Power outage during checkpoint write | Possibly corrupted | Possibly corrupted |
 | Pause, then cancel, same QuPath session | Yes | Yes |
-| Pause, then cancel, after QuPath restart | Yes (from .pt file) | Yes (load .pt manually) |
+| Pause, then cancel, after QuPath restart | Yes (from .pt file) | Yes, as a new run (**Load checkpoint...**) |
 
-> **Tip:** The best-in-progress checkpoint is automatically cleaned up when training completes normally or is cancelled with a save. If you see a `best_in_progress_*.pt` file in the checkpoints directory, it means a previous training was interrupted and can be recovered.
+> **Tip:** The best-in-progress checkpoint is automatically cleaned up when training completes normally or is canceled with a save. If you see a `best_in_progress_*.pt` file in the checkpoints directory, it means a previous training was interrupted and can be recovered.
 
 ### Training produces poor results
 
@@ -307,10 +308,10 @@ healthy.
 
 **Cause: the model has collapsed onto the majority class.** It answers with a single class for
 every pixel and gets more confident about that one answer. The accuracy is not a sign of partial
-success -- it is that class's share of the labelled pixels, which the model scores by predicting
+success -- it is that class's share of the labeled pixels, which the model scores by predicting
 it everywhere. Watch the per-class losses: the collapsed-onto class falls while the missing class
 *rises*. That divergence is the signature, and it distinguishes a collapse from a model that is
-simply weak on one class.
+weak on one class.
 
 Training reports this itself. From epoch 10 the log prints
 
@@ -340,7 +341,7 @@ a verdict. If it persists, work through these in order:
 **Symptom:** A confirmation dialog after export says the run will perform one optimizer step per
 epoch, or the training log shows `*** STEP BUDGET ***`.
 
-**Cause: arithmetic, not tuning.** The data loader splits the training patches into batches of
+**Cause:** The data loader splits the training patches into batches of
 the configured size. When the batch size is at or above the patch count there is exactly one
 batch, so each epoch produces a single gradient update. A 150-epoch run then performs 150
 updates in total, which is far too few for any model, and no amount of extra epochs changes it.
@@ -348,7 +349,8 @@ updates in total, which is far too few for any model, and no amount of extra epo
 Gradient accumulation multiplies the effect: accumulating 4 batches when there are only 4 turns
 four steps into one.
 
-**Fixes, in order of directness:**
+#### Fixes, in order of directness
+
 
 1. **Lower the batch size.** This is the whole fix in most cases.
 2. **Lower gradient accumulation** if it is above 1.
@@ -356,12 +358,12 @@ four steps into one.
    or increase tile overlap. Each of these raises the patch count for the same annotations.
 
 The dialog lets you continue anyway, because a deliberately tiny run is a legitimate thing to do
-while checking that a pipeline works end to end. It is not a way to train a model.
+while checking that a pipeline works end to end.
 
 > The same block reports the validation patch count. Below about 20 validation patches, a single
 > patch is more than 5% of the reported mean IoU, so the metric swings between epochs for
-> measurement reasons alone. With early stopping off, the "best epoch" is then chosen by argmax
-> over that noise, and the saved score is optimistic. Raise the validation split or annotate more
+> measurement reasons alone. With early stopping off, the "best epoch" is then picked from that
+> noise, so the saved score looks better than the model is. Raise the validation split or annotate more
 > area before comparing runs against each other.
 
 ### One class has wildly inconsistent IoU or loss across epochs
@@ -377,9 +379,9 @@ This is especially common with:
 
 **How to identify it:** Look for a suspiciously consistent per-class loss value appearing at many epochs. If the same loss value (e.g., always ~5.0, or always ~12.3) keeps appearing for one class on "bad" epochs, it points to one specific validation tile or region that the model consistently misclassifies.
 
-**Fixes:**
+#### Fixes
 
-1. **Break large annotations into smaller pieces.** The stratified splitter assigns whole annotations to train or val. One large annotation = all-or-nothing. Three smaller annotations = the splitter is more likely to place some in train and some in val, so the model learns the pattern.
+1. **Break large annotations into smaller pieces.** The stratified splitter assigns whole annotations to training or validation. One large annotation = all-or-nothing. Three smaller annotations = the splitter is more likely to place some in train and some in val, so the model learns the pattern.
 
 2. **Add annotations of the rare pattern to multiple images.** If dark debris exists on one slide, annotate it on several images. Even small annotations ensure the pattern appears in training tiles across the split.
 
@@ -387,13 +389,13 @@ This is especially common with:
 
 4. **Check what's in the validation set.** After a short training run (5-10 epochs), use **Review Training Areas** to see which tiles have the highest loss. Double-click to navigate to them. If they're all from one annotation, that annotation is likely in the validation set and underrepresented in training.
 
-> **Note:** The random train/val split changes each time you start training or resume with re-exported data. A class that's problematic in one run may be fine in the next (different split), which makes this issue intermittent and hard to diagnose without the per-class loss breakdown.
+> **Note:** The random training/validation split changes each time you start training or resume with re-exported data. A class that's problematic in one run may be fine in the next (different split), which makes this issue intermittent and hard to diagnose without the per-class loss breakdown.
 
 ### Validation loss spikes to extreme values
 
 **Symptom:** `val_loss` shows values in the hundreds or thousands, while the individual per-class losses sum to much less than the reported total.
 
-**Cause:** Extreme logit magnitudes from pretrained or continued-training models. When model outputs become very large, `cross_entropy(-log(softmax(x)))` produces huge per-pixel losses even in FP32 precision. This is fixed in current releases by clamping logits to the range [-50, 50] before loss computation.
+**Cause:** Very large raw model outputs from pretrained or continued-training models produce huge per-pixel losses. Current releases limit those outputs before computing the loss.
 
 **Fix:** This is fixed in current releases. If you see it, use **Utilities > Rebuild DL Environment...** to ensure the Python environment matches the installed extension.
 
@@ -403,7 +405,7 @@ This is especially common with:
 
 ![Training Progress loss chart: train and validation loss track together for the first ~45 epochs, then after a pause/resume the training-loss curve rises steadily while the validation-loss curve drops below it and stays low, with occasional validation spikes](images/training-loss-ohem-crossover.png)
 
-This looks backwards, validation is supposed to be the harder number, but in this extension it is usually **expected and benign**. Judge the model by mIoU and per-class IoU, not by the train/val loss gap.
+This looks backwards, validation is supposed to be the harder number, but in this extension it is usually **expected and harmless**. Judge the model by mean IoU and per-class IoU (the overlap scores between predictions and your validation annotations), not by the gap between training and validation loss.
 
 **Primary cause: OHEM (hard-pixel mining).** When the loss includes OHEM (shown in the config summary as `Loss: ... + OHEM (anneal 100% -> 10%, ...)`), the two losses are computed over **different pixels**:
 
@@ -412,7 +414,8 @@ This looks backwards, validation is supposed to be the harder number, but in thi
 
 So training loss is measured on a smaller, harder subset than validation loss, and `val_loss < train_loss` falls out by design. When the OHEM ratio **anneals** (the default schedule tightens from 100% down to 10% over the first 75% of epochs), the crossover appears partway through training as the hard-pixel selection kicks in, which is exactly what the chart above shows after the resume near epoch 45. A rising training-loss curve here does **not** mean the model is getting worse; it means the loss is being measured on progressively harder pixels while learning rate has also dropped.
 
-**Secondary causes (present with or without OHEM):**
+#### Secondary causes (present with or without OHEM)
+
 
 - **Regularization is training-only.** Dropout and weight decay are active during training but not during evaluation, and BatchNorm/BatchRenorm uses noisy batch statistics while training but stable running averages at eval. The model runs at full, quieter capacity during validation.
 - **Augmentation is training-only.** Elastic deformation, color jitter, brightness/contrast/gamma, noise, and scale jitter are applied to training patches but not to validation patches, so the validation images are cleaner and easier to classify.
@@ -426,26 +429,27 @@ So training loss is measured on a smaller, harder subset than validation loss, a
 
 **Symptom:** Continuing training from a saved model oscillates wildly or diverges instead of improving.
 
-**Common causes:**
+#### Common causes
+
 
 - **Learning rate too high for continue-training.** Use `0.0001`, not `0.001`. The model is already near a minimum, so a large learning rate pushes it out of the basin.
-- **`loadSettingsFromModel` may restore the OLD learning rate from the saved model.** Always verify that the LR spinner shows `0.00010` before clicking Train. If the spinner shows `0.00100`, the old model's LR was loaded, change it manually.
-- **Frozen layers, discriminative LRs, and scheduler settings are preserved** when loading a model in current releases.
-- **Version mismatch between the pip package and the JAR.** Check for the version mismatch notification dialog on startup. If the Python environment is out of date, use **Utilities > Rebuild DL Environment...** to update it.
+- **Loading a saved model may also load its old learning rate.** Check that **Learning Rate** shows `0.00010` before you click **Start Training**. If it shows `0.00100`, the old model's value was loaded; change it by hand.
+- **Frozen layers, the encoder learning-rate factor, and scheduler settings are preserved** when loading a model in current releases.
+- **Version mismatch between the Python package and the extension JAR.** Look for the "Python environment is out of date" notification on startup. If the Python environment is out of date, use **Utilities > Rebuild DL Environment...** to update it.
 
 ## Inference Issues
 
-### Apply Classifier produces geometric diamond/triangle shapes
+### Apply DL Pixel Classifier produces geometric diamond/triangle shapes
 
-**Symptom:** The overlay looks correct, but Apply Classifier (OBJECTS) produces large geometric diamond or triangle shapes instead of following the actual classification boundaries.
+**Symptom:** The overlay looks correct, but **Apply DL Pixel Classifier** (OBJECTS) produces large geometric diamond or triangle shapes instead of following the actual classification boundaries.
 
 **Cause:** The image has no pixel size calibration. When pixel size is unknown (NaN), the boundary smoothing tolerance becomes NaN, causing the geometry simplifier to produce degenerate shapes.
 
 **Fix:** Set the pixel size for your images in QuPath:
-- **Single image:** Go to **Image > Set image properties** and enter the pixel width/height in microns
+- **Single image:** Go to **Image > Set image properties** and enter the pixel width/height in micrometers
 - **Entire project:** Run a script in the Script Editor to set pixel size across all project images
 
-This was fixed in v0.5.1+, uncalibrated images now default to 1.0 um/px for contour post-processing, so the shapes will be correct even without calibration (though micron-based thresholds like min object size and hole filling will be approximate).
+Uncalibrated images default to 1.0 um/px for contour post-processing, so the shapes are correct even without calibration, but thresholds in micrometers (min object size, hole filling) are then approximate.
 
 ### Inference produces blank/uniform results
 
@@ -453,13 +457,25 @@ This was fixed in v0.5.1+, uncalibrated images now default to 1.0 um/px for cont
 - Channel configuration may not match training, verify channel order and count
 - Resolution (downsample) may differ from training
 
+### "This annotation is too large for Objects output"
+
+**Symptom:** Apply DL Pixel Classifier with OBJECTS output stops with "This annotation is too large for Objects output: at the model's ...x resolution its classification map is ... x ... pixels and needs ... GB, but QuPath has ... GB of memory free."
+
+**Cause:** OBJECTS builds the whole annotation's class map in memory, at 4 bytes per pixel at the model's resolution, and refuses when that would take more than half of QuPath's free memory. For example, a 40,000 x 40,000 pixel annotation at downsample 1 needs about 6.4 GB.
+
+**Fix:** any one of these:
+
+- Split the annotation into smaller ones.
+- Use MEASUREMENTS output, which counts tile by tile and does not need the map.
+- Raise QuPath's memory limit (**Edit > Preferences > General > Set max memory %**), then restart QuPath.
+
 ### Rectangular blocks of the wrong class, aligned to a grid
 
 A U-Net with a ResNet encoder sees a receptive field wider than a 256-pixel tile, so what the model predicts for a pixel depends on the whole tile that pixel landed in. Two tiles that share a piece of tissue can therefore disagree about it.
 
-**CENTER_CROP** settles that disagreement by giving the pixel to whichever tile it sits nearest the centre of. That removes the visible *seam* but keeps one tile's answer for the whole region it owns, which is what you see as a block with straight edges on the tile grid. **Blending** averages the tiles that cover each pixel instead, so a contested pixel lands between the two predictions.
+The overlay and **Apply DL Pixel Classifier** settle that disagreement by keeping only the center of each tile, so each pixel takes the answer of the tile it sits nearest the center of. That removes the visible *seam* but keeps one tile's answer for the whole region it owns, which is what you see as a block with straight edges on the tile grid. This happens under every Blend Mode; Blend Mode only decides whether the context border is widened (below).
 
-The measurement below shifts the tile grid by half a stride and counts pixels whose class changed. It needs no reference image, and the pixels it counts are the blocks. Measured on a brightfield ResNet-18 at tile size 256 over a real slide, against what each geometry costs -- tile count goes as 1/stride^2:
+The measurement below shifts the tile grid by half a stride and counts pixels whose class changed (the *shift-invariance* column: lower is better). It needs no reference image, and the pixels it counts are the blocks. Measured on a brightfield ResNet-18 at tile size 256 over a real slide, against what each geometry costs -- tile count goes as 1/stride^2:
 
 | Overlap | Stride | Tiles | Shift-invariance |
 |---|---|---|---|
@@ -471,13 +487,13 @@ The measurement below shifts the tile grid by half a stride and counts pixels wh
 
 Nearly all the benefit arrives by 25%, and the last stretch is four times the compute for under a point. The extension therefore **raises the overlap to 25% automatically whenever Blend Mode is CENTER_CROP**, and says so in the log and in the dialog. That is the only place it overrides your tiling geometry.
 
-If the overlay is too slow to work with, this is the first thing to change: switch Blend Mode to GAUSSIAN or LINEAR and keep your own overlap. They reach comparable stability without the forced halo.
+If the overlay is too slow to work with, switch Blend Mode to GAUSSIAN (the default): the overlap then stays as you set it, which means fewer tiles and faster results, at the cost of more of these blocks (see the table).
 
 ### A halo of background classified as tissue
 
 Different problem, and tiling will not fix it. If a band of glass around the tissue comes back as tissue, look at the width: it follows the tissue contour rather than the tile grid.
 
-This is the model using tile context. Its receptive field is wider than the tile, so a window centred on glass near tissue is mostly tissue, and the model answers accordingly. Measured across the whole overlap range above, the fraction of glass called tissue moved only between 41.6% and 43.3% -- the geometry is almost irrelevant to it.
+This is the model using tile context. Its receptive field is wider than the tile, so a window centered on glass near tissue is mostly tissue, and the model answers accordingly. Measured across the whole overlap range above, the fraction of glass called tissue moved only between 41.6% and 43.3% -- the geometry is almost irrelevant to it.
 
 Two things do help:
 
@@ -490,7 +506,7 @@ Raising the tile size makes this **worse**, not better: more context per window 
 
 Distinct from the blocks above: a *seam* is a thin line at a tile boundary, not a filled rectangle.
 
-The overlay and Apply Classifier (OBJECTS) use the same inference pipeline. It reads expanded tile regions from the actual image (real context, not reflection padding), crops or blends back to the stride region according to Blend Mode, and applies Gaussian smoothing.
+The overlay and **Apply DL Pixel Classifier** (OBJECTS) use the same inference pipeline. It reads expanded tile regions from the actual image (real context, not reflection padding), crops back to the tile's center region, and applies Gaussian smoothing.
 
 If seams are visible:
 
@@ -500,9 +516,9 @@ If seams are visible:
 
 ### Objects don't match the overlay
 
-The overlay and Apply Classifier (OBJECTS) use the exact same `DLPixelClassifier.applyClassification()` method. If objects appear different from the overlay:
+The overlay and **Apply DL Pixel Classifier** (OBJECTS) use the exact same classification code. If objects appear different from the overlay:
 
-- **Check application scope**: The overlay covers the entire image. Apply Classifier processes only within the selected annotation(s). Make sure the annotation covers the area you expect.
+- **Check application scope**: The overlay covers the entire image. **Apply DL Pixel Classifier** processes only within the selected annotation(s). Make sure the annotation covers the area you expect.
 - **Annotation shape clipping**: Objects are clipped to the parent annotation's geometric shape (not just its bounding box). An elliptical annotation will produce elliptically-bounded objects.
 - Objects are vectorized from the pixel classification via contour tracing, so very thin features or single-pixel classifications may not produce visible objects. Adjust **Min Object Size** if small features are missing.
 
@@ -517,7 +533,7 @@ The overlay and Apply Classifier (OBJECTS) use the exact same `DLPixelClassifier
 
 - Enable GPU in processing options
 - Reduce tile overlap (but quality may suffer)
-- Use NONE blend mode for fastest processing (quality trade-off)
+- Use a Blend Mode other than CENTER_CROP (CENTER_CROP forces at least a 25% overlap, which means more tiles)
 - Process selected annotations first to estimate total time
 
 ## Tile Evaluation Issues
@@ -525,7 +541,7 @@ The overlay and Apply Classifier (OBJECTS) use the exact same `DLPixelClassifier
 ### "Review Training Areas..." button doesn't appear
 
 The button only appears when training completes successfully. It will not appear if:
-- Training was cancelled
+- Training was canceled
 - Training failed with an error
 - The training data path is no longer available
 
@@ -573,7 +589,7 @@ If the warning banner is not shown but the overlay still isn't visible, also che
 
 ### "This session was saved against a different build" warning
 
-Retraining a model in place does not change its `ClassifierMetadata.id`, so a saved session still nominally matches the classifier. The dialog detects that the model file's size or modification time has changed since the session was saved and flags the session as stale. You can still open the session. The PNGs were rendered against the earlier model, but the visuals no longer reflect current model behavior. Re-run **Review Training Areas** to get a current session.
+Retraining a model in place does not change its classifier ID, so a saved session still nominally matches the classifier. The dialog detects that the model file's size or modification time has changed since the session was saved and flags the session as stale. You can still open the session. The PNGs were rendered against the earlier model, but the visuals no longer reflect current model behavior. Re-run **Review Training Areas** to get a current session.
 
 ### Validation-split tiles show metrics but no overlay images
 
@@ -588,19 +604,15 @@ If nearly all tiles show high loss, the model likely did not train well:
 
 ## Extension Issues
 
-### Menu items are hidden (not visible)
-
-- **First launch:** Only **Setup DL Environment...** and **Utilities** are visible until you complete the environment setup
-- **After setup completes:** All workflow items should appear. If not, restart QuPath
-
 ### Menu items are grayed out (visible but disabled)
 
-Menu items like Train and Apply require an open image/project. Open an image first, then the menu items will become active.
+- **First launch:** **Setup DL Environment...** appears at the top of the menu, and the training and inference items are visible but grayed out until the environment is set up.
+- **After setup completes:** **Train DL Pixel Classifier...** needs an open project, and **Apply DL Pixel Classifier...** needs an open image. If they stay grayed out with both open, restart QuPath.
 
 ### "No classifiers available"
 
-- Train a classifier first, or check that classifiers are saved in the project's `classifiers/` directory
-- Verify the backend is running and the model storage path is accessible
+- Train a classifier first, or check that classifiers are saved in the project's `classifiers/dl/` folder
+- Check that the folder is readable
 
 ### Preferences not saving
 
@@ -612,31 +624,34 @@ Preferences are saved automatically when you click "Start Training" or "Apply" i
 
 ### Environment details
 
-The Python environment is a self-contained installation managed by [pixi](https://pixi.sh/) via [Appose](https://github.com/apposed/appose):
+The Python environment is a self-contained installation managed by [pixi](https://pixi.prefix.dev/) via [Appose](https://github.com/apposed/appose):
 
 | Item | Location |
 |------|----------|
-| Environment root | `~/.local/share/appose/dl-pixel-classifier/` (see OS-specific paths above) |
+| Environment root | `~/.local/share/appose/dl-pixel-classifier/` (CPU) or `~/.local/share/appose/dl-pixel-classifier-gpu/` (GPU), by default (see OS-specific paths above) |
 | pixi.toml | `<env root>/pixi.toml`, defines all Python dependencies |
 | pixi.lock | `<env root>/pixi.lock`, resolved dependency versions |
 | Python installation | `<env root>/.pixi/envs/default/` |
 
-**When to rebuild vs fresh install:**
+#### When to rebuild vs fresh install
+
 - **Rebuild** (Utilities > Rebuild DL Environment): Deletes the existing environment and runs setup again. Use when the environment is corrupted or after driver changes.
 - **Fresh install**: Manually delete the entire environment directory, then run Setup DL Environment. Use as a last resort if Rebuild does not work.
 
 ### Known transient behaviors
 
 - **Brief pause on first inference**: The model loads into GPU memory on the first inference call. Subsequent calls are faster.
-- **Occasional "thread death" during overlay rendering**: This is a transient error that auto-retries. If the overlay eventually renders correctly, no action is needed.
+- **Occasional *thread death* message in the log while the overlay draws**: QuPath retries on its own. If the overlay appears, ignore it.
 - **Large initial memory spike during training**: PyTorch allocates GPU memory aggressively on the first batch, then stabilizes. Monitor GPU memory over several epochs before reducing batch size.
 
 ### Reporting bugs
 
-When filing a bug report, please include:
+The quickest route is **Extensions > DL Pixel Classifier > Report a Bug...**. It attaches system information and the QuPath log for you, and can include a screenshot (which you preview before sending).
 
-1. **System Info output**: Utilities > System Info > Copy to Clipboard
-2. **Python Console log**: Utilities > Python Console > Copy to Clipboard
+To file a report by hand instead, please include:
+
+1. **System Info output**: Utilities > System Info... > Copy to Clipboard
+2. **Python Console log**: Utilities > Python Console > Save to File...
 3. **QuPath log**: View > Show log (copy relevant error messages)
 4. **Steps to reproduce**: what you did, what you expected, what happened
 5. **Image details**: image type (brightfield/fluorescence), channel count, bit depth
@@ -652,7 +667,7 @@ Use the built-in tools (no terminal required):
 | Tool | Menu path | What it shows |
 |------|-----------|---------------|
 | **Python Console** | Utilities > Python Console | Real-time Python output, GPU init, errors |
-| **System Info** | Utilities > System Info | PyTorch/CUDA versions, GPU details, packages |
+| **System Info** | Utilities > System Info... | PyTorch/CUDA versions, GPU details, packages |
 | **QuPath log** | View > Show log | Java-side extension messages |
 
 ### Terminal GPU verification
@@ -663,7 +678,8 @@ If you suspect GPU driver issues, verify from a terminal:
 # Check NVIDIA driver and GPU
 nvidia-smi
 
-# Check PyTorch GPU access (if Python is available)
+# Check PyTorch GPU access with a Python that has PyTorch installed
+# (the extension's own environment, under .pixi/envs/default/ in the environment root)
 python -c "
 import torch
 print(f'PyTorch: {torch.__version__}')
@@ -671,7 +687,7 @@ print(f'CUDA available: {torch.cuda.is_available()}')
 if torch.cuda.is_available():
     print(f'CUDA version: {torch.version.cuda}')
     print(f'GPU: {torch.cuda.get_device_name(0)}')
-    print(f'VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB')
+    print(f'VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
 "
 ```
 

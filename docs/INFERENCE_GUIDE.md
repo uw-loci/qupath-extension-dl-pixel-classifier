@@ -27,6 +27,8 @@ The table defaults to sorting by **Trained** date, newest first, so the most rec
 
 Click a row to select it. The info panel below shows the architecture + backbone, input channels + context scale + tile dimensions, downsample level, and class names.
 
+The figure below shows the **Manage Classifiers** window, which lists the same classifiers and details.
+
 ![Manage Classifiers dialog: a table of trained classifiers (name, architecture, class count, created date) beside an info panel listing model type, backbone, input size, downsample, and the color-coded class list](images/manage-classifiers.png)
 
 ### Channel Mapping
@@ -45,6 +47,16 @@ For unmatched channels, use the dropdown to manually remap to the correct image 
 | **MEASUREMENTS** | Adds, for each class, its area (um^2) and its share (%) of the annotation, counted from the same per-pixel classification the overlay and OBJECTS use, plus `DL: Total pixels` (pixels classified inside the annotation, at the model's resolution) | Quantification (% area per class) |
 | **OBJECTS** | Creates detection or annotation objects from the classification map. Uses the same unified inference pipeline as the overlay, predictions are identical. | Spatial analysis, counting structures |
 
+How MEASUREMENTS are counted:
+
+- The pixels are the model's output pixels, one per *downsample* x *downsample* image pixels. A pixel counts when its center lies inside the annotation.
+- Area = count x (image pixel size x downsample)^2. % = the class's share of all counted pixels.
+- Ignored classes (QuPath's convention: a name ending in `*`, such as `Ignore*`) get their own columns and count toward the %; they produce no objects in OBJECTS output.
+- Min/Max Object Size, Hole Filling and Boundary Smoothing do not apply, so these areas will not equal summed OBJECTS areas.
+- On an image with no pixel calibration the extension assumes 1 um per pixel, so the `um^2` columns are really square pixels. Set the pixel size first.
+
+OBJECTS holds a class map of each annotation's whole bounding box in memory. An annotation whose map would need more than half of QuPath's free memory is refused; see [This annotation is too large for Objects output](TROUBLESHOOTING.md#this-annotation-is-too-large-for-objects-output).
+
 ### Object output options (OBJECTS only)
 
 | Option | Description | Typical value |
@@ -53,35 +65,15 @@ For unmatched channels, use the dropdown to manually remap to the correct image 
 | **Min Object Size** | Discard objects smaller than this area (um^2) | 10-100 um^2 |
 | **Max Object Size** | Discard objects larger than this area (um^2); 0 = no limit | 0 (off), or set to drop mis-merged sheets |
 | **Hole Filling** | Fill holes smaller than this area (um^2) | 5-50 um^2 |
-| **Boundary Smoothing** | Simplify jagged boundaries (microns tolerance) | 0.5-2.0 um |
+| **Boundary Smoothing** | Simplify jagged boundaries (tolerance in micrometers, um) | 0.5-2.0 um |
 | **Add shape measurements** | Attach circularity and solidity to each object | ON when filtering objects by shape |
 
-### Separating touching objects, work in progress, not yet available
+### Touching objects of the same class
 
-Object creation is **connected-components**: every contiguous run of one class becomes
-one object. That is correct for continuous regions (a tumor area, a tissue compartment)
-but merges touching instances, two abutting cells of the same class become a single
-object.
-
-Splitting them automatically (a distance-transform watershed over the merged
-classification map) is **implemented but not yet exposed**. It is unit-tested but has
-not been validated on real data, so the controls are hidden and every run uses the
-connected-components behaviour described above. There is no way to enable it from the
-dialog or from a script in this release.
-
-Until it ships, the options for touching objects are:
+Every contiguous patch of one class becomes one object, so two touching cells of the same class come out as a single object. That is right for continuous regions (a tumor area, a tissue compartment). Automatic splitting is not offered in the dialog: it has not been validated on real data. To keep touching objects apart, either:
 
 - Split them in QuPath after creation, with the standard object tools.
-- Train an explicit *boundary* class, annotate the gaps between objects so the
-  interiors fall out already separated. This works today, is more robust than
-  watershed for densely packed irregular shapes, and is a training-data change rather
-  than a post-processing toggle.
-
-> Note for when it does arrive: instance separation is a **post-processing** step on
-> the pixel classification. The model itself is a semantic classifier, it labels
-> pixels by class, not by object identity, so you will **not** retrain it to get
-> separated objects. This mirrors how LABKIT and ilastik derive segments from their
-> pixel classifiers.
+- Train an explicit *boundary* class: annotate the gaps between objects so their interiors come out already separated. This needs no change to the model type, only to the annotations.
 
 ## Step 5: Configure Processing Options
 
@@ -90,20 +82,19 @@ These options are collapsed by default. Expand **PROCESSING OPTIONS** to adjust.
 | Option | Default | Description |
 |--------|---------|-------------|
 | **Tile Size** | Auto-set from classifier | Should match training tile size. Range: 64-8192. |
-| **Tile Overlap (%)** | 12.5% | Higher = better blending but slower (max 50%). See below. |
-| **Blend Mode** | CENTER_CROP | How overlapping tiles merge. See blend mode details below. CENTER_CROP recommended. |
-| **Use GPU** | Yes | 10-50x faster than CPU |
-| **Test-Time Augmentation (TTA)** | No | Apply D4 transforms (flips + 90-degree rotations) and average predictions. ~8x slower but typically 1-3% better quality. Best for final production runs. |
+| **Tile Overlap (%)** | 12.5% | Margin of real image read on each side of a tile. Higher = fewer seams but slower (max 50%). See below. |
+| **Blend Mode** | GAUSSIAN | Every mode keeps only the center of each tile. CENTER_CROP also widens each tile's margin to at least 25% of the tile, which removes rectangular blocks of the wrong class that line up with the tile grid but needs about twice as many tiles at the default overlap. GAUSSIAN, LINEAR and NONE use your overlap as set and give the same result. See [Rectangular blocks of the wrong class](TROUBLESHOOTING.md#rectangular-blocks-of-the-wrong-class-aligned-to-a-grid). |
+| **Use GPU if available** | Yes | Saved with your settings. In this release inference uses the GPU whenever the environment can, whatever this box says. |
+| **Test-Time Augmentation (TTA)** | No | Runs each tile 8 times (flipped and rotated) and averages the answers. About 8x slower; the tooltip estimates 1-3% better quality. Best for final runs. |
 
 ### Tile overlap and context
 
-The overlap setting controls how much context the model sees around each tile's visible region. Both the overlay and Apply Classifier use the same computation (`InferenceConfig.computeEffectivePadding`) with guardrails:
+The overlap sets how many pixels of real image the model sees around each tile's kept center. The overlay and Apply DL Pixel Classifier compute it the same way: your overlap is used as set, limited only so the kept center is at least one pixel wide. The one exception is Blend Mode CENTER_CROP, which raises the margin to 25% of the tile.
 
-- **Minimum**: 25% of tile size per side (e.g., 128px for 512 tiles)
-- **Maximum**: 3/8 of tile size per side (ensures stride >= 25% of tile size)
-- **Floor**: 64px absolute minimum
+The kept center (the stride) is `tileSize - 2 * margin`. For a 512 px tile at the default 12.5%, the margin is 64 px on each side and the stride is 384 px; with CENTER_CROP the margin is 128 px and the stride 256 px.
 
-The effective stride (visible pixels per tile) is `tileSize - 2 * effectivePadding`. For a 512px tile with default settings, this produces stride=256, meaning 50% overlap between adjacent tiles and each pixel's prediction comes from a tile's center region where the model has full context on all sides.
+<details>
+<summary>How tiling and normalization work (background)</summary>
 
 ### Expanded reads (real context)
 
@@ -113,7 +104,7 @@ For multi-scale (context-scale) models, the tile read is expanded further, and a
 
 ### Unified pipeline (overlay = objects)
 
-The **OBJECTS** output and the **overlay** use the exact same inference pipeline (`DLPixelClassifier.applyClassification()`). This guarantees identical predictions: same expanded reads, same normalization, same model input, same center-crop, same Gaussian smoothing. The only difference is output format: the overlay renders pixels directly, while OBJECTS vectorizes the classification map into PathObjects via contour tracing.
+The **OBJECTS** and **MEASUREMENTS** outputs and the **overlay** use the same inference pipeline. This gives identical predictions: same expanded reads, same normalization, same model input, same center-crop, same Gaussian smoothing. The only difference is the output: the overlay renders pixels directly, OBJECTS traces the classification map into QuPath objects, and MEASUREMENTS counts its pixels.
 
 ### Image-level normalization
 
@@ -128,7 +119,9 @@ This is fully automatic and requires no configuration. The normalization method 
 
 ### BatchRenorm (model-internal normalization)
 
-Newly trained models use **BatchRenorm** instead of standard BatchNorm for the network's internal normalization layers. Standard BatchNorm causes a train/eval disparity: running statistics accumulated during training diverge from actual tile statistics during inference, creating artifacts that no amount of overlap or blending can fix. BatchRenorm uses consistent global statistics in both modes, producing seamless tiled predictions. Older models trained with standard BatchNorm will continue to work but may exhibit more visible tile boundaries.
+Newly trained models use **BatchRenorm** instead of standard BatchNorm for the network's internal normalization layers (MuViT models use LayerNorm instead). Standard BatchNorm causes a train/eval disparity: running statistics accumulated during training diverge from actual tile statistics during inference, creating artifacts that no amount of overlap or blending can fix. BatchRenorm uses consistent global statistics in both modes, producing seamless tiled predictions. Older models trained with standard BatchNorm will continue to work but may exhibit more visible tile boundaries.
+
+</details>
 
 ## Step 6: Set Application Scope
 
@@ -140,40 +133,42 @@ Newly trained models use **BatchRenorm** instead of standard BatchNorm for the n
 
 > **Tip**: Use "Apply to selected annotations only" to test on a small region before processing the entire image.
 
-### Backup option
+With **Apply to whole image** and MEASUREMENTS, the extension adds a "Full Image" annotation to the image and puts the measurements on it.
 
-Check **Create backup of annotation measurements** to save existing measurements before overwriting. Recommended when re-running inference on previously classified images.
+Applying MEASUREMENTS again replaces the earlier `DL:` measurements of the same names. To keep the earlier results, duplicate the image in the project first, or export the measurements.
 
 ## Step 7: Apply
 
-Click **Apply** to start inference. Progress is shown in the QuPath log.
+1. **Click Apply.** An **Applying Classifier** window shows progress.
+2. When it finishes, the objects (OBJECTS) appear in the viewer and the Hierarchy tab, or the new `DL:` columns (MEASUREMENTS) appear in the annotations' measurement table.
 
 ![Two tissue sections shown before and after classification: the raw H&E sections on the left and the same sections on the right with per-class color predictions overlaid](images/inference-tissue-prediction.png)
 
 *Left: input tissue sections. Right: the same sections after applying a trained classifier, with per-class predictions rendered as a color overlay.*
 
-> **Note:** All inference dialog settings (output type, blend mode, smoothing, tile size, overlap, GPU, object type, min object size, hole filling, application scope, backup) are remembered across sessions.
+> **Note:** The dialog remembers output type, blend mode, smoothing, tile size, overlap, the GPU box, object type, min and max object size, hole filling, shape measurements and application scope across sessions.
 
 ## Live Overlay Mode
 
 For quick visual inspection without the full inference dialog:
 
-1. **Extensions > DL Pixel Classifier > Select Overlay Model...**: choose a trained classifier
-2. **Extensions > DL Pixel Classifier > Toggle Prediction Overlay**: check to enable, uncheck to remove
-3. The overlay renders as you pan and zoom using CENTER_CROP tile handling (artifact-free boundaries)
-4. Toggle off and on again without re-selecting the model, the selection persists
+1. **Click Extensions > DL Pixel Classifier > Select Overlay Model...** and choose a trained classifier.
+2. **Click Extensions > DL Pixel Classifier > Toggle Prediction Overlay.** Colored predictions appear over the image and fill in as you pan and zoom. Each tile keeps only its center, so tile edges do not show.
+3. **Click Toggle Prediction Overlay again** to remove it. The model selection persists, so you can toggle it back on without choosing again.
 
 If you toggle the overlay on without selecting a model first, you will be prompted to choose one.
 
-### Overlay Settings
+The overlay's margin around each tile follows the **Tile Overlap** last set in the Train or Apply dialog (the two share one setting) and the **Blend Mode** last used in Apply DL Pixel Classifier.
 
-Overlay behavior is configured in **Edit > Preferences > DL Pixel Classifier**:
+### Overlay and classification settings
 
-- **Overlay Prediction Smoothing** (sigma 0-10, default 2.0): Gaussian smoothing of probability maps before classification. Higher values reduce noisy per-pixel predictions, especially for ResNet/CNN models. MuViT/ViT models produce smoother predictions and may need less smoothing.
-- **Overlay High-Quality Tile Averaging** (default off): Run each tile at 4 spatial offsets and average the predictions to eliminate tile boundary seams. Applies to both the overlay and Apply Classifier. ~4x slower.
+These are in **Edit > Preferences > DL Pixel Classifier**. Despite their names, both apply to the overlay **and** to Apply DL Pixel Classifier:
 
-Changes are applied immediately to the active overlay. The overlay always uses CENTER_CROP tile handling.
+- **Overlay Prediction Smoothing** (sigma 0-10, default 2.0): Gaussian smoothing of the class probabilities before each pixel is assigned a class. It applies to OBJECTS and MEASUREMENTS too, so changing it changes measured areas. Use the same value for every image you intend to compare. Higher values reduce noisy per-pixel predictions, especially for ResNet/CNN models. MuViT/ViT models produce smoother predictions and may need less smoothing.
+- **Overlay High-Quality Tile Averaging** (default off): Run each tile at 4 spatial offsets and average the predictions to eliminate tile boundary seams. About 4x slower.
+
+Changes are applied immediately to the active overlay.
 
 ## Copy as Script
 
-Click the **"Copy as Script"** button (left side of the button bar) to generate a Groovy script matching your current settings. See [SCRIPTING.md](SCRIPTING.md) for batch processing.
+Click the **Copy as Script** button (left side of the button bar) to generate a Groovy script matching your current settings. The script does not carry **Overlay High-Quality Tile Averaging**. See [SCRIPTING.md](SCRIPTING.md) for batch processing.

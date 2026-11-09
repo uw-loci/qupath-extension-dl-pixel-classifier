@@ -6,6 +6,10 @@ You trained a pixel classifier on your fly wing images and it works great. Then 
 
 You don't have time to annotate hundreds of their images from scratch. And you shouldn't have to, you already taught the model what veins, hairs, and intervein regions look like. The problem isn't that the model doesn't know what a vein is. The problem is that the new images *look* different enough that the model doesn't recognize them.
 
+## Try this first: calibrate the model to the new images
+
+**Extensions > DL Pixel Classifier > Utilities > Calibrate model to current image...** takes seconds, needs no annotations and no retraining, and keeps your original model. Open one of the new images, run it, and compare the result with the original model. Details: [Calibrate model to current image (AdaBN)](#calibrate-model-to-current-image-adabn). If calibration is not enough, the SSL pretraining below adapts the model further.
+
 ## What SSL Pretraining Does (Simple Explanation)
 
 Your trained classifier has two parts:
@@ -27,19 +31,26 @@ When your classifier fails on new images, it's usually because the encoder learn
 
 ### Step 1: Mark the tissue regions
 
-Open the new images in QuPath and draw rough annotations around the tissue areas. These don't need to be precise; they just tell the system "extract tiles from here, not from the empty slide background." Any annotation class works (Tissue, Region, or whatever you use).
+Open the new images in QuPath and draw rough annotations around the tissue areas. These don't need to be precise; they tell the system "extract tiles from here, not from the empty slide background." Any annotation class works (Tissue, Region, or whatever you use).
 
 You do NOT need to label veins, hairs, etc. at this stage. Just outline where the tissue is.
 
 ### Step 2: Run SSL Pretrain Encoder
 
-1. Go to **DL Pixel Classifier > Utilities > SSL Pretrain Encoder...**
-2. **SSL Method**: Choose BYOL (works better with smaller datasets)
-3. **Backbone**: Select the same backbone your original classifier used (check your model's `metadata.json`, look at `architecture.backbone`, e.g., `resnet34`)
-4. **Initialize from trained model**: Click Browse and select your existing trained `model.pt` file. This is the key step, instead of starting from scratch, the encoder starts with everything it already learned from your images
-5. **Data section**: Select the new images and check the annotation classes you used to mark tissue regions
-6. **Epochs**: 100 is usually enough
-7. Click **Start Pretraining**
+SSL pretraining is hidden by default. To show it, tick **Edit > Preferences > DL Pixel Classifier > Show Developer Pretraining Options**, then restart QuPath.
+
+1. **Open Extensions > DL Pixel Classifier > Utilities > SSL Pretrain Encoder...**
+2. Set these fields:
+
+   | Field | Set to |
+   |-------|--------|
+   | **SSL Method** | BYOL (works better with smaller datasets) |
+   | **Backbone** | The same backbone your original classifier used. **Manage Classifiers** shows it as **Backbone** in the classifier's details (for example `resnet34`). |
+   | **Initialize from trained model (optional)** | Click **Browse...** and select your existing trained `model.pt`. This is the key step: the encoder starts from everything it already learned from your images, instead of from scratch. |
+   | **Data** section | Select the new images and tick the annotation classes you used to mark tissue regions. |
+   | **Epochs** | 100 is usually enough. |
+
+3. **Click Start Pretraining.**
 
 This will take a few minutes to an hour depending on how many images you have and your GPU. The encoder is learning to "see" the new images while keeping its knowledge of what biological features look like.
 
@@ -47,11 +58,12 @@ This will take a few minutes to an hour depending on how many images you have an
 
 Now you need a small amount of ground truth on the new images. Annotate veins, hairs, and background on **2-5 images** from the new set. This is much less work than annotating everything from scratch.
 
-1. Go to **DL Pixel Classifier > Train**
-2. Choose the same architecture (e.g., UNet) and backbone (e.g., ResNet-34)
-3. Under **Weight Initialization**, switch to advanced mode and select **Use SSL pretrained encoder**
-4. Browse to the `model.pt` that SSL pretraining just created
-5. Train as normal
+1. **Open Extensions > DL Pixel Classifier > Train DL Pixel Classifier...**
+2. **Click Show All Settings.** The SSL option is not shown otherwise.
+3. Choose the same architecture (e.g., UNet) and backbone (e.g., ResNet-34).
+4. Under **Weight Initialization**, select **Use SSL pretrained encoder**.
+5. Click **Browse...** and select the `model.pt` that SSL pretraining just created.
+6. Train as normal.
 
 The classifier should now work much better on the new images because:
 - The encoder already knows what features matter for fly wings (from your original training)
@@ -64,7 +76,7 @@ The classifier should now work much better on the new images because:
 - **How many unannotated images?**: More is better, but even 10-20 images help. The goal is to give the encoder enough examples of the new image style.
 - **How many annotated images for Step 3?**: Start with 3-5. If results aren't good enough, add a few more. You'll likely need far fewer annotations than training from scratch.
 - **Same backbone matters**: The SSL pretrained encoder must use the same backbone as your original model. If your original used ResNet-34, the SSL pretraining must also use ResNet-34.
-- **Check your model's backbone**: Open the `metadata.json` file next to your trained `model.pt` in any text editor. Look for `"architecture"` -> `"backbone"` to see which backbone was used.
+- **Check your model's backbone**: **Manage Classifiers** shows it as **Backbone** in the classifier's details. You can also open the `metadata.json` file next to your trained `model.pt` in a text editor and look for `"architecture"` -> `"backbone"`.
 
 ---
 
@@ -82,7 +94,7 @@ The domain adaptation scenario above (different microscope, same biology) is the
 3. Annotate veins/hairs/background carefully on 5-10 images
 4. Train using the SSL encoder
 
-**Why it works:** The encoder has already seen 500 images worth of visual patterns. It knows what wing tissue looks like, what edges look like at your resolution, and what artifacts to ignore. It just needs a few labeled examples to learn which patterns correspond to which classes.
+**Why it works:** The encoder has already seen 500 images worth of visual patterns. It knows what wing tissue looks like, what edges look like at your resolution, and what artifacts to ignore. It needs only a few labeled examples to learn which patterns correspond to which classes.
 
 ### You are adding a new class to an existing classifier
 
@@ -161,6 +173,8 @@ For parameter descriptions, see [Parameters: SSL Pretraining](PARAMETERS.md#ssl-
 
 ## Calibrate model to current image (AdaBN)
 
-Once a model is trained, the `Calibrate model to current image...` menu item recomputes the encoder's BatchNorm running statistics on a sample of tiles drawn from the currently-open image. No retraining, no labels. The output is a new model with `_adabn` suffix; the original is preserved.
+**Extensions > DL Pixel Classifier > Utilities > Calibrate model to current image...** re-measures the brightness and contrast statistics that a model's BatchNorm layers use internally, from tiles of the open image. It needs no labels and no retraining. It saves a new classifier with `_adabn` added to its name and leaves the original unchanged.
 
-**When to use:** When a trained model produces visibly worse predictions on a new acquisition (different white balance, exposure, sensor gain) but the underlying tissue/feature content is the same. AdaBN typically closes most of the cross-batch performance gap and finishes in seconds.
+**Which models it works on:** models with BatchNorm or BatchRenorm layers, which covers UNet, Fast Pretrained and Tiny UNet models, including every model this version trains. MuViT models, and a Tiny UNet built with GroupNorm, have no such statistics; the tool refuses them with a message and saves nothing.
+
+Compare the `_adabn` copy with the original on a few of the new images (apply both, or switch the overlay between them). If it helps, use the copy for that batch; if it does not, the original is unchanged and the SSL steps above are the next thing to try.

@@ -1,5 +1,7 @@
 # Context and Downsample: Design and Tile-Geometry Reference
 
+> **Audience:** developers changing tile geometry, context scale or downsample.
+
 Design/reference doc for how the **Resolution** ("downsample") control, the **Surrounding
 context** ("context scale") control, and the derived **context padding** interact with training
 tiles, the per-tile Training Area Issues preview, and production inference.
@@ -22,7 +24,7 @@ differ and what the intended invariants are.
 |---|---|---|---|
 | **Resolution:** | `TrainingConfig.downsample` (double) | `architecture["downsample"]` | Pixel size tiles are read at. 1x = full res; 4x = quarter res (more area per tile, less detail). |
 | **Surrounding context:** | `TrainingConfig.contextScale` (int, default 1) | `architecture["context_scale"]` (sent only when > 1) | When > 1, a second "context" tile is read from a region `contextScale` times larger and downsampled to the tile's pixel dimensions, then concatenated on the channel axis (C -> 2C). |
-| *(derived, not a UI field)* | `contextPadding` (export) / `inputPadding` + `contextInferencePad` (inference) | `config.json["context_padding"]` | A border of *real* image pixels around each tile so the model sees neighbours instead of zero-padding at tile edges. |
+| *(derived, not a UI field)* | `contextPadding` (export) / `inputPadding` + `contextInferencePad` (inference) | `config.json["context_padding"]` | A border of *real* image pixels around each tile so the model sees neighbors instead of zero-padding at tile edges. |
 
 Data flow for the two UI controls:
 
@@ -104,7 +106,7 @@ exported tiles -- not production inference.
 ### 3c. Production inference
 `service/DLPixelClassifier.java` + `python_server/.../services/inference_service.py`.
 - Loads **ONNX** (`model_static_bn.onnx` / `model_static.onnx` / `model.onnx`;
-  `inference_service.py` ~1064-1066), falling back to `model.pt` only if ONNX is missing.
+  variant chosen in `InferenceService._load_model`), falling back to `model.pt` only if ONNX is missing.
 - Tiles are **freshly read from the live image**. The requested region is expanded by
   `inputPadding + contextInferencePad` per side (`expandRequest`), reflection-padded on image-edge
   tiles, and the context tile is read live by `DLPixelClassifier.readContextTile`.
@@ -221,7 +223,11 @@ Three changes, addressing the ranked causes in Section 5:
    `DLPixelClassifier` now sets `contextInferencePad = inputPadding` for context models (was
    `tileSize/4` rounded to 32). The inference model input becomes `tileSize + 2*inputPadding`, exactly
    the trained input (`tileSize + 2*contextPadding`, since `contextPadding == inputPadding`), so the
-   detail<->context relative scale matches in **all** overlap configs. Both tensors are padded to the
+   detail<->context relative scale matches, provided inference runs at the training overlap in
+   pixels and not under CENTER_CROP's 25% floor. The inference overlap comes from the Apply dialog /
+   overlay preference and Blend Mode (`InferenceConfig.effectivePadding()`), not from the model:
+   nothing reads the trained context padding back from the metadata. A different inference overlap,
+   or CENTER_CROP, still changes the detail-to-context scale. Both tensors are padded to the
    encoder divisor by the Python `pad_to_multiple`, identically at training and inference, so the
    input need not be a multiple of 32 here.
 
@@ -247,7 +253,9 @@ only changes newly trained models. Re-train (or re-export) to get a correctly-ba
 
 **Still owed:** end-to-end validation on a real `contextScale > 1` model (run inference on an image,
 then open Training Area Issues for a tile from it and confirm the preview matches), plus the Phase 0
-harness numbers (`tools/diagnose_eval_vs_inference.py`) recorded in Section 5.
+harness numbers (`tools/diagnose_eval_vs_inference.py`) recorded in Section 5. Also owed: invariant B
+holds only when the inference overlap equals the training overlap (see item 1); inference does not
+yet take its padding from the training padding.
 
 ---
 
