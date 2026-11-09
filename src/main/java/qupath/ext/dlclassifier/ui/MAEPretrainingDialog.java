@@ -324,9 +324,9 @@ public class MAEPretrainingDialog {
         VBox content = new VBox(10);
         content.setPadding(new Insets(10));
 
-        Hyperlink tipsLink = new Hyperlink("Pretraining tips");
+        Hyperlink tipsLink = ThemeColors.hyperlink("Pretraining tips");
         tipsLink.setOnAction(e -> showPretrainingTipsDialog(dialog));
-        tipsLink.setStyle("-fx-font-size: 11px;");
+        tipsLink.setStyle(tipsLink.getStyle() + " -fx-font-size: 11px;");
         content.getChildren().add(tipsLink);
 
         content.getChildren().add(buildModelSection());
@@ -988,8 +988,10 @@ public class MAEPretrainingDialog {
                 + "semantic learning but takes longer to converge. Lower = easier, useful for\n"
                 + "small or low-diversity datasets.\n\n"
                 + "AFTER PRETRAINING\n"
-                + "The encoder .pt file is saved to the output directory. Load it in the\n"
-                + "training dialog via 'Continue from model' with MuViT architecture selected.";
+                + "The encoder .pt file is saved to the output directory. To use it: open\n"
+                + "Train DL Pixel Classifier, switch to Show All Settings, pick the MuViT\n"
+                + "architecture, and choose 'Use MAE pretrained encoder' under Weight\n"
+                + "Initialization.";
         TextArea textArea = new TextArea(tips);
         textArea.setEditable(false);
         textArea.setWrapText(true);

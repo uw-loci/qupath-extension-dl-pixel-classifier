@@ -94,7 +94,7 @@ final class HudPalette {
             // Grey rather than a hard-coded copy of the palette: a HUD that
             // draws in one flat colour says "the stylesheet is missing" at a
             // glance, and keeps the token values in one file.
-            logger.warn("hud.css did not resolve its colour tokens; the training HUD will draw in grey");
+            logger.warn("hud.css did not resolve its color tokens; the training HUD will draw in gray");
         }
         return Color.GRAY;
     }

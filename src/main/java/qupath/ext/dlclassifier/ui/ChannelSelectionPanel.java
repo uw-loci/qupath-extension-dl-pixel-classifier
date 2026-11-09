@@ -189,8 +189,8 @@ public class ChannelSelectionPanel extends VBox {
                         + "  Robust to outliers and hot pixels. Best for most images.\n\n"
                         + "MIN_MAX: Scale to [0,1] using channel min/max values.\n"
                         + "  Sensitive to outliers -- a single bright pixel affects the range.\n\n"
-                        + "Z_SCORE: Subtract mean, divide by std deviation.\n"
-                        + "  Common in deep learning; centers data around zero.\n\n"
+                        + "Z_SCORE: Centers each channel on its average brightness and\n"
+                        + "  scales it by how much it varies (mean and standard deviation).\n\n"
                         + "FIXED_RANGE: Use a fixed intensity range (e.g. 0-255 for 8-bit).\n"
                         + "  Useful when consistent intensity scaling is required across images.");
 

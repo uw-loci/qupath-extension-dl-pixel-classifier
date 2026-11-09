@@ -130,11 +130,8 @@ public class DLClassifierScripts {
         List<String> classes = source.getClasses().stream()
                 .map(ClassifierMetadata.ClassInfo::name)
                 .toList();
-        String name = (overrides != null && overrides.get("name") instanceof String n && !n.isEmpty())
-                ? n
-                : existingClassifierId + "_retrain_" + System.currentTimeMillis();
-        String description =
-                (overrides != null && overrides.get("description") instanceof String d) ? d : source.getDescription();
+        String name = overrideText(overrides, "name", existingClassifierId + "_retrain_" + System.currentTimeMillis());
+        String description = overrideText(overrides, "description", source.getDescription());
         logger.info(
                 "Retraining from '{}' as '{}', {} override(s)",
                 existingClassifierId,
@@ -148,6 +145,25 @@ public class DLClassifierScripts {
                 .classes(classes)
                 .build()
                 .run();
+    }
+
+    /**
+     * A text override from a script's map, or the fallback when it is absent or empty.
+     * <p>
+     * Accepts any {@link CharSequence}: Groovy's {@code "run_${seed}"} is a GString, not a
+     * {@code String}, and a String-only check silently dropped it, so a seed sweep named
+     * every run {@code <id>_retrain_<millis>} instead of the names the script asked for.
+     *
+     * @param overrides the script's override map, may be null
+     * @param key       the key to read
+     * @param fallback  used when the key is absent, not text, or empty
+     * @return the override as a String, or the fallback
+     */
+    static String overrideText(Map<String, Object> overrides, String key, String fallback) {
+        if (overrides != null && overrides.get(key) instanceof CharSequence text && text.length() > 0) {
+            return text.toString();
+        }
+        return fallback;
     }
 
     /**
@@ -244,12 +260,9 @@ public class DLClassifierScripts {
 
         // Build channel configuration
         ChannelConfiguration channelConfig = ChannelConfiguration.builder()
-                .selectedChannels(
-                        classifier.getExpectedChannelNames().isEmpty()
-                                ? List.of(0, 1, 2)
-                                : java.util.stream.IntStream.range(0, classifier.getInputChannels())
-                                        .boxed()
-                                        .toList())
+                // The channels the model was trained on, as the Apply dialog uses them; a
+                // model trained on channels 2, 0, 3 was fed 0, 1, 2 here.
+                .selectedChannels(classifier.getSelectedChannelsOrRange())
                 .channelNames(
                         classifier.getExpectedChannelNames().isEmpty()
                                 ? List.of("Red", "Green", "Blue")

@@ -988,8 +988,8 @@ public class ScriptGenerator {
 
     /**
      * Emits the {@code ChannelConfiguration.builder()} chain. Channel config
-     * is fully populated from the dialog, so every field is always emitted
-     * (no conditional gates here).
+     * is fully populated from the dialog, so every field is emitted; the fixed
+     * range only with the FIXED_RANGE strategy, the one that reads it.
      */
     private static void appendChannelConfig(StringBuilder sb, ChannelConfiguration channelConfig) {
         appendLine(sb, "// Configure channels");
@@ -1002,6 +1002,17 @@ public class ScriptGenerator {
                 sb,
                 BUILDER_INDENT + ".normalizationStrategy(ChannelConfiguration.NormalizationStrategy."
                         + channelConfig.getNormalizationStrategy().name() + ")");
+        // The rest of the normalization: without these a replayed script normalized with
+        // the builder's defaults (pooled channels, 99th percentile), so an image with more
+        // than three channels trained or applied a different model than the dialog did.
+        appendLine(sb, BUILDER_INDENT + ".perChannelNormalization(" + channelConfig.isPerChannelNormalization() + ")");
+        appendLine(sb, BUILDER_INDENT + ".clipPercentile(" + formatDouble(channelConfig.getClipPercentile()) + ")");
+        if (channelConfig.getNormalizationStrategy() == ChannelConfiguration.NormalizationStrategy.FIXED_RANGE) {
+            appendLine(
+                    sb,
+                    BUILDER_INDENT + ".fixedRange(" + formatDouble(channelConfig.getFixedMin()) + ", "
+                            + formatDouble(channelConfig.getFixedMax()) + ")");
+        }
         appendLine(sb, BUILDER_INDENT + ".build()");
         appendLine(sb, "");
     }

@@ -56,4 +56,18 @@ class RetrainSettingsTest {
         assertEquals(List.of(0, 1, 2), ch.getSelectedChannels());
         assertEquals(List.of("Red", "Green", "Blue"), ch.getChannelNames());
     }
+
+    @Test
+    void textOverridesAcceptAnyCharSequenceTheWayGroovyPassesThem() {
+        // A Groovy GString is a CharSequence, not a String; StringBuilder stands in for it.
+        Map<String, Object> o = new java.util.HashMap<>();
+        o.put("name", new StringBuilder("run_seed").append(3));
+        o.put("description", "");
+        o.put("other", 7);
+        assertEquals("run_seed3", DLClassifierScripts.overrideText(o, "name", "fallback"));
+        assertEquals("fallback", DLClassifierScripts.overrideText(o, "description", "fallback"), "empty -> fallback");
+        assertEquals("fallback", DLClassifierScripts.overrideText(o, "other", "fallback"), "not text -> fallback");
+        assertEquals("fallback", DLClassifierScripts.overrideText(o, "missing", "fallback"));
+        assertEquals("fallback", DLClassifierScripts.overrideText(null, "name", "fallback"));
+    }
 }

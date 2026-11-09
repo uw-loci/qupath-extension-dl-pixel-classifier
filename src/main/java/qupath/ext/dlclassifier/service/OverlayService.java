@@ -208,7 +208,7 @@ public class OverlayService {
                 .build();
 
         if (!showInferenceInteractionWarnings(config, selectedMetadata)) {
-            logger.info("Overlay cancelled at the interaction warning");
+            logger.info("Overlay canceled at the interaction warning");
             return false;
         }
 

@@ -37,9 +37,22 @@ class PretrainedArchitectureFilterTest {
     }
 
     @Test
-    void unfilteredShowsEverythingTheRegistryHas() {
+    void unfilteredShowsEverythingTheDialogCanTrain() {
         assertThat(TrainingDialog.TrainingDialogBuilder.architectureChoices(false))
-                .containsExactlyElementsOf(ClassifierRegistry.getAllTypes());
+                .containsExactlyElementsOf(ClassifierRegistry.getAllTypes().stream()
+                        .filter(t -> !"custom_onnx".equals(t))
+                        .toList())
+                .contains("unet", "fast-pretrained", "tiny-unet", "muvit");
+    }
+
+    @Test
+    void customOnnxIsNeverOfferedForTraining() {
+        // Start Training refused it ("Unknown model type: custom_onnx", 2026-10-29).
+        assertThat(handler("custom_onnx").trainableInDialog()).isFalse();
+        assertThat(TrainingDialog.TrainingDialogBuilder.architectureChoices(false))
+                .doesNotContain("custom_onnx");
+        assertThat(TrainingDialog.TrainingDialogBuilder.architectureChoices(true))
+                .doesNotContain("custom_onnx");
     }
 
     @Test

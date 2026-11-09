@@ -326,9 +326,6 @@ public final class DLClassifierPreferences {
     private static final StringProperty applicationScope =
             PathPrefs.createPersistentPreference("dlclassifier.applicationScope", "ALL_ANNOTATIONS");
 
-    private static final BooleanProperty createBackup =
-            PathPrefs.createPersistentPreference("dlclassifier.createBackup", false);
-
     // Multi-pass tile averaging for seamless inference
     private static final BooleanProperty multiPassAveraging =
             PathPrefs.createPersistentPreference("dlclassifier.multiPassAveraging", false);
@@ -1660,18 +1657,6 @@ public final class DLClassifierPreferences {
 
     public static StringProperty applicationScopeProperty() {
         return applicationScope;
-    }
-
-    public static boolean isCreateBackup() {
-        return createBackup.get();
-    }
-
-    public static void setCreateBackup(boolean backup) {
-        createBackup.set(backup);
-    }
-
-    public static BooleanProperty createBackupProperty() {
-        return createBackup;
     }
 
     // ==================== Environment ====================

@@ -28,6 +28,16 @@ class NoHardCodedStyleColorsTest {
             "-fx-(text-fill|background-color|border-color|control-inner-background|prompt-text-fill)\\s*:\\s*"
                     + "[^;\"]*(#[0-9A-Fa-f]{3}|\\b(red|green|blue|white|black|gray|grey|orange|yellow)\\b|rgba?\\()");
 
+    /**
+     * Two more ways to land below 4.5:1 without a hex color: the theme's accent as text
+     * (3.1:1 light, 3.7:1 dark) and JavaFX's default link color (the same). Links come from
+     * {@link ThemeColors#hyperlink(String)}; accent-colored notes use {@link ThemeColors#INFO}.
+     */
+    private static final Pattern UI_COLOR_STRING = Pattern.compile("\"#[0-9A-Fa-f]{3,8}\"");
+
+    private static final Pattern LOW_CONTRAST_DEFAULTS =
+            Pattern.compile("-fx-text-fill:\\s*-fx-accent|new\\s+(javafx\\.scene\\.control\\.)?Hyperlink\\(");
+
     @Test
     void stylesUseThemeColors() throws IOException {
         Path root = Path.of("src/main/java/qupath/ext/dlclassifier");
@@ -43,7 +53,14 @@ class NoHardCodedStyleColorsTest {
                 List<String> lines = Files.readAllLines(p, StandardCharsets.UTF_8);
                 for (int i = 0; i < lines.size(); i++) {
                     String line = lines.get(i);
-                    if (HARD_CODED.matcher(line).find() && !line.contains("theme-exempt:")) {
+                    // In the UI package a bare color string is almost always a text color picked
+                    // in code (the training-data status line was one, and missed the rewrite).
+                    boolean uiColorString = p.toString().contains("/ui/")
+                            && UI_COLOR_STRING.matcher(line).find();
+                    boolean hard = HARD_CODED.matcher(line).find()
+                            || LOW_CONTRAST_DEFAULTS.matcher(line).find()
+                            || uiColorString;
+                    if (hard && !line.contains("theme-exempt:")) {
                         found.add(root.relativize(p) + ":" + (i + 1) + ": " + line.trim());
                     }
                 }

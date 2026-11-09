@@ -576,7 +576,7 @@ public class InferenceWorkflow {
 
                 for (PathObject annotation : targetObjects) {
                     if (progress.isCancelled()) {
-                        progress.complete(false, "Inference cancelled by user");
+                        progress.complete(false, "Inference canceled by user");
                         return;
                     }
 
@@ -808,6 +808,12 @@ public class InferenceWorkflow {
             OutputGenerator outputGenerator = new OutputGenerator(imageData, metadata, inferenceConfig);
             if (measurements) {
                 outputGenerator.addClassPixelMeasurements(parentObject, counter.counts(), ds);
+                // "Apply to whole image" measures onto a "Full Image" annotation made for the
+                // run; until it joins the hierarchy, the measurements are on an object nobody
+                // can see and are lost when the run ends.
+                if (parentObject != null && !parentObject.isRootObject() && parentObject.getParent() == null) {
+                    imageData.getHierarchy().addObject(parentObject);
+                }
                 if (progress != null) {
                     progress.log("Measured " + counter.total() + " classified pixels in " + (processed - skipped)
                             + " tiles (" + skipped + " outside the annotation skipped)");

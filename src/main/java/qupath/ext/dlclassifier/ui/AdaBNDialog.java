@@ -55,9 +55,10 @@ public class AdaBNDialog {
 
         Dialog<ButtonType> dialog = new Dialog<>();
         dialog.setTitle("Calibrate model to current image");
-        dialog.setHeaderText("Recompute BatchNorm running statistics on a sample of tiles\n"
-                + "drawn from the current image.\n"
-                + "Saves a new model with '_adabn' suffix; original is preserved.");
+        dialog.setHeaderText("Re-measure the brightness and contrast statistics the model uses\n"
+                + "internally, from a sample of tiles of the current image.\n"
+                + "Saves a new model with an '_adabn' suffix; the original is kept.\n"
+                + "MuViT models have no such statistics and cannot be calibrated.");
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
 
         ChoiceBox<ClassifierMetadata> modelChoice = new ChoiceBox<>(FXCollections.observableArrayList(models));

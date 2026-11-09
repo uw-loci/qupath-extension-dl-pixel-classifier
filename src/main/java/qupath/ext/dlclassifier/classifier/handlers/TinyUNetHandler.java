@@ -79,7 +79,7 @@ public class TinyUNetHandler implements ClassifierHandler {
         return "Lightweight depthwise-separable U-Net. Trains in seconds to minutes "
                 + "for simple 2-5 class microscopy tasks. Trains from scratch every "
                 + "time - there are no pretrained weights for this architecture, so "
-                + "it needs more labelled tiles than a pretrained one to reach the "
+                + "it needs more labeled tiles than a pretrained one to reach the "
                 + "same quality. That is the right trade for fluorescence or "
                 + "multi-channel data, where ImageNet priors do not transfer. For "
                 + "RGB brightfield, 'Fast Pretrained (small RGB)' is usually the "

@@ -1,6 +1,7 @@
 package qupath.ext.dlclassifier.ui;
 
 import java.util.List;
+import javafx.scene.control.Hyperlink;
 
 /**
  * Colors for inline styles that read in QuPath's light AND dark themes.
@@ -98,11 +99,31 @@ public final class ThemeColors {
     /** A cool-tinted row (encoder layers in the freeze panel). */
     public static final Shade COOL_BG = new Shade("#2b3846", "#eef6ff");
 
+    /**
+     * Link text. JavaFX's default link color measured 3.1:1 on the light theme's background
+     * and 3.7:1 on the dark one, below the 4.5:1 minimum; every link the extension makes
+     * comes from {@link #hyperlink(String)} instead.
+     */
+    public static final Shade LINK = new Shade("#8cc4ff", "#0a5a8c");
+
     /** A neutral border or divider. */
     public static final Shade BORDER = new Shade("#5c6267", "#c8c8c8");
 
+    /**
+     * A link in the link color. Use this instead of {@code new Hyperlink(...)};
+     * {@code NoHardCodedStyleColorsTest} fails on a bare one.
+     *
+     * @param text the link text
+     * @return the styled link
+     */
+    public static Hyperlink hyperlink(String text) {
+        Hyperlink link = new Hyperlink(text);
+        link.setStyle("-fx-text-fill: " + LINK + ";");
+        return link;
+    }
+
     /** Every text color and the backgrounds it is drawn on, for the contrast test. */
-    static final List<Shade> TEXT_ON_THEME = List.of(MUTED, WARNING, ERROR, SUCCESS, INFO);
+    static final List<Shade> TEXT_ON_THEME = List.of(MUTED, WARNING, ERROR, SUCCESS, INFO, LINK);
 
     /** Every banner text color paired with its banner background, for the contrast test. */
     static final List<Shade[]> TEXT_ON_BANNER = List.of(

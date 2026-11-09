@@ -41,7 +41,7 @@ public final class BrnFoldConvergenceWatcher implements PreferenceWarning {
                 + "safe after BRN's running statistics have "
                 + "converged -- models trained for fewer than ~20 "
                 + "epochs may produce a BN-folded ONNX whose eval "
-                + "behaviour drifts from training. For short runs, "
+                + "behavior drifts from training. For short runs, "
                 + "INT8 inference falls back to FP16 automatically "
                 + "and logs a warning. Re-export a longer-trained "
                 + "model to get the full INT8 speedup.";

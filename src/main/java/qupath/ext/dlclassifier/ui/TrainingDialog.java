@@ -206,7 +206,12 @@ public class TrainingDialog {
          * @return the types to show, in registry order
          */
         static List<String> architectureChoices(boolean pretrainedOnly) {
-            List<String> all = new ArrayList<>(ClassifierRegistry.getAllTypes());
+            // Only architectures the dialog can actually train (Custom ONNX is inference-only).
+            List<String> all = ClassifierRegistry.getAllTypes().stream()
+                    .filter(t -> ClassifierRegistry.getHandler(t)
+                            .map(ClassifierHandler::trainableInDialog)
+                            .orElse(true))
+                    .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
             if (!pretrainedOnly) {
                 return all;
             }
@@ -567,9 +572,10 @@ public class TrainingDialog {
             TooltipHelper.install(
                     loadProfileButton,
                     "Load a previously saved profile JSON file. Applies training\n"
-                            + "parameters and selected class names (if the classes have\n"
-                            + "been loaded), name, and description. Image selection and\n"
-                            + "per-image train/val roles are not touched.");
+                            + "parameters, normalization, name, and description. Classes\n"
+                            + "and image selection stay as they are. Per-image train/val\n"
+                            + "roles change only if the file lists them (profiles saved\n"
+                            + "here do not).");
             loadProfileButton.setOnAction(e -> loadProfileFromFile(loadProfileButton));
 
             hudToggle = new ToggleButton("Training HUD");
@@ -822,8 +828,7 @@ public class TrainingDialog {
             Button recoverButton = new Button("Recover");
             TooltipHelper.install(
                     recoverButton,
-                    "Run finalize_training.py on this checkpoint and save the\n"
-                            + "best model as a usable classifier in this project.");
+                    "Save the best model this interrupted run reached as a\n" + "classifier in this project.");
             recoverButton.setOnAction(e -> {
                 SetupDLClassifier.recoverFromCheckpoint(QuPathGUI.getInstance(), orphan.file());
                 // Recovery runs on a background thread; optimistically remove
@@ -1062,7 +1067,10 @@ public class TrainingDialog {
             maeEncoderPathField.setFocusTraversable(false);
             maeEncoderPathField.setMouseTransparent(true);
             maeEncoderPathField.setStyle("-fx-control-inner-background: " + ThemeColors.PANEL_BG + "; -fx-text-fill: "
-                    + ThemeColors.MUTED + "; -fx-background-insets: 0; " + "-fx-background-radius: 2;");
+                    + ThemeColors.MUTED + "; -fx-background-insets: 0; " + "-fx-background-radius: 2;"
+                    // The prompt is the only text in an empty path field, so it must read. QuPath's
+                    // dark theme sets prompt colors !important; this has to say so too to apply.
+                    + " -fx-prompt-text-fill: " + ThemeColors.MUTED + " !important;");
             maeEncoderPathField.setPromptText("(no file selected -- click Browse to choose)");
             maeEncoderPathField.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(maeEncoderPathField, Priority.ALWAYS);
@@ -1149,7 +1157,10 @@ public class TrainingDialog {
             sslEncoderPathField.setFocusTraversable(false);
             sslEncoderPathField.setMouseTransparent(true);
             sslEncoderPathField.setStyle("-fx-control-inner-background: " + ThemeColors.PANEL_BG + "; -fx-text-fill: "
-                    + ThemeColors.MUTED + "; -fx-background-insets: 0; " + "-fx-background-radius: 2;");
+                    + ThemeColors.MUTED + "; -fx-background-insets: 0; " + "-fx-background-radius: 2;"
+                    // The prompt is the only text in an empty path field, so it must read. QuPath's
+                    // dark theme sets prompt colors !important; this has to say so too to apply.
+                    + " -fx-prompt-text-fill: " + ThemeColors.MUTED + " !important;");
             sslEncoderPathField.setPromptText("(no file selected -- click Browse to choose)");
             sslEncoderPathField.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(sslEncoderPathField, Priority.ALWAYS);
@@ -2359,6 +2370,7 @@ public class TrainingDialog {
             // Description
             descriptionField = new TextArea();
             descriptionField.setPromptText("Optional description of what this classifier detects...");
+            descriptionField.setStyle("-fx-prompt-text-fill: " + ThemeColors.MUTED + " !important;");
             descriptionField.setPrefRowCount(2);
             descriptionField.setWrapText(true);
 
@@ -3193,7 +3205,7 @@ public class TrainingDialog {
                     pretrainedOnlyCheck,
                     "Hides architectures that always train from scratch.\n\n"
                             + "A pretrained architecture starts from weights learned on a large\n"
-                            + "image set, so it reaches usable quality from far fewer labelled\n"
+                            + "image set, so it reaches usable quality from far fewer labeled\n"
                             + "tiles. Scratch-only architectures can still win on fluorescence or\n"
                             + "multi-channel data, where those weights do not transfer.");
             pretrainedOnlyCheck
@@ -3250,6 +3262,20 @@ public class TrainingDialog {
                     "https://github.com/uw-loci/qupath-extension-dl-pixel-classifier/blob/main/docs/BEST_PRACTICES.md#backbone-selection",
                     backboneLabel,
                     backboneCombo);
+            // The basic view shows model sizes, not encoders, so its tooltip
+            // must not list encoder families the user cannot pick there.
+            Tooltip backboneTip = backboneLabel.getTooltip();
+            String advancedBackboneTip = backboneTip.getText();
+            String basicBackboneTip = "Fast: a tiny network for simple, obvious classes\n"
+                    + "(background / tissue / artifact).\n"
+                    + "Small, Medium, Large: the same network at growing size.\n"
+                    + "Bigger can learn more, but needs more annotations, more time\n"
+                    + "and more GPU memory. Medium is a good start.";
+            backboneTip
+                    .textProperty()
+                    .bind(javafx.beans.binding.Bindings.when(advancedMode)
+                            .then(advancedBackboneTip)
+                            .otherwise(basicBackboneTip));
             grid.add(backboneLabel, 0, row);
             grid.add(backboneCombo, 1, row);
             row++;
@@ -3305,8 +3331,9 @@ public class TrainingDialog {
             pane.setStyle("-fx-font-weight: bold;");
             TooltipHelper.install(
                     pane,
-                    "Select the neural network encoder.\n" + "In basic mode, only ResNet encoders are shown.\n"
-                            + "Switch to advanced mode for all architectures and encoders.");
+                    "Pick a model size. The basic view offers Fast (a tiny network\n"
+                            + "for simple tasks) and Small, Medium, Large (ResNet18/34/50).\n"
+                            + "Show All Settings lists every architecture and encoder.");
             return pane;
         }
 
@@ -3636,6 +3663,15 @@ public class TrainingDialog {
             if (!advancedMode.get()) {
                 backbonePretrainedRadio.setText(
                         ClassifierHandler.WeightInitStrategy.BACKBONE_PRETRAINED.getDisplayName() + " (recommended)");
+                if (BASIC_FAST_PRESET.equals(backbone)) {
+                    // Fast becomes Tiny UNet, trained from scratch, on any image that is not RGB
+                    // (see the Fast preset in buildTrainingConfig), whatever this radio says.
+                    backboneInfo.setText("Fast starts from small pretrained weights on RGB images only. "
+                            + "On other images with up to 7 channels it trains a small network from "
+                            + "scratch, because no pretrained weights exist for it, so it needs more "
+                            + "annotations than Small or Medium.");
+                    return;
+                }
                 backboneInfo.setText("The model starts from weights already trained on a large set of images, "
                         + "and training adapts them to your annotations, so it needs far less of your data.");
                 return;
@@ -3794,8 +3830,8 @@ public class TrainingDialog {
             Label epochsLabel = new Label("Epochs:");
             TooltipHelper.install(
                     "Number of complete passes through the training data.\n"
-                            + "More epochs allow the model to learn more but risk overfitting.\n"
-                            + "Watch validation loss to determine when to stop.\n\n"
+                            + "More epochs let the model learn more, but too many can make it\n"
+                            + "memorize your training tiles instead of learning the classes.\n\n"
                             + "Typical range: 50-200 for small datasets, 20-100 for large.\n"
                             + "Early stopping will halt training automatically if the model\n"
                             + "stops improving, so it is safe to set a high value.",
@@ -3959,8 +3995,8 @@ public class TrainingDialog {
                             + "Validation Loss: Combined loss on held-out data.\n"
                             + "  Can oscillate while IoU still improves, so Mean IoU\n"
                             + "  is generally more reliable.\n\n"
-                            + "Disabled: Train for the full epoch count regardless of\n"
-                            + "  metric progress. Best-model selection still applies.",
+                            + "To train for the full epoch count, untick\n"
+                            + "Enable early stopping above.",
                     esMetricLabel,
                     earlyStoppingMetricCombo);
             esMetricLabel.visibleProperty().bind(advancedMode);
@@ -4144,7 +4180,9 @@ public class TrainingDialog {
                             + "0.30: Training continues until focus class IoU >= 0.30,\n"
                             + "  then patience-based stopping resumes.\n\n"
                             + "Set this to prevent the model from stopping before the\n"
-                            + "focus class has had a chance to learn.",
+                            + "focus class has had a chance to learn.\n\n"
+                            + "Default 0.50. A value of 0.00 is not remembered: the dialog\n"
+                            + "shows 0.50 again the next time it opens.",
                     focusClassMinIoULabel,
                     focusClassMinIoUSpinner);
 
@@ -4277,7 +4315,8 @@ public class TrainingDialog {
             row++;
 
             // Batch size hint (basic mode only)
-            Label batchHint = new Label("Images processed at once. Larger = faster but more GPU memory.");
+            Label batchHint = new Label("Tiles processed at once. Larger is faster per epoch but uses more GPU memory, "
+                    + "and gives fewer weight updates per epoch.");
             batchHint.setWrapText(true);
             batchHint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
             batchHint.visibleProperty().bind(advancedMode.not());
@@ -4321,8 +4360,8 @@ public class TrainingDialog {
             mixedPrecisionCheck.setSelected(DLClassifierPreferences.isDefaultMixedPrecision());
             TooltipHelper.installWithLink(
                     mixedPrecisionCheck,
-                    "Use automatic mixed precision (FP16/FP32) on CUDA GPUs.\n"
-                            + "Typically provides ~2x speedup with no accuracy loss.\n"
+                    "Uses 16-bit math where it is safe (BF16 on newer NVIDIA GPUs,\n"
+                            + "FP16 on older ones). Usually faster and uses less GPU memory.\n"
                             + "Only active when training on NVIDIA GPUs; ignored on CPU/MPS.\n\n"
                             + "Safe to leave enabled -- PyTorch automatically manages which\n"
                             + "operations use FP16 vs FP32 for numerical stability.",
@@ -4475,7 +4514,8 @@ public class TrainingDialog {
                             + "so the model sees features at the expected physical scale.\n\n"
                             + "Use the Preview button to see what the model will see\n"
                             + "at the selected downsample level.\n\n"
-                            + "Must match at inference time for consistent results.",
+                            + "Applying the classifier later uses this same resolution\n"
+                            + "automatically.",
                     resLabel,
                     downsampleCombo);
 
@@ -4547,12 +4587,13 @@ public class TrainingDialog {
             contextScaleCombo.setValue(mapContextScaleToDisplay(DLClassifierPreferences.getDefaultContextScale()));
             contextScaleLabel = new Label("Surrounding context:");
             TooltipHelper.install(
-                    "Not sure? Leave at 1x for your first run. Try 4x if classification\n"
-                            + "depends on surrounding tissue structure (e.g., tumor vs. stroma).\n\n"
+                    "Not sure? Leave at None (the default) for your first run. Try 4x,\n"
+                            + "marked Recommended, if classification depends on surrounding\n"
+                            + "tissue structure (e.g., tumor vs. stroma).\n\n"
                             + "Multi-scale context feeds the model two views of each location:\n"
                             + "the full-resolution tile for detail, plus a larger surrounding\n"
                             + "region (downsampled to the same pixel size) for spatial context.\n\n"
-                            + "None: Single-scale input (current behavior).\n"
+                            + "None: Single-scale input (default).\n"
                             + "2x: Context covers 2x the area. Moderate additional context.\n"
                             + "4x: Context covers 4x the area. Good for tissue-level patterns.\n"
                             + "8x: Context covers 8x the area. For large-scale classification.\n"
@@ -4562,8 +4603,9 @@ public class TrainingDialog {
                             + "from stroma may require seeing the tissue architecture around\n"
                             + "each tile. Not needed when local texture is sufficient (e.g.,\n"
                             + "collagen vs. epithelium in H&E).\n\n"
-                            + "Adds C extra input channels (e.g., 3ch RGB -> 6ch with context).\n"
-                            + "Modest memory increase (~5-10%). Compatible with all architectures.",
+                            + "The model gets a second, wider view of each spot, which uses\n"
+                            + "a little more memory (about 5-10%). Not available for MuViT,\n"
+                            + "which sees several scales on its own.",
                     contextScaleLabel, contextScaleCombo);
 
             Button contextPreviewBtn = new Button("Preview");
@@ -4793,15 +4835,15 @@ public class TrainingDialog {
             });
             Label minTileLabelFracLabel = new Label("Min Tile Label Fraction (%):");
             TooltipHelper.install(
-                    "OR escape for the sliver-tile filter: tiles whose labelled pixels\n"
+                    "OR escape for the sliver-tile filter: tiles whose labeled pixels\n"
                             + "cover at least this fraction of the tile are always kept,\n"
                             + "even if their per-annotation coverage is below the threshold\n"
                             + "above.\n\n"
                             + "Default 25%. The clause is meant to protect tiles that sit\n"
                             + "fully inside a huge polygon (per-annotation coverage tiny but\n"
-                            + "the tile is mostly labelled). At lower values it would protect\n"
+                            + "the tile is mostly labeled). At lower values it would protect\n"
                             + "small slivers too -- 0.5% in a 512px tile is only ~1300\n"
-                            + "labelled pixels.\n\n"
+                            + "labeled pixels.\n\n"
                             + "Set to 0 to disable this side of the rule and rely purely on\n"
                             + "Min Annotation Coverage (strictest; may over-filter tiles\n"
                             + "deep inside huge annotations).",
@@ -5115,7 +5157,7 @@ public class TrainingDialog {
                             + "  boundary weighting.\n\n"
                             + "Boundary-softened CE + Dice: combines the above with Dice,\n"
                             + "  recommended when edge noise is the main error source.\n\n"
-                            + "Lovasz-Softmax: directly optimises mean IoU. Best used\n"
+                            + "Lovasz-Softmax: directly optimizes mean IoU. Best used\n"
                             + "  after a CE warmup (or as CE + Lovasz). No hyperparameters.\n"
                             + "  Berman et al., CVPR 2018 (arXiv:1705.08790).\n\n"
                             + "CE + Lovasz-Softmax: CE provides stable early gradient,\n"
@@ -5492,7 +5534,8 @@ public class TrainingDialog {
                     "Preload training patches into RAM to skip per-batch disk I/O\n"
                             + "and TIFF decode. Picks the dominant per-epoch cost on small\n"
                             + "models trained from local SSD.\n\n"
-                            + "auto: enable when the dataset fits in ~25% of free RAM.\n"
+                            + "auto: preload when the dataset fits in about half of the\n"
+                            + "    free RAM; otherwise read from disk.\n"
                             + "on: always preload (may exhaust memory on huge datasets).\n"
                             + "bounded: cap preload at the bounded-cache fraction set in\n"
                             + "    Preferences (default 40% of available RAM).\n"
@@ -5520,6 +5563,8 @@ public class TrainingDialog {
             TooltipHelper.install(
                     "Number of background worker processes the PyTorch DataLoader\n"
                             + "spawns for parallel patch loading and CPU augmentation.\n\n"
+                            + "Ignored (set to 0) while In-memory dataset is auto or on;\n"
+                            + "set it to off or bounded to use workers.\n\n"
                             + "0: load on the main thread (default; no IPC overhead).\n"
                             + "1-2: helpful when disk I/O dominates and the in-memory\n"
                             + "     cache is off or bounded below the dataset size.\n"
@@ -5591,8 +5636,8 @@ public class TrainingDialog {
                             + "annotations. Lines focus training on class boundaries\n"
                             + "where accuracy matters most, and avoid overtraining on\n"
                             + "easy central regions.\n\n"
-                            + "Use the weight spinner (right) to boost underrepresented\n"
-                            + "classes. For example, set weight=2.0 for a rare class.");
+                            + "In Show All Settings, a weight spinner beside each class can\n"
+                            + "give a rare class more influence (e.g. 2.0).");
 
             // Add select all / none / rebalance buttons
             Button selectAllBtn = new Button("Select All");
@@ -5999,7 +6044,7 @@ public class TrainingDialog {
          * Appends an in-memory dataset cache estimate to the tile-estimate
          * label so the user sees RAM requirements at selection time (not
          * post-mortem during training). Mirrors the Python-side decision
-         * (25% ceiling for "auto"; warns if "on" exceeds free RAM).
+         * (50% ceiling for "auto"; warns if "on" exceeds free RAM).
          */
         private void appendInMemoryCacheEstimate(StringBuilder sb, int tileEst) {
             String mode = inMemoryDatasetCombo != null && inMemoryDatasetCombo.getValue() != null
@@ -6035,7 +6080,7 @@ public class TrainingDialog {
             }
             double availGb = availableBytes / 1e9;
 
-            String color = "#2a7a2a"; // green
+            String color = ThemeColors.SUCCESS.toString();
             String verdict;
             // Thresholds are the training script's own, shared with the HUD.
             // This label said 25% for the auto ceiling after train.py moved to
@@ -6047,22 +6092,22 @@ public class TrainingDialog {
                     verdict = "auto -> will enable";
                 } else {
                     verdict = String.format("auto -> will decline (>=%.0f%% of free); set to 'on' to force", autoPct);
-                    color = "#cc6600"; // orange
+                    color = ThemeColors.WARNING.toString();
                 }
             } else if ("bounded".equals(mode)) {
                 if (totalBytes <= PatchCountEstimator.BOUNDED_CACHE_FRACTION * availableBytes) {
                     verdict = "bounded -> whole dataset fits";
                 } else {
                     verdict = String.format("bounded -> caches %.0f%% of free RAM and trains on a subset", boundedPct);
-                    color = "#cc6600";
+                    color = ThemeColors.WARNING.toString();
                 }
             } else { // "on"
                 if (totalBytes > availableBytes) {
                     verdict = "on -> FORCED over free RAM; preload may OOM";
-                    color = "#cc0000"; // red
+                    color = ThemeColors.ERROR.toString();
                 } else if (totalBytes > 0.5 * availableBytes) {
                     verdict = "on -> forced (>50% of free RAM; tight)";
-                    color = "#cc6600";
+                    color = ThemeColors.WARNING.toString();
                 } else {
                     verdict = "on -> forced";
                 }
@@ -7870,8 +7915,8 @@ public class TrainingDialog {
                 return;
             }
             String color = overlap >= tileSize / 2
-                    ? "#CC0000" // red: stride<=0
-                    : "#CC7A00"; // orange: suboptimal
+                    ? ThemeColors.ERROR.toString() // stride <= 0
+                    : ThemeColors.WARNING.toString(); // suboptimal
             tileAdvisoryLabel.setStyle(
                     "-fx-font-size: 11px; -fx-text-fill: " + color + ";" + " -fx-font-weight: bold;");
             tileAdvisoryLabel.setText(advisory);
@@ -8263,7 +8308,7 @@ public class TrainingDialog {
          */
         static List<ClassifierMetadata.ClassInfo> placeholderClasses() {
             List<ClassifierMetadata.ClassInfo> stub = new ArrayList<>();
-            stub.add(new ClassifierMetadata.ClassInfo(0, "Class 0", "#808080"));
+            stub.add(new ClassifierMetadata.ClassInfo(0, "Class 0", "#808080")); // theme-exempt: class color
             return stub;
         }
 
@@ -8697,7 +8742,7 @@ public class TrainingDialog {
             gatedExplain.setWrapText(true);
             content.getChildren().add(gatedExplain);
 
-            Hyperlink hfTokenLink = new Hyperlink("HuggingFace: Create Access Token");
+            Hyperlink hfTokenLink = ThemeColors.hyperlink("HuggingFace: Create Access Token");
             hfTokenLink.setOnAction(e -> {
                 try {
                     java.awt.Desktop.getDesktop().browse(java.net.URI.create("https://huggingface.co/settings/tokens"));
@@ -8750,7 +8795,7 @@ public class TrainingDialog {
             entry.getChildren().add(descLabel);
 
             if (paperRef != null && paperUrl != null) {
-                Hyperlink link = new Hyperlink("Paper: " + paperRef);
+                Hyperlink link = ThemeColors.hyperlink("Paper: " + paperRef);
                 link.setMnemonicParsing(false);
                 link.setOnAction(e -> {
                     try {

@@ -222,7 +222,8 @@ public class TrainingAreaIssuesDialog {
 
         // Summary label
         long highLoss = results.stream().filter(r -> r.loss() > 1.0).count();
-        summaryLabel = new Label(String.format("%d tiles evaluated | %d with loss > 1.0", results.size(), highLoss));
+        summaryLabel = new Label(String.format(
+                "%d tiles evaluated | %d where the model strongly disagrees (loss > 1.0)", results.size(), highLoss));
         summaryLabel.setStyle("-fx-font-weight: bold;");
         summaryLabel.setTooltip(TooltipHelper.create("Total tiles evaluated and count of tiles with high loss.\n"
                 + "Tiles are sorted by loss (worst first) to help find\n"
@@ -233,8 +234,9 @@ public class TrainingAreaIssuesDialog {
         splitFilter.getItems().addAll("All", "Train", "Val");
         splitFilter.setValue("All");
         splitFilter.setTooltip(TooltipHelper.create("Filter tiles by dataset split.\n"
-                + "Val tiles are more diagnostic -- high loss there\n"
-                + "suggests annotation problems, not just overfitting."));
+                + "Validation tiles (not trained on) are the better guide:\n"
+                + "high loss there points to annotation problems, not only\n"
+                + "to the model memorizing its training tiles."));
 
         // Size the slider range to the actual loss distribution in the data
         // rather than a fixed [0, 10]. When a reload replaces the rows the
@@ -290,7 +292,7 @@ public class TrainingAreaIssuesDialog {
         excludeImageButton.setDisable(true);
         excludeImageButton.setOnAction(e -> excludeSelectedRowImage());
 
-        restoreExcludedLink = new Hyperlink("");
+        restoreExcludedLink = ThemeColors.hyperlink("");
         restoreExcludedLink.setVisible(false);
         restoreExcludedLink.setManaged(false);
         restoreExcludedLink.setOnAction(e -> {
@@ -619,7 +621,7 @@ public class TrainingAreaIssuesDialog {
         // has applied a (gt, pred) filter to the table.
         confusionFilterLabel = new Label("");
         confusionFilterLabel.setStyle("-fx-text-fill: " + ThemeColors.ERROR + "; -fx-font-weight: bold;");
-        Hyperlink clearConfusionLink = new Hyperlink("Clear");
+        Hyperlink clearConfusionLink = ThemeColors.hyperlink("Clear");
         clearConfusionLink.setOnAction(e -> clearConfusionFilter());
         confusionFilterBanner = new HBox(8, confusionFilterLabel, clearConfusionLink);
         confusionFilterBanner.setAlignment(Pos.CENTER_LEFT);
@@ -761,7 +763,8 @@ public class TrainingAreaIssuesDialog {
 
         long visible = filteredRows.size();
         long highLoss = filteredRows.stream().filter(r -> r.getLoss() > 1.0).count();
-        String summary = String.format("%d tiles shown | %d with loss > 1.0", visible, highLoss);
+        String summary =
+                String.format("%d tiles shown | %d where the model strongly disagrees (loss > 1.0)", visible, highLoss);
         if (!excludedImageNames.isEmpty()) {
             summary += String.format(" | %d image(s) excluded", excludedImageNames.size());
         }
@@ -1111,7 +1114,8 @@ public class TrainingAreaIssuesDialog {
         excludedImageNames.clear();
         updateExcludedAffordances();
         long highLoss = allRows.stream().filter(r -> r.getLoss() > 1.0).count();
-        summaryLabel.setText(String.format("%d tiles loaded | %d with loss > 1.0", allRows.size(), highLoss));
+        summaryLabel.setText(String.format(
+                "%d tiles loaded | %d where the model strongly disagrees (loss > 1.0)", allRows.size(), highLoss));
         stage.setTitle("Training Area Issues - " + classifierName + " (session "
                 + loaded.info().sessionId() + ")");
         rescaleThresholdSlider();
@@ -1689,7 +1693,7 @@ public class TrainingAreaIssuesDialog {
         adjustButton.setText(restingAdjustLabel());
         cancelPreviewButton.setVisible(false);
         cancelPreviewButton.setManaged(false);
-        adjustStatusLabel.setText("Preview cancelled");
+        adjustStatusLabel.setText("Preview canceled");
         TileRow currentRow = table.getSelectionModel().getSelectedItem();
         if (currentRow != null) {
             showViewerOverlay(currentRow);
@@ -1818,7 +1822,7 @@ public class TrainingAreaIssuesDialog {
                             + "Annotations outside the tile boundary are preserved.\n\n"
                             + "Continue?");
             if (!confirmed) {
-                adjustStatusLabel.setText("Adjustment cancelled");
+                adjustStatusLabel.setText("Adjustment canceled");
                 return;
             }
 
@@ -2286,8 +2290,8 @@ public class TrainingAreaIssuesDialog {
         Label header = new Label(subtitle);
         header.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;");
 
-        Label hint = new Label("Rows = ground truth, columns = prediction. "
-                + "Cell colour = % of that GT class's pixels predicted as that column. "
+        Label hint = new Label("Rows = your annotation, columns = the model's prediction. "
+                + "Cell color = % of that annotated class's pixels predicted as that column. "
                 + "Click an off-diagonal cell to filter the Tiles tab to those confusions.");
         hint.setWrapText(true);
         hint.setStyle("-fx-text-fill: " + ThemeColors.MUTED + "; -fx-font-size: 11px;");
@@ -2297,7 +2301,7 @@ public class TrainingAreaIssuesDialog {
         grid.setVgap(1);
         grid.setStyle("-fx-background-color: " + ThemeColors.BORDER + ";");
 
-        Label corner = new Label("GT \\ Pred");
+        Label corner = new Label("Annotated \\ Predicted");
         corner.setMinSize(110, 32);
         corner.setAlignment(Pos.CENTER);
         corner.setStyle("-fx-font-weight: bold; -fx-background-color: " + ThemeColors.PANEL_BG + ";");

@@ -60,6 +60,16 @@ public class CustomONNXHandler implements ClassifierHandler {
         return "Custom ONNX Model (untested)";
     }
 
+    /**
+     * Not trainable: Start Training ended in "Unknown model type: custom_onnx" (end-to-end
+     * test, 2026-10-29). Imported ONNX models are for inference only until the import
+     * path described in claude-reports/2026-10-29_dl-classifier-custom-onnx-e2e.md exists.
+     */
+    @Override
+    public boolean trainableInDialog() {
+        return false;
+    }
+
     @Override
     public String getDescription() {
         return "Import and use your own ONNX segmentation model for inference. "

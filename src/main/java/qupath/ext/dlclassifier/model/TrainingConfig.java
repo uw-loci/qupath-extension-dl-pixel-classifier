@@ -1705,11 +1705,13 @@ public class TrainingConfig {
 
         /**
          * Sets the in-memory dataset mode. "auto" = enable when the dataset
-         * fits in ~25% of free RAM; "on" = force; "off" = stream from disk.
-         * Invalid values fall back to "auto".
+         * fits in about half of free RAM; "on" = force; "bounded" = cache up to a
+         * set share of free RAM and train on that subset; "off" = stream from disk.
+         * Invalid values fall back to "auto". ("bounded" used to fall back too, so
+         * the dialog's bounded option silently ran as "auto".)
          */
         public Builder inMemoryDataset(String mode) {
-            if ("auto".equals(mode) || "on".equals(mode) || "off".equals(mode)) {
+            if ("auto".equals(mode) || "on".equals(mode) || "bounded".equals(mode) || "off".equals(mode)) {
                 this.inMemoryDataset = mode;
             } else {
                 this.inMemoryDataset = "auto";

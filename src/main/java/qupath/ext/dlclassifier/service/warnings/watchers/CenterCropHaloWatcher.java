@@ -60,7 +60,7 @@ public final class CenterCropHaloWatcher implements InferenceWarning {
                 + "raised to 25% for this run. Center-crop gives each "
                 + "pixel to a single tile rather than averaging the tiles "
                 + "that cover it. This model's receptive field is wider "
-                + "than one tile, so neighbouring tiles genuinely disagree "
+                + "than one tile, so neighboring tiles genuinely disagree "
                 + "about the tissue they share, and center-crop settles "
                 + "that by picking one of them -- which appears as "
                 + "rectangular blocks of the wrong class, aligned to the "

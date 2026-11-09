@@ -42,7 +42,7 @@ public final class ChannelsLastBrnWatcher implements InferenceWarning {
                 + "for BRN models because the layer's internal "
                 + "reshape operations can silently revert to the "
                 + "default NCHW layout and waste the conversion. "
-                + "This is expected behaviour -- GroupNorm or plain "
+                + "This is expected behavior -- GroupNorm or plain "
                 + "BatchNorm models still benefit from the "
                 + "optimization.";
     }

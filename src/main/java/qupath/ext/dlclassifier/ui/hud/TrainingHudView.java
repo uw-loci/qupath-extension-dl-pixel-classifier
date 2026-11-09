@@ -636,7 +636,7 @@ public final class TrainingHudView extends Region {
         if (state == null || !state.now().get(Gauge.TRAINING_DATA).available()) {
             return;
         }
-        String s = "est. from the annotations; exact counts exist after export";
+        String s = "estimated from your annotations; exact once training starts";
         gc.setFill(palette.get(HudPalette.Token.MUTED, 0.9));
         gc.setFont(FOOT_FONT);
         double tw = HudGauge.textWidth(s, FOOT_FONT);

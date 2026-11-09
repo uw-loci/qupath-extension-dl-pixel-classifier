@@ -25,6 +25,7 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.dlclassifier.model.ClassifierMetadata;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 import qupath.ext.dlclassifier.model.TrainingConfig;
+import qupath.ext.dlclassifier.ui.ThemeColors;
 import qupath.lib.gui.prefs.PathPrefs;
 
 /**
@@ -342,7 +343,7 @@ public final class InteractionWarningService {
 
         String anchor = w.getDocsAnchor();
         if (anchor != null && !anchor.isBlank()) {
-            Hyperlink link = new Hyperlink("Learn more");
+            Hyperlink link = ThemeColors.hyperlink("Learn more");
             link.setOnAction(e -> {
                 logger.info("Interaction warning docs link clicked: {} ({})", w.getId(), anchor);
                 // The docs live in claude-reports/ alongside the extension

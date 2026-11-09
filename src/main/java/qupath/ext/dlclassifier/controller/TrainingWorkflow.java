@@ -625,7 +625,7 @@ public class TrainingWorkflow {
         message.setWrapText(true);
         message.setMaxWidth(520);
 
-        javafx.scene.control.Hyperlink tipsLink = new javafx.scene.control.Hyperlink("Tips & Tricks Guide");
+        javafx.scene.control.Hyperlink tipsLink = ThemeColors.hyperlink("Tips & Tricks Guide");
         tipsLink.setOnAction(ev -> {
             try {
                 java.awt.Desktop.getDesktop()
@@ -696,7 +696,7 @@ public class TrainingWorkflow {
                     // User cancelling the dialog produces a CancellationException - not an error
                     Throwable cause = ex instanceof java.util.concurrent.CompletionException ? ex.getCause() : ex;
                     if (cause instanceof java.util.concurrent.CancellationException) {
-                        logger.info("Training dialog cancelled by user");
+                        logger.info("Training dialog canceled by user");
                     } else {
                         logger.error("Training dialog failed", ex);
                         showError("Error", "Failed to show training dialog: " + ex.getMessage());
@@ -769,7 +769,7 @@ public class TrainingWorkflow {
                             + "To enable GPU acceleration:\n"
                             + "  1. Install or update NVIDIA GPU drivers\n"
                             + "  2. Use Extensions > DL Pixel Classifier > Utilities >\n"
-                            + "     Rebuild DL Environment\n\n"
+                            + "     Compute Environment (CPU / GPU)... and choose GPU\n\n"
                             + "Continue training on CPU?";
                 }
                 boolean proceed = Dialogs.showConfirmDialog("CPU Training Warning", message);
@@ -826,7 +826,7 @@ public class TrainingWorkflow {
                                 focus));
                 if (!proceed) {
                     releaseTrainingLock();
-                    logger.info("Training cancelled by user: focus class '{}' is limited-data", focus);
+                    logger.info("Training canceled by user: focus class '{}' is limited-data", focus);
                     return;
                 }
                 logger.warn(
@@ -1078,14 +1078,17 @@ public class TrainingWorkflow {
 
                 if (result.success()) {
                     String completionMsg;
-                    if (result.message() != null && result.message().contains("cancelled")) {
+                    if (result.message() != null && result.message().contains("cancel")) {
                         completionMsg = result.message();
                     } else {
                         tagImageTrainingRoles(selectedImages, trainOnlyImages, valOnlyImages, classifierName);
                         StringBuilder sb = new StringBuilder();
                         sb.append(String.format(
                                 "Classifier trained successfully!\nBest model: epoch %d\n"
-                                        + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
+                                        + "Loss: %.4f | Pixel accuracy: %.2f%% | Overlap score (mean IoU): %.4f\n"
+                                        + "The overlap score runs from 0 to 1; higher means the predictions match "
+                                        + "your validation annotations more closely. Pixel accuracy counts every "
+                                        + "pixel, so a large background class makes it look high.",
                                 result.bestEpoch(),
                                 result.finalLoss(),
                                 result.finalAccuracy() * 100,
@@ -1545,11 +1548,11 @@ public class TrainingWorkflow {
             // being a training budget. Ask rather than proceed, because the
             // run that follows will look healthy for its whole length.
             if (!confirmStepBudget(trainingConfig, trainPatchCount, progress)) {
-                return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false, "Training cancelled by user");
+                return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false, "Training canceled by user");
             }
 
             if (progress != null && progress.isCancelled()) {
-                return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false, "Training cancelled by user");
+                return new TrainingResult(null, classifierName, 0, 0, 0, 0.0, 0, false, "Training canceled by user");
             }
 
             // Get appropriate backend (Appose or HTTP) and start training
@@ -1842,7 +1845,7 @@ public class TrainingWorkflow {
                 if (saveMode == ProgressMonitorController.CancelSaveMode.DO_NOT_SAVE
                         || !serverResult.isCancelledWithSave()) {
                     return new TrainingResult(
-                            null, classifierName, 0, 0, 0, 0.0, 0, false, "Training cancelled by user");
+                            null, classifierName, 0, 0, 0, 0.0, 0, false, "Training canceled by user");
                 }
 
                 // User chose to save -- pick the appropriate model path
@@ -1854,7 +1857,7 @@ public class TrainingWorkflow {
                 String epochLabel = (saveMode == ProgressMonitorController.CancelSaveMode.LAST_EPOCH)
                         ? "last epoch"
                         : "best epoch (" + serverResult.bestEpoch() + ")";
-                logger.info("Saving cancelled training ({}) from: {}", epochLabel, savedModelPath);
+                logger.info("Saving canceled training ({}) from: {}", epochLabel, savedModelPath);
                 if (progress != null) {
                     progress.log("Saving " + epochLabel + " model...");
                     progress.setStatus("Saving classifier...");
@@ -1924,7 +1927,7 @@ public class TrainingWorkflow {
                         serverResult.bestMeanIoU(),
                         serverResult.lastEpoch(),
                         true,
-                        "Training cancelled -- " + epochLabel + " model saved");
+                        "Training canceled -- " + epochLabel + " model saved");
             }
 
             logger.info("Training completed. Model saved to: {}", serverResult.modelPath());
@@ -2110,7 +2113,7 @@ public class TrainingWorkflow {
             if (tl > 0 && vl > 0 && vl > tl * 2.0) {
                 if (endedCollapsed) {
                     hints.add("Validation loss ended far above training loss because the run finished "
-                            + "collapsed onto one class, not because the model memorised the training set. "
+                            + "collapsed onto one class, not because the model memorized the training set. "
                             + "Shrinking the model or adding augmentation will not help; the run needs to "
                             + "escape the collapse. See the collapse hint above.");
                 } else {
@@ -2567,7 +2570,7 @@ public class TrainingWorkflow {
                                     && serverResult.lastModelPath() != null)
                             ? serverResult.lastModelPath()
                             : serverResult.modelPath();
-                    progress.log("Saving cancelled model from resumed training...");
+                    progress.log("Saving canceled model from resumed training...");
                     progress.setStatus("Saving classifier...");
                     String rId = classifierId != null
                             ? classifierId
@@ -2624,7 +2627,7 @@ public class TrainingWorkflow {
                     }
                     progress.complete(true, "Saved model as " + rId);
                 } else {
-                    progress.complete(false, "Training cancelled by user");
+                    progress.complete(false, "Training canceled by user");
                 }
             } else {
                 // Completed -- save the classifier
@@ -2696,7 +2699,10 @@ public class TrainingWorkflow {
 
                 StringBuilder resumeMsg = new StringBuilder(String.format(
                         "Classifier trained successfully!\nBest model: epoch %d\n"
-                                + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
+                                + "Loss: %.4f | Pixel accuracy: %.2f%% | Overlap score (mean IoU): %.4f\n"
+                                + "The overlap score runs from 0 to 1; higher means the predictions match "
+                                + "your validation annotations more closely. Pixel accuracy counts every "
+                                + "pixel, so a large background class makes it look high.",
                         serverResult.bestEpoch(),
                         serverResult.finalLoss(),
                         serverResult.finalAccuracy() * 100,
@@ -2757,7 +2763,8 @@ public class TrainingWorkflow {
         try {
             ClassifierBackend backend = BackendFactory.getBackend();
             if (!(backend instanceof ApposeClassifierBackend apposeBackend)) {
-                progress.complete(false, "Complete-early requires Appose backend");
+                progress.complete(
+                        false, "Finishing early is only available with the built-in Python environment (Appose).");
                 return;
             }
 
@@ -2895,7 +2902,10 @@ public class TrainingWorkflow {
                     true,
                     String.format(
                             "Training completed early!\nBest model: epoch %d\n"
-                                    + "Loss: %.4f | Accuracy: %.2f%% | mIoU: %.4f",
+                                    + "Loss: %.4f | Pixel accuracy: %.2f%% | Overlap score (mean IoU): %.4f\n"
+                                    + "The overlap score runs from 0 to 1; higher means the predictions match "
+                                    + "your validation annotations more closely. Pixel accuracy counts every "
+                                    + "pixel, so a large background class makes it look high.",
                             serverResult.bestEpoch(),
                             serverResult.finalLoss(),
                             serverResult.finalAccuracy() * 100,
@@ -3401,7 +3411,7 @@ public class TrainingWorkflow {
         }
         String summary = String.format(
                 "Batch size %d with %d training patches gives %d batch per epoch, "
-                        + "so this run performs %d optimizer step per epoch and %d in total.",
+                        + "so the model's weights are updated only %d time(s) per epoch, %d times in total.",
                 budget.batchSize(),
                 budget.trainPatches(),
                 budget.batchesPerEpoch(),
@@ -3410,10 +3420,10 @@ public class TrainingWorkflow {
         logger.warn("Step budget: {}", summary);
         logDiagnostic(progress, "STEP BUDGET", summary);
         String message = summary
-                + "\n\nThe epoch count no longer measures the training budget: "
-                + "the model gets one gradient update per epoch regardless of how "
-                + "long the run takes. Raising the epochs will not compensate.\n\n"
-                + "To get more steps, pick any of:\n"
+                + "\n\nThe epoch count no longer measures how much the model learns: "
+                + "with so few weight updates per epoch, raising the epochs will not "
+                + "make up for it.\n\n"
+                + "To get more updates, pick any of:\n"
                 + "  - a smaller batch size (the direct fix)\n"
                 + "  - less gradient accumulation, if it is above 1\n"
                 + "  - more patches: more annotated area, a lower downsample, "
@@ -3421,7 +3431,7 @@ public class TrainingWorkflow {
                 + "Continue anyway?";
         boolean proceed = Dialogs.showConfirmDialog("Training Step Budget", message);
         if (!proceed) {
-            logger.info("Training cancelled by user: {} optimizer step(s) per epoch", budget.stepsPerEpoch());
+            logger.info("Training canceled by user: {} optimizer step(s) per epoch", budget.stepsPerEpoch());
         } else {
             logger.warn("Training proceeding with {} optimizer step(s) per epoch", budget.stepsPerEpoch());
         }

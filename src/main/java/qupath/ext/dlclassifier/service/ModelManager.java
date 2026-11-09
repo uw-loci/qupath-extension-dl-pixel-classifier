@@ -84,8 +84,7 @@ public class ModelManager {
      */
     public static Path resolveStorageDir() {
         try {
-            QuPathGUI gui = QuPathGUI.getInstance();
-            Project<?> project = gui == null ? null : gui.getProject();
+            Project<?> project = currentProject();
             if (project != null && project.getPath() != null) {
                 return project.getPath().getParent().resolve(CLASSIFIERS_DIR);
             }
@@ -128,7 +127,7 @@ public class ModelManager {
         List<ClassifierMetadata> classifiers = new ArrayList<>();
 
         // Load from project
-        Project<?> project = QuPathGUI.getInstance().getProject();
+        Project<?> project = currentProject();
         if (project != null) {
             Path projectDir = project.getPath().getParent().resolve(CLASSIFIERS_DIR);
             classifiers.addAll(loadClassifiersFromDir(projectDir));
@@ -178,6 +177,19 @@ public class ModelManager {
     }
 
     /**
+     * The open project: the GUI's when there is one, otherwise the one a headless script
+     * runs against ({@code QP.getProject()}). Every lookup used to dereference
+     * {@code QuPathGUI.getInstance()}, so loading a classifier from a headless script
+     * threw a NullPointerException.
+     *
+     * @return the project, or null when none is open
+     */
+    private static Project<?> currentProject() {
+        QuPathGUI gui = QuPathGUI.getInstance();
+        return gui != null ? gui.getProject() : qupath.lib.scripting.QP.getProject();
+    }
+
+    /**
      * Loads a classifier by ID.
      *
      * @param classifierId the classifier ID
@@ -185,7 +197,7 @@ public class ModelManager {
      */
     public ClassifierMetadata loadClassifier(String classifierId) {
         // Try project first
-        Project<?> project = QuPathGUI.getInstance().getProject();
+        Project<?> project = currentProject();
         if (project != null) {
             Path projectDir =
                     project.getPath().getParent().resolve(CLASSIFIERS_DIR).resolve(classifierId);
@@ -573,7 +585,7 @@ public class ModelManager {
         // Determine target directory
         Path targetDir;
         if (toProject) {
-            Project<?> project = QuPathGUI.getInstance().getProject();
+            Project<?> project = currentProject();
             if (project == null) {
                 throw new IOException("No project is open");
             }
@@ -697,7 +709,7 @@ public class ModelManager {
      */
     public boolean deleteClassifier(String classifierId) {
         // Try project first
-        Project<?> project = QuPathGUI.getInstance().getProject();
+        Project<?> project = currentProject();
         if (project != null) {
             Path projectDir =
                     project.getPath().getParent().resolve(CLASSIFIERS_DIR).resolve(classifierId);
@@ -752,7 +764,7 @@ public class ModelManager {
         }
 
         // Determine target directory in the current project
-        Project<?> project = QuPathGUI.getInstance().getProject();
+        Project<?> project = currentProject();
         if (project == null) {
             throw new IOException("No project is open");
         }
@@ -794,7 +806,7 @@ public class ModelManager {
      */
     public Optional<Path> getModelPath(String classifierId) {
         // Try project -- direct directory name match
-        Project<?> project = QuPathGUI.getInstance().getProject();
+        Project<?> project = currentProject();
         if (project != null) {
             Path classifiersDir = project.getPath().getParent().resolve(CLASSIFIERS_DIR);
             Path projectDir = classifiersDir.resolve(classifierId);
@@ -864,7 +876,7 @@ public class ModelManager {
         if (classifierName == null) return Optional.empty();
 
         // Search project classifiers directory
-        Project<?> project = QuPathGUI.getInstance().getProject();
+        Project<?> project = currentProject();
         if (project != null) {
             Path classifiersDir = project.getPath().getParent().resolve(CLASSIFIERS_DIR);
             Optional<String> found = scanDirsForName(classifiersDir, classifierName);

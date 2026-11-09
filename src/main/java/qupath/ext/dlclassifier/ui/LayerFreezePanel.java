@@ -67,8 +67,8 @@ public class LayerFreezePanel extends VBox {
         infoLabel.setWrapText(true);
         infoLabel.setStyle("-fx-text-fill: " + ThemeColors.MUTED + ";");
 
-        Hyperlink learnMoreLink = new Hyperlink("What is transfer learning?");
-        learnMoreLink.setStyle("-fx-font-size: 11px;");
+        Hyperlink learnMoreLink = ThemeColors.hyperlink("What is transfer learning?");
+        learnMoreLink.setStyle(learnMoreLink.getStyle() + " -fx-font-size: 11px;");
         learnMoreLink.setOnAction(e -> {
             try {
                 java.awt.Desktop.getDesktop()

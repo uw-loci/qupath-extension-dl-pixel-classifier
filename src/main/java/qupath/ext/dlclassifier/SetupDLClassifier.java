@@ -461,7 +461,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             logger.info("Appose backend initialized successfully (background)");
                         }
                     } catch (Exception e) {
-                        logger.warn("Background Appose init failed: {}", e.getMessage());
+                        // The workflow menu is disabled below, so this is a real failure.
+                        logger.error("Background Appose init failed: {}", e.getMessage(), e);
                         serverAvailable = false;
                         // Environment exists on disk but isn't functional --
                         // revert to "needs setup" state so the user can fix it
@@ -470,7 +471,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             Dialogs.showWarningNotification(
                                     EXTENSION_NAME,
                                     "Python environment exists but failed to initialize.\n"
-                                            + "Use Setup DL Environment or Rebuild to fix.");
+                                            + "Use Setup DL Environment... or Utilities > Rebuild DL Environment... to fix.");
                         });
                     }
                 },
@@ -626,9 +627,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         MenuItem freeGpuOption = new MenuItem("Free GPU Memory");
         TooltipHelper.installOnMenuItem(
                 freeGpuOption,
-                "Force-clear all GPU memory held by the classification server.\n"
-                        + "Cancels running training jobs, clears cached models, and\n"
-                        + "frees GPU VRAM. Use after a crash or failed training.");
+                "Frees GPU memory the classifier is holding for inference:\n"
+                        + "unloads cached models and releases PyTorch's spare GPU memory.\n"
+                        + "Does not stop a training run. Use after a crash or a failed run.");
         BooleanProperty freeGpuRunning = new SimpleBooleanProperty(false);
         freeGpuOption.disableProperty().bind(freeGpuRunning.or(environmentReady.not()));
         freeGpuOption.setOnAction(e -> {
@@ -710,9 +711,11 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         MenuItem maePretrainOption = new MenuItem("MAE Pretrain Encoder...");
         TooltipHelper.installOnMenuItem(
                 maePretrainOption,
-                "Self-supervised pretraining for MuViT encoder.\n"
-                        + "Train on unlabeled image tiles using masked autoencoder.\n"
-                        + "The resulting encoder can be loaded via 'Continue from model'.");
+                "Teaches a MuViT model's encoder what your images look like, from\n"
+                        + "unlabeled tiles, before you train it with annotations. Advanced;\n"
+                        + "MuViT only. To use the result: open Train DL Pixel Classifier,\n"
+                        + "switch to Show All Settings, pick the MuViT architecture, and choose\n"
+                        + "'Use MAE pretrained encoder' under Weight Initialization.");
         maePretrainOption.setOnAction(e -> startMAEPretraining());
         maePretrainOption.disableProperty().bind(environmentReady.not());
 
@@ -728,10 +731,14 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
         MenuItem calibrateBNOption = new MenuItem("Calibrate model to current image...");
         TooltipHelper.installOnMenuItem(
                 calibrateBNOption,
-                "AdaBN (Adaptive Batch Normalization).\n" + "Recomputes BatchNorm running statistics on tiles sampled\n"
-                        + "from the current image. Saves a new model with '_adabn'\n"
-                        + "suffix; the original is preserved. No retraining or labels\n"
-                        + "required -- closes most cross-acquisition performance gap.");
+                "AdaBN (Adaptive Batch Normalization). Re-measures the brightness and\n"
+                        + "contrast statistics the model uses internally, from tiles of the\n"
+                        + "current image. Can reduce the drop in accuracy on images from a new\n"
+                        + "scan or microscope, without labels or retraining. Saves a new model\n"
+                        + "with an '_adabn' suffix; the original is kept.\n\n"
+                        + "Works on models with BatchNorm or BatchRenorm layers (UNet, Fast\n"
+                        + "Pretrained, Tiny UNet). MuViT, and a Tiny UNet built with GroupNorm,\n"
+                        + "have neither and are refused.");
         calibrateBNOption.setOnAction(e -> startAdaBNCalibration());
         calibrateBNOption.disableProperty().bind(environmentReady.not());
 
@@ -1149,7 +1156,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                     .append("\n");
         }
         if (orphanInfo[0] > 0) {
-            sb.append("  (These may be orphaned from crashed/cancelled training runs)\n");
+            sb.append("  (These may be orphaned from crashed/canceled training runs)\n");
         }
         sb.append("\n");
 
@@ -2025,8 +2032,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
                     } catch (IOException e) {
                         if (progress.isCancelled()) {
-                            progress.complete(false, "MAE pretraining cancelled.");
-                            logger.info("MAE pretraining cancelled by user");
+                            progress.complete(false, "MAE pretraining canceled.");
+                            logger.info("MAE pretraining canceled by user");
                         } else {
                             logger.error("MAE pretraining failed", e);
                             progress.log("ERROR: " + e.getMessage());
@@ -2366,8 +2373,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
                     } catch (IOException e) {
                         if (progress.isCancelled()) {
-                            progress.complete(false, "SSL pretraining cancelled.");
-                            logger.info("SSL pretraining cancelled by user");
+                            progress.complete(false, "SSL pretraining canceled.");
+                            logger.info("SSL pretraining canceled by user");
                         } else {
                             logger.error("SSL pretraining failed", e);
                             progress.log("ERROR: " + e.getMessage());
@@ -2621,9 +2628,10 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
 
                         Platform.runLater(() -> Dialogs.showInfoNotification(
                                 EXTENSION_NAME,
-                                "AdaBN calibration complete: "
+                                "AdaBN finished: saved "
                                         + outputDirFinal.getFileName()
-                                        + ". Refresh the model list to see it."));
+                                        + ". Refresh the model list to see it, then compare it with the "
+                                        + "original on the new images."));
                         logger.info("AdaBN saved to {}", savedPath);
                     } catch (Exception ex) {
                         logger.error("AdaBN calibration failed", ex);
@@ -3067,7 +3075,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                         .append("supervised training. See details below.\n\n");
             } else if (cancelled) {
                 messageBuilder
-                        .append("[CANCELLED] Training was stopped before normal completion.\n")
+                        .append("[CANCELED] Training was stopped before normal completion.\n")
                         .append("The encoder reflects the best epoch's weights up to the\n")
                         .append("point of cancellation, NOT a fully trained model.\n\n");
             } else if (hasWarnings) {
@@ -3076,8 +3084,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             if ("MAE".equals(label)) {
                 messageBuilder.append(String.format(
                         "Encoder saved to:%n%s%n%nFinal reconstruction loss: %.4f%n%n"
-                                + "To use: In the training dialog, select MuViT and%n"
-                                + "choose 'Continue from model' to load this encoder.",
+                                + "To use it: open Train DL Pixel Classifier, switch to%n"
+                                + "Show All Settings, pick the MuViT architecture, and choose%n"
+                                + "'Use MAE pretrained encoder' under Weight Initialization.",
                         encoderPath, result.finalLoss()));
             } else {
                 messageBuilder.append(String.format(
@@ -3097,7 +3106,7 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
             logger.info(
                     "{} pretraining {}: loss={}, path={}, quality={}, warnings={}",
                     label,
-                    cancelled ? "cancelled (saved)" : "complete",
+                    cancelled ? "canceled (saved)" : "complete",
                     result.finalLoss(),
                     encoderPath,
                     quality,
@@ -3114,16 +3123,19 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                             label + " pretraining flagged: encoder may be unusable. See dialog for details.");
                     Alert alert = new Alert(Alert.AlertType.WARNING);
                     alert.setTitle(label + " pretraining: encoder collapsed");
-                    alert.setHeaderText("Collapse probe aborted training");
+                    alert.setHeaderText(
+                            "aborted_collapse".equals(quality)
+                                    ? "Training stopped: the encoder collapsed"
+                                    : "The finished encoder looks collapsed");
                     alert.setContentText(message);
                     alert.getDialogPane().setPrefWidth(560);
                     DialogOwner.own(alert);
                     alert.show();
                 } else if (cancelled) {
                     Dialogs.showWarningNotification(
-                            EXTENSION_NAME, label + " pretraining cancelled. Partial encoder saved -- see dialog.");
+                            EXTENSION_NAME, label + " pretraining canceled. Partial encoder saved -- see dialog.");
                     Alert alert = new Alert(Alert.AlertType.WARNING);
-                    alert.setTitle(label + " pretraining: cancelled");
+                    alert.setTitle(label + " pretraining: canceled");
                     alert.setHeaderText("Training stopped early; partial encoder saved");
                     alert.setContentText(message);
                     alert.getDialogPane().setPrefWidth(560);
@@ -3138,8 +3150,8 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 }
             });
         } else {
-            progress.complete(false, label + " pretraining cancelled (no model saved).");
-            logger.info("{} pretraining cancelled, no model saved", label);
+            progress.complete(false, label + " pretraining canceled (no model saved).");
+            logger.info("{} pretraining canceled, no model saved", label);
         }
         cleanup.run();
     }

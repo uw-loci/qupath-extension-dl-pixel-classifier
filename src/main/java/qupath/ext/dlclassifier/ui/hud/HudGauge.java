@@ -553,9 +553,9 @@ abstract class HudGauge extends Region {
         }
         if (frame.verdict() == HudDelta.Verdict.UNKNOWN) {
             sb.append('\n')
-                    .append("Not comparable: the work estimate has no per-architecture cost term, "
-                            + "and none has been measured, so this change cannot honestly be called "
-                            + "better or worse.");
+                    .append("Not comparable: this change switches the model architecture or encoder, "
+                            + "and their speeds have not been measured against each other, so it "
+                            + "cannot be called faster or slower.");
         } else if (frame.moved()) {
             String verdict = frame.verdict() == HudDelta.Verdict.BETTER
                     ? " (better for you)"
@@ -581,11 +581,10 @@ abstract class HudGauge extends Region {
             case GPU_MEMORY -> "Predicted peak GPU memory as a share of the card. Lower is better.";
             case RAM_CACHE -> "The in-memory patch cache as a share of free system RAM. Lower is better.";
             case EPOCH_SPEED ->
-                "How fast one epoch goes, relative: the inverse of the pixels the GPU processes in an "
-                        + "epoch (patches times the padded tile area). Higher is better. Comparable within "
-                        + "one architecture only.";
-            case LEARNING_STEPS ->
-                "Optimizer steps over the whole run: how much learning it buys. " + "Higher is better.";
+                "How fast one epoch runs, compared with your other settings: the fewer pixels the "
+                        + "GPU has to process in an epoch, the faster. Higher is better. Only comparable "
+                        + "within one architecture.";
+            case LEARNING_STEPS -> "Weight updates over the whole run: how much learning it gets. Higher is better.";
             case TRAINING_DATA -> "Training patches the export would start from. Higher is better.";
             case VALIDATION -> "Validation patches. With very few, every score jumps. Higher is better.";
             case TOTAL_TIME -> "The whole run: epoch work times epochs. Lower is faster.";

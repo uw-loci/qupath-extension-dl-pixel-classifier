@@ -529,9 +529,9 @@ public class SSLPretrainingDialog {
         VBox content = new VBox(10);
         content.setPadding(new Insets(10));
 
-        Hyperlink tipsLink = new Hyperlink("SSL pretraining tips");
+        Hyperlink tipsLink = ThemeColors.hyperlink("SSL pretraining tips");
         tipsLink.setOnAction(e -> showSSLTipsDialog());
-        tipsLink.setStyle("-fx-font-size: 11px;");
+        tipsLink.setStyle(tipsLink.getStyle() + " -fx-font-size: 11px;");
         content.getChildren().add(tipsLink);
 
         content.getChildren().add(buildMethodSection());

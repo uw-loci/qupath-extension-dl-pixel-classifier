@@ -54,8 +54,7 @@ public class InferenceDialog {
             ClassifierMetadata classifier,
             InferenceConfig inferenceConfig,
             ChannelConfiguration channelConfig,
-            InferenceConfig.ApplicationScope applicationScope,
-            boolean createBackup) {}
+            InferenceConfig.ApplicationScope applicationScope) {}
 
     private InferenceDialog() {
         // Utility class
@@ -144,7 +143,6 @@ public class InferenceDialog {
         private RadioButton applyToSelectedRadio;
         private RadioButton applyToAllRadio;
         private RadioButton applyToWholeImageRadio;
-        private CheckBox createBackupCheck;
 
         private Button okButton;
 
@@ -335,7 +333,8 @@ public class InferenceDialog {
                     "How classification results are represented:\n\n"
                             + "OBJECTS: Create detection/annotation objects for classified regions.\n"
                             + "  Best for spatial analysis and counting discrete structures.\n\n"
-                            + "MEASUREMENTS: Add per-class probability measurements to annotations.\n"
+                            + "MEASUREMENTS: Adds each class's area (um^2) and share (%) of every\n"
+                            + "  annotation, counted from the predicted class of each pixel.\n"
                             + "  Best for quantification workflows (e.g. % area per class).\n\n"
                             + "For quick visualization, use the Toggle Overlay in the main menu\n"
                             + "(Extensions > DL Pixel Classifier > Toggle Prediction Overlay).");
@@ -399,7 +398,7 @@ public class InferenceDialog {
             smoothingSpinner.setPrefWidth(100);
             TooltipHelper.install(
                     smoothingSpinner,
-                    "Boundary simplification tolerance in microns.\n"
+                    "Boundary simplification tolerance in micrometers (um).\n"
                             + "Smooths jagged object boundaries using topology-preserving\n"
                             + "simplification. Higher values produce simpler boundaries.\n"
                             + "Set to 0 for pixel-exact boundaries.\n"
@@ -573,19 +572,15 @@ public class InferenceDialog {
             }
             TooltipHelper.install(
                     blendModeCombo,
-                    "Strategy for handling tile boundaries:\n\n"
-                            + "GAUSSIAN (Recommended): Cosine-bell blending for smooth transitions.\n"
-                            + "  Eliminates tile boundary artifacts with smooth S-curve averaging.\n"
-                            + "  Forced for OVERLAY output type.\n\n"
-                            + "LINEAR: Weighted average blending at tile boundaries.\n"
-                            + "  Faster, but may show faint grid lines,\n"
-                            + "  especially with BatchNorm models.\n"
-                            + "  Available for batch inference only (RENDERED_OVERLAY, OBJECTS).\n\n"
-                            + "CENTER_CROP: Use only center predictions from each tile.\n"
-                            + "  No blending -- discards predictions near tile edges.\n"
-                            + "  Available for batch inference only (RENDERED_OVERLAY, OBJECTS).\n\n"
-                            + "NONE: No blending; raw tile predictions.\n"
-                            + "  Fastest but will show visible tile seams.");
+                    "How tiles are joined. The overlay and Apply Classifier both keep\n"
+                            + "only the center of each tile and drop its edges, whatever is\n"
+                            + "chosen here.\n\n"
+                            + "CENTER_CROP: also widens each tile's border of real image to at\n"
+                            + "  least 25% of the tile. This removes rectangular blocks of the\n"
+                            + "  wrong class that line up with the tile grid. At the default\n"
+                            + "  overlap it needs about twice as many tiles, so it is slower.\n\n"
+                            + "GAUSSIAN (default), LINEAR, NONE: use the Tile Overlap as set.\n"
+                            + "  For OBJECTS and MEASUREMENTS these three give the same result.");
 
             // The overlap advisory reads differently under CENTER_CROP, so it
             // has to be refreshed when the mode changes, not only the overlap.
@@ -730,29 +725,20 @@ public class InferenceDialog {
                             + "Useful for testing on a small region before full-image inference.\n"
                             + "Select annotations in the hierarchy panel or on the viewer.");
 
-            // Backup option - restore from preferences
-            createBackupCheck = new CheckBox("Create backup of annotation measurements before applying");
-            createBackupCheck.setSelected(DLClassifierPreferences.isCreateBackup());
-            TooltipHelper.install(
-                    createBackupCheck,
-                    "Save a copy of existing annotation measurements before\n"
-                            + "overwriting with new classification results.\n"
-                            + "Recommended when re-running inference on previously classified images.\n"
-                            + "Backup measurements are prefixed with 'backup_'.");
+            // A "Create backup of annotation measurements" checkbox stood here until
+            // 0.9.27. Nothing ever read it, so it promised a backup that was never made.
 
             content.getChildren()
                     .addAll(
                             new Label("Application scope:"),
                             applyToWholeImageRadio,
                             applyToAllRadio,
-                            applyToSelectedRadio,
-                            new Separator(),
-                            createBackupCheck);
+                            applyToSelectedRadio);
 
             TitledPane pane = new TitledPane("APPLICATION SCOPE", content);
             pane.setExpanded(true);
             pane.setStyle("-fx-font-weight: bold;");
-            pane.setTooltip(TooltipHelper.create("Control which region to classify and backup options"));
+            pane.setTooltip(TooltipHelper.create("Control which region to classify"));
             return pane;
         }
 
@@ -1028,7 +1014,6 @@ public class InferenceDialog {
             DLClassifierPreferences.setLastBlendMode(blendModeCombo.getValue().name());
             DLClassifierPreferences.setSmoothing(smoothingSpinner.getValue());
             DLClassifierPreferences.setApplicationScope(scope.name());
-            DLClassifierPreferences.setCreateBackup(createBackupCheck.isSelected());
             DLClassifierPreferences.setTileSize(tileSizeSpinner.getValue());
             DLClassifierPreferences.setTileOverlapPercent(overlapPercentSpinner.getValue());
             DLClassifierPreferences.setUseGPU(useGPUCheck.isSelected());
@@ -1071,8 +1056,7 @@ public class InferenceDialog {
             ChannelConfiguration channelConfig =
                     channelPanel.getChannelConfiguration().withNormalizationOf(classifier);
 
-            return new InferenceDialogResult(
-                    classifier, inferenceConfig, channelConfig, scope, createBackupCheck.isSelected());
+            return new InferenceDialogResult(classifier, inferenceConfig, channelConfig, scope);
         }
 
         private void copyInferenceScript(Button sourceButton) {

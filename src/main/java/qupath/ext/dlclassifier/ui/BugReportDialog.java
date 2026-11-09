@@ -78,6 +78,13 @@ public class BugReportDialog {
     /** Preferred width of the dialog's content; the notes wrap to it. */
     private static final double CONTENT_WIDTH = 600;
 
+    /** Notes, the error line and the field hints: readable in light and dark themes (see ThemeColors). */
+    private static final String NOTE_STYLE = "-fx-text-fill: " + ThemeColors.INFO + ";";
+
+    private static final String ERROR_STYLE = "-fx-text-fill: " + ThemeColors.ERROR + ";";
+    // !important: QuPath's dark theme sets prompt colors !important, which beats a plain inline style.
+    private static final String PROMPT_STYLE = "-fx-prompt-text-fill: " + ThemeColors.MUTED + " !important;";
+
     private volatile boolean submitting = false;
 
     // The one dialog window currently on screen, or null. Only touched on the FX thread.
@@ -145,7 +152,7 @@ public class BugReportDialog {
                 + "filed by the reporting service, not from your GitHub account, so without a username nobody "
                 + "can reach you about this report.");
         wrapped(anonymityNote);
-        anonymityNote.setStyle("-fx-text-fill: -fx-accent;");
+        anonymityNote.setStyle(NOTE_STYLE);
 
         Label summaryHeading = new Label("Summary (used as the issue title):");
         summaryHeading.setStyle("-fx-font-weight: bold;");
@@ -172,7 +179,7 @@ public class BugReportDialog {
 
         chkScreenshot.setSelected(false);
         wrapped(screenshotWarning);
-        screenshotWarning.setStyle("-fx-text-fill: -fx-accent;");
+        screenshotWarning.setStyle(NOTE_STYLE);
         screenshotWarning.setVisible(false);
         screenshotWarning.setManaged(false);
         chkScreenshot.selectedProperty().addListener((obs, was, now) -> {
@@ -190,7 +197,10 @@ public class BugReportDialog {
         contactHeading.setStyle("-fx-font-weight: bold;");
         githubUserField.setPromptText("GitHub username, with or without @ (e.g. alice or @alice)");
         // First field, so it has focus on open: keep its hint visible while focused.
-        githubUserField.setStyle("-fx-prompt-text-fill: derive(-fx-control-inner-background, -45%);");
+        githubUserField.setStyle(PROMPT_STYLE);
+        imageScUserField.setStyle(PROMPT_STYLE);
+        summaryField.setStyle(PROMPT_STYLE);
+        descriptionArea.setStyle(PROMPT_STYLE);
         imageScUserField.setPromptText("image.sc forum username (e.g. alice)");
         Label contactNote =
                 new Label("Both are shown publicly in the issue. A GitHub username notifies you of replies; "
@@ -215,7 +225,7 @@ public class BugReportDialog {
         if (!BugReportService.isConfigured()) {
             Label notConfigured = new Label("Bug reporting is not set up yet: the Worker URL has not been configured.");
             wrapped(notConfigured);
-            notConfigured.setStyle("-fx-text-fill: -fx-accent;");
+            notConfigured.setStyle(NOTE_STYLE);
             submitButton.setDisable(true);
             root.getChildren().add(notConfigured);
         }
@@ -368,7 +378,7 @@ public class BugReportDialog {
         if (url != null && !url.isEmpty()) {
             Label hint = new Label("View it or add more detail here:");
             wrapped(hint);
-            Hyperlink link = new Hyperlink(url);
+            Hyperlink link = ThemeColors.hyperlink(url);
             link.setTooltip(new Tooltip("Open the issue in your browser"));
             link.setOnAction(e -> QuPathGUI.openInBrowser(url));
             content.getChildren().addAll(hint, link);
@@ -378,7 +388,7 @@ public class BugReportDialog {
             Label follow = new Label("You did not leave a GitHub username, so you will not be told about replies. "
                     + "To follow this report, open the issue and click Subscribe (needs a GitHub account).");
             wrapped(follow);
-            follow.setStyle("-fx-text-fill: -fx-accent;");
+            follow.setStyle(NOTE_STYLE);
             content.getChildren().add(follow);
         }
 
@@ -394,7 +404,7 @@ public class BugReportDialog {
 
     private void setStatus(String message, boolean isError) {
         statusLabel.setText(message);
-        statusLabel.setStyle(isError ? "-fx-text-fill: -fx-accent;" : "-fx-text-fill: -fx-text-base-color;");
+        statusLabel.setStyle(isError ? ERROR_STYLE : "-fx-text-fill: -fx-text-base-color;");
     }
 
     // ---- screenshot helpers ------------------------------------------------

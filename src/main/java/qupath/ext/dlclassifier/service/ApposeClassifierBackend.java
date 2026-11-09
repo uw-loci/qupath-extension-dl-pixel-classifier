@@ -884,7 +884,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         }
                     }
                     task.cancel();
-                    logger.info("{} pretraining cancelled by user", label.toUpperCase());
+                    logger.info("{} pretraining canceled by user", label.toUpperCase());
                 }
                 try {
                     // Tighter polling than the previous 200 ms reduces the
@@ -1016,7 +1016,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
         while (!task.status.isFinished()) {
             if (cancelledCheck != null && cancelledCheck.get()) {
                 task.cancel();
-                logger.info("Resumed pretraining cancelled by user");
+                logger.info("Resumed pretraining canceled by user");
             }
             try {
                 Thread.sleep(200);
@@ -1330,7 +1330,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             task.waitFor();
         } catch (Exception e) {
             if (task.status == org.apposed.appose.Service.TaskStatus.CANCELED) {
-                logger.info("Training cancelled via Appose");
+                logger.info("Training canceled via Appose");
                 // Python saves both best-epoch and last-epoch models on cancel.
                 // Read all available outputs for the cancel result.
                 String cancelBestPath = null;
@@ -1597,7 +1597,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("CANCELED")) {
-                logger.info("Evaluation cancelled");
+                logger.info("Evaluation canceled");
                 return List.of();
             }
             throw new IOException("Evaluation failed: " + e.getMessage(), e);

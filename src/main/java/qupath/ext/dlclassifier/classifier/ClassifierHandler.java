@@ -210,6 +210,17 @@ public interface ClassifierHandler {
     }
 
     /**
+     * Whether the Train dialog can train this architecture. An architecture that cannot
+     * (an imported model that only runs inference) is left off the dialog's list rather
+     * than offered and then refused at Start Training.
+     *
+     * @return true when Start Training works for this architecture
+     */
+    default boolean trainableInDialog() {
+        return true;
+    }
+
+    /**
      * Returns the default weight initialization strategy for this handler.
      *
      * @return default strategy

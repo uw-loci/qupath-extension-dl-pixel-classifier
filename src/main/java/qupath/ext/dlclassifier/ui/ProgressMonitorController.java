@@ -302,9 +302,13 @@ public class ProgressMonitorController {
             if (showClassMetrics) {
                 lossLegend
                         .getChildren()
-                        .addAll(createLegendItem("#2196F3", "Train Loss"), createLegendItem("#F44336", "Val Loss"));
+                        .addAll(
+                                createLegendItem("#2196F3", "Train Loss"), // theme-exempt: chart series colors
+                                createLegendItem("#F44336", "Val Loss")); // theme-exempt: chart series colors
             } else {
-                lossLegend.getChildren().add(createLegendItem("#2196F3", "Reconstruction Loss"));
+                lossLegend
+                        .getChildren()
+                        .add(createLegendItem("#2196F3", "Reconstruction Loss")); // theme-exempt: chart series colors
             }
 
             VBox lossChartWithLegend = new VBox(0, lossChart, lossLegend);
@@ -321,6 +325,11 @@ public class ProgressMonitorController {
                 VBox.setVgrow(iouChart, Priority.ALWAYS);
 
                 TitledPane iouPane = new TitledPane("Per-Class IoU", iouChartWithLegend);
+                TooltipHelper.install(
+                        iouPane,
+                        "Per-class overlap score (IoU): how well each class's predictions\n"
+                                + "overlap your validation annotations. 1.0 is a perfect match,\n"
+                                + "0 is none.");
                 iouPane.setExpanded(false);
                 root.getChildren().add(iouPane);
             }
@@ -667,6 +676,15 @@ public class ProgressMonitorController {
      * @param message completion message
      */
     public void complete(boolean success, String message) {
+        // The red "Failed" state below only reaches this window's own log area.
+        // Log it here too, so every failure is in the QuPath log and in bug
+        // reports, whichever caller raised it. A canceled run is not a failure.
+        if (!success
+                && !cancelled.get()
+                && (message == null
+                        || !message.toLowerCase(java.util.Locale.ROOT).contains("cancel"))) {
+            logger.error("Operation failed: {}", message);
+        }
         Platform.runLater(() -> {
             isRunning.set(false);
             estimateLabel.setVisible(false);
@@ -876,7 +894,7 @@ public class ProgressMonitorController {
             }
 
             cancelled.set(true);
-            status.set("Cancelling...");
+            status.set("Canceling...");
             pauseButton.setDisable(true);
             completeTrainingButton.setVisible(false);
             completeTrainingButton.setManaged(false);
