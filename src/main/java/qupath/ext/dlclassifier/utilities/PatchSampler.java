@@ -12,7 +12,7 @@ import qupath.lib.roi.interfaces.ROI;
  * Handles both sparse annotations (lines, polylines) and dense annotations
  * (filled polygons). For sparse annotations, patches are centered on points
  * sampled along the ROI. For dense annotations, the bounding box is tiled
- * with stride = (patchSize - overlap) — caller-controlled, no longer
+ * with stride = (patchSize - overlap) -- caller-controlled, no longer
  * hard-coded to 50%.
  *
  * @author UW-LOCI

@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
  * <p>This was not hypothetical. The scripts the extension's own "Copy as Groovy
  * Script" generates contain exactly such a map literal, so a scripted training
  * run with class weights died during patch export while the identical run from
- * the GUI — which passes real Doubles — completed normally.
+ * the GUI -- which passes real Doubles -- completed normally.
  */
 class TrainingConfigGroovyNumericsTest {
 
