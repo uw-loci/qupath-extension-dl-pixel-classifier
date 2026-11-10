@@ -355,6 +355,8 @@ public class ModelManager {
             // has the flag, so a silently-degraded older model is visible.
             boolean perChannelNorm = false;
             double clipPercentile = 99.0;
+            Double fixedMin = null;
+            Double fixedMax = null;
             boolean foundNormBlock = false;
             for (String parent : new String[] {"input_config", "channel_config"}) {
                 if (!obj.has(parent) || !obj.get(parent).isJsonObject()) {
@@ -378,6 +380,18 @@ public class ModelManager {
                         clipPercentile = norm.get("clip_percentile").getAsDouble();
                     } catch (NumberFormatException | IllegalStateException e) {
                         logger.debug("Could not parse {}.normalization.clip_percentile: {}", parent, e.getMessage());
+                    }
+                }
+                // The FIXED_RANGE bounds training used (buildInputConfig sends them as
+                // min/max). Nothing read them back, so Apply used its panel's bounds.
+                if (fixedMin == null && norm.has("min") && norm.has("max")) {
+                    try {
+                        fixedMin = norm.get("min").getAsDouble();
+                        fixedMax = norm.get("max").getAsDouble();
+                    } catch (NumberFormatException | IllegalStateException | UnsupportedOperationException e) {
+                        fixedMin = null;
+                        fixedMax = null;
+                        logger.debug("Could not parse {}.normalization min/max: {}", parent, e.getMessage());
                     }
                 }
                 if (foundNormBlock) {
@@ -486,6 +500,7 @@ public class ModelManager {
                     .normalizationStrategy(ChannelConfiguration.NormalizationStrategy.valueOf(normStrategy))
                     .perChannelNormalization(perChannelNorm)
                     .clipPercentile(clipPercentile)
+                    .fixedRange(fixedMin, fixedMax)
                     .bitDepthTrained(bitDepth)
                     .classes(classes)
                     .trainingEpochs(trainingEpochs)

@@ -89,8 +89,6 @@ public final class DLClassifierPreferences {
     private static final StringProperty envLastBuiltDir =
             PathPrefs.createPersistentPreference("dlclassifier.env.lastBuiltDir", "");
 
-    private static final BooleanProperty useGPU = PathPrefs.createPersistentPreference("dlclassifier.useGPU", true);
-
     private static final DoubleProperty minObjectSizeMicrons =
             PathPrefs.createPersistentPreference("dlclassifier.minObjectSizeMicrons", 10.0);
 
@@ -297,8 +295,10 @@ public final class DLClassifierPreferences {
     private static final StringProperty defaultFocusClass =
             PathPrefs.createPersistentPreference("dlclassifier.defaultFocusClass", "");
 
+    // 0.5 is the real default. It used to be 0.0, read as "never set" and replaced by
+    // 0.5, so a Min Focus IoU deliberately set to 0.00 was never remembered.
     private static final DoubleProperty defaultFocusClassMinIoU =
-            PathPrefs.createPersistentPreference("dlclassifier.defaultFocusClassMinIoU", 0.0);
+            PathPrefs.createPersistentPreference("dlclassifier.defaultFocusClassMinIoU", 0.5);
 
     // ==================== Advanced Training Parameters ====================
 
@@ -511,13 +511,6 @@ public final class DLClassifierPreferences {
                 .name("Python environment: " + ApposeGpu.PREFERENCE_NAME)
                 .category(CATEGORY)
                 .description(ApposeGpu.preferenceDescription())
-                .build());
-
-        items.add(new PropertyItemBuilder<>(useGPU, Boolean.class)
-                .name("Use GPU for Inference")
-                .category(CATEGORY)
-                .description("Use GPU acceleration for inference when available. "
-                        + "Falls back to CPU if no GPU is detected.")
                 .build());
 
         items.add(new PropertyItemBuilder<>(trainingExportDir, String.class)
@@ -868,18 +861,6 @@ public final class DLClassifierPreferences {
 
     public static void setEnvLastBuiltDir(String v) {
         envLastBuiltDir.set(v == null ? "" : v);
-    }
-
-    public static boolean isUseGPU() {
-        return useGPU.get();
-    }
-
-    public static void setUseGPU(boolean use) {
-        useGPU.set(use);
-    }
-
-    public static BooleanProperty useGPUProperty() {
-        return useGPU;
     }
 
     // ==================== Out-of-Distribution Check ====================

@@ -108,7 +108,6 @@ public class MuViTHandler implements ClassifierHandler {
                 .holeFillingMicrons(5.0)
                 .boundarySmoothing(2.0)
                 .maxTilesInMemory(30)
-                .useGPU(true)
                 .build();
     }
 

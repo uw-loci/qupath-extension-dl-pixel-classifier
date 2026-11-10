@@ -182,17 +182,36 @@ public class ChannelSelectionPanel extends VBox {
         normalizationCombo =
                 new ComboBox<>(FXCollections.observableArrayList(ChannelConfiguration.NormalizationStrategy.values()));
         normalizationCombo.setValue(ChannelConfiguration.NormalizationStrategy.PERCENTILE_99);
+        // Plain names in the dialog; the enum stays the stored value and the scripting name.
+        normalizationCombo.setConverter(new javafx.util.StringConverter<>() {
+            @Override
+            public String toString(ChannelConfiguration.NormalizationStrategy s) {
+                return s == null ? "" : s.displayName();
+            }
+
+            @Override
+            public ChannelConfiguration.NormalizationStrategy fromString(String text) {
+                for (ChannelConfiguration.NormalizationStrategy s :
+                        ChannelConfiguration.NormalizationStrategy.values()) {
+                    if (s.displayName().equals(text)) {
+                        return s;
+                    }
+                }
+                return null;
+            }
+        });
         TooltipHelper.install(
                 normalizationCombo,
-                "Per-channel intensity normalization before model input:\n\n"
-                        + "PERCENTILE_99 (recommended): Scale using 1st/99th percentiles.\n"
-                        + "  Robust to outliers and hot pixels. Best for most images.\n\n"
-                        + "MIN_MAX: Scale to [0,1] using channel min/max values.\n"
-                        + "  Sensitive to outliers -- a single bright pixel affects the range.\n\n"
-                        + "Z_SCORE: Centers each channel on its average brightness and\n"
-                        + "  scales it by how much it varies (mean and standard deviation).\n\n"
-                        + "FIXED_RANGE: Use a fixed intensity range (e.g. 0-255 for 8-bit).\n"
-                        + "  Useful when consistent intensity scaling is required across images.");
+                "How each channel's brightness is scaled before the model sees it:\n\n"
+                        + "Percentile 1-99 (recommended): scales by the 1st and 99th\n"
+                        + "  percentiles. Ignores hot pixels and outliers. Best for most images.\n\n"
+                        + "Min to max: scales by the channel's darkest and brightest pixels.\n"
+                        + "  A single bright pixel changes the whole range.\n\n"
+                        + "Mean and spread (z-score): centers each channel on its average\n"
+                        + "  brightness and scales it by how much it varies.\n\n"
+                        + "Fixed range: uses a range you set (e.g. 0-255 for 8-bit), the same\n"
+                        + "  for every image.\n\n"
+                        + "Scripts name these PERCENTILE_99, MIN_MAX, Z_SCORE and FIXED_RANGE.");
 
         // Per-channel normalization toggle (hidden for small channel counts)
         perChannelNormCheck = new CheckBox("Per-channel normalization (normalize each channel independently)");

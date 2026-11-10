@@ -122,7 +122,6 @@ public class TinyUNetHandler implements ClassifierHandler {
                 .holeFillingMicrons(5.0)
                 .boundarySmoothing(2.0)
                 .maxTilesInMemory(100)
-                .useGPU(true)
                 .build();
     }
 

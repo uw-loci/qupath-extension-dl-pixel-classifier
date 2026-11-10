@@ -1897,6 +1897,7 @@ public class TrainingWorkflow {
                         // AdaBN, scripting, retrain) has to see what training saw.
                         .perChannelNormalization(channelConfig.isPerChannelNormalization())
                         .clipPercentile(channelConfig.getClipPercentile())
+                        .fixedRange(channelConfig.getFixedMin(), channelConfig.getFixedMax())
                         .bitDepthTrained(channelConfig.getBitDepth())
                         .trainingEpochs(serverResult.lastEpoch())
                         .finalLoss(serverResult.finalLoss())
@@ -1975,6 +1976,7 @@ public class TrainingWorkflow {
                     // AdaBN, scripting, retrain) has to see what training saw.
                     .perChannelNormalization(channelConfig.isPerChannelNormalization())
                     .clipPercentile(channelConfig.getClipPercentile())
+                    .fixedRange(channelConfig.getFixedMin(), channelConfig.getFixedMax())
                     .bitDepthTrained(channelConfig.getBitDepth())
                     .trainingEpochs(trainingConfig.getEpochs())
                     .finalLoss(serverResult.finalLoss())
@@ -2606,6 +2608,7 @@ public class TrainingWorkflow {
                             // AdaBN, scripting, retrain) has to see what training saw.
                             .perChannelNormalization(channelConfig.isPerChannelNormalization())
                             .clipPercentile(channelConfig.getClipPercentile())
+                            .fixedRange(channelConfig.getFixedMin(), channelConfig.getFixedMax())
                             .bitDepthTrained(channelConfig.getBitDepth())
                             .trainingEpochs(serverResult.lastEpoch())
                             .finalLoss(serverResult.finalLoss())
@@ -2669,6 +2672,7 @@ public class TrainingWorkflow {
                         // AdaBN, scripting, retrain) has to see what training saw.
                         .perChannelNormalization(channelConfig.isPerChannelNormalization())
                         .clipPercentile(channelConfig.getClipPercentile())
+                        .fixedRange(channelConfig.getFixedMin(), channelConfig.getFixedMax())
                         .bitDepthTrained(channelConfig.getBitDepth())
                         .trainingEpochs(params.totalEpochs())
                         .finalLoss(serverResult.finalLoss())
@@ -2850,6 +2854,7 @@ public class TrainingWorkflow {
                     // AdaBN, scripting, retrain) has to see what training saw.
                     .perChannelNormalization(channelConfig.isPerChannelNormalization())
                     .clipPercentile(channelConfig.getClipPercentile())
+                    .fixedRange(channelConfig.getFixedMin(), channelConfig.getFixedMax())
                     .bitDepthTrained(channelConfig.getBitDepth())
                     .trainingEpochs(checkpoint.lastEpoch())
                     .finalLoss(serverResult.finalLoss())

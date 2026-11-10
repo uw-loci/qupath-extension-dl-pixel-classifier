@@ -68,6 +68,10 @@ public class ClassifierMetadata {
     // checklist in docs/NORMALIZATION_ROUNDTRIP.md.
     private final boolean perChannelNormalization;
     private final double clipPercentile;
+    // The FIXED_RANGE bounds training used, or null when the metadata has none (a model
+    // saved before 0.9.28 read them back from nowhere, so Apply used its panel's bounds).
+    private final Double fixedMin;
+    private final Double fixedMax;
     private final int bitDepthTrained;
 
     // Classes
@@ -146,6 +150,8 @@ public class ClassifierMetadata {
         this.normalizationStrategy = builder.normalizationStrategy;
         this.perChannelNormalization = builder.perChannelNormalization;
         this.clipPercentile = builder.clipPercentile;
+        this.fixedMin = builder.fixedMin;
+        this.fixedMax = builder.fixedMax;
         this.bitDepthTrained = builder.bitDepthTrained;
         this.classes = Collections.unmodifiableList(new ArrayList<>(builder.classes));
         // trainingImageName removed (clinical persona m3); see comment above.
@@ -380,6 +386,26 @@ public class ClassifierMetadata {
         return clipPercentile;
     }
 
+    /**
+     * Whether the metadata records the fixed intensity range training used. Only the
+     * FIXED_RANGE strategy reads it.
+     *
+     * @return true when both bounds are known
+     */
+    public boolean hasFixedRange() {
+        return fixedMin != null && fixedMax != null;
+    }
+
+    /** @return the fixed range's lower bound training used, or null when not recorded */
+    public Double getFixedMin() {
+        return fixedMin;
+    }
+
+    /** @return the fixed range's upper bound training used, or null when not recorded */
+    public Double getFixedMax() {
+        return fixedMax;
+    }
+
     public int getBitDepthTrained() {
         return bitDepthTrained;
     }
@@ -502,6 +528,12 @@ public class ClassifierMetadata {
         normMap.put("strategy", normalizationStrategy.name());
         normMap.put("per_channel", perChannelNormalization);
         normMap.put("clip_percentile", clipPercentile);
+        // Same keys training writes (ApposeClassifierBackend.buildInputConfig), so a
+        // re-saved model keeps its fixed range.
+        if (hasFixedRange()) {
+            normMap.put("min", fixedMin);
+            normMap.put("max", fixedMax);
+        }
         channelConfig.put("normalization", normMap);
         channelConfig.put("bit_depth_trained", bitDepthTrained);
         map.put("channel_config", channelConfig);
@@ -643,6 +675,8 @@ public class ClassifierMetadata {
         // docs/NORMALIZATION_ROUNDTRIP.md.
         private boolean perChannelNormalization = false;
         private double clipPercentile = 99.0;
+        private Double fixedMin;
+        private Double fixedMax;
         private int bitDepthTrained = 8;
         private List<ClassInfo> classes = new ArrayList<>();
         // trainingImageName removed (clinical persona m3).
@@ -753,6 +787,19 @@ public class ClassifierMetadata {
         /** Sets the clip percentile the model was trained with (default 99.0). */
         public Builder clipPercentile(double clipPercentile) {
             this.clipPercentile = clipPercentile;
+            return this;
+        }
+
+        /**
+         * Sets the FIXED_RANGE bounds training used; either may be null when unknown.
+         *
+         * @param min lower bound, or null
+         * @param max upper bound, or null
+         * @return this builder
+         */
+        public Builder fixedRange(Double min, Double max) {
+            this.fixedMin = min;
+            this.fixedMax = max;
             return this;
         }
 

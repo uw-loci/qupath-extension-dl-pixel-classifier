@@ -133,7 +133,6 @@ public class InferenceDialog {
         private Spinner<Double> overlapPercentSpinner;
         private Label overlapWarningLabel;
         private ComboBox<InferenceConfig.BlendMode> blendModeCombo;
-        private CheckBox useGPUCheck;
         private CheckBox useTTACheck;
 
         // Channel section (for brightfield auto-configuration)
@@ -404,7 +403,7 @@ public class InferenceDialog {
                             + "Set to 0 for pixel-exact boundaries.\n"
                             + "Typical: 0.5-2.0 um for a good balance of accuracy and smoothness.");
 
-            grid.add(new Label("Boundary Smoothing:"), 0, row);
+            grid.add(new Label("Boundary Smoothing (um):"), 0, row);
             grid.add(smoothingSpinner, 1, row);
             row++;
 
@@ -592,18 +591,9 @@ public class InferenceDialog {
             grid.add(blendModeCombo, 1, row);
             row++;
 
-            // GPU
-            useGPUCheck = new CheckBox("Use GPU if available");
-            useGPUCheck.setSelected(DLClassifierPreferences.isUseGPU());
-            TooltipHelper.install(
-                    useGPUCheck,
-                    "Run inference on GPU (CUDA) if available.\n" + "Typically 10-50x faster than CPU.\n"
-                            + "Requires CUDA-enabled PyTorch on the server.\n"
-                            + "Falls back to CPU automatically if GPU is unavailable.\n"
-                            + "Apple Silicon (MPS) is also supported.");
-
-            grid.add(useGPUCheck, 0, row, 2, 1);
-            row++;
+            // A "Use GPU if available" box stood here until 0.9.28. Nothing read it:
+            // inference uses the GPU whenever the environment has one, and
+            // Utilities > Compute Environment (CPU / GPU)... is the real switch.
 
             // Test-Time Augmentation
             useTTACheck = new CheckBox("Test-Time Augmentation (TTA)");
@@ -999,15 +989,7 @@ public class InferenceDialog {
         }
 
         private InferenceDialogResult buildResult() {
-            // Determine selected scope
-            InferenceConfig.ApplicationScope scope;
-            if (applyToWholeImageRadio.isSelected()) {
-                scope = InferenceConfig.ApplicationScope.WHOLE_IMAGE;
-            } else if (applyToSelectedRadio.isSelected()) {
-                scope = InferenceConfig.ApplicationScope.SELECTED_ANNOTATIONS;
-            } else {
-                scope = InferenceConfig.ApplicationScope.ALL_ANNOTATIONS;
-            }
+            InferenceConfig.ApplicationScope scope = currentScope();
 
             // Save dialog settings to preferences for next session
             DLClassifierPreferences.setLastOutputType(outputTypeCombo.getValue().name());
@@ -1016,7 +998,6 @@ public class InferenceDialog {
             DLClassifierPreferences.setApplicationScope(scope.name());
             DLClassifierPreferences.setTileSize(tileSizeSpinner.getValue());
             DLClassifierPreferences.setTileOverlapPercent(overlapPercentSpinner.getValue());
-            DLClassifierPreferences.setUseGPU(useGPUCheck.isSelected());
             DLClassifierPreferences.setDefaultObjectType(
                     objectTypeCombo.getValue().name());
             DLClassifierPreferences.setMinObjectSizeMicrons(minObjectSizeSpinner.getValue());
@@ -1028,10 +1009,32 @@ public class InferenceDialog {
 
             ClassifierMetadata classifier = classifierTable.getSelectionModel().getSelectedItem();
 
-            // Calculate pixel overlap from percentage
-            int overlapPixels = (int) Math.round(tileSizeSpinner.getValue() * overlapPercentSpinner.getValue() / 100.0);
+            InferenceConfig inferenceConfig = currentInferenceConfig();
 
-            InferenceConfig inferenceConfig = InferenceConfig.builder()
+            // Normalization comes from the model, whatever the panel holds.
+            ChannelConfiguration channelConfig =
+                    channelPanel.getChannelConfiguration().withNormalizationOf(classifier);
+
+            return new InferenceDialogResult(classifier, inferenceConfig, channelConfig, scope);
+        }
+
+        /** The application scope the dialog's radio buttons select. */
+        private InferenceConfig.ApplicationScope currentScope() {
+            if (applyToWholeImageRadio.isSelected()) {
+                return InferenceConfig.ApplicationScope.WHOLE_IMAGE;
+            } else if (applyToSelectedRadio.isSelected()) {
+                return InferenceConfig.ApplicationScope.SELECTED_ANNOTATIONS;
+            }
+            return InferenceConfig.ApplicationScope.ALL_ANNOTATIONS;
+        }
+
+        /**
+         * The inference settings the dialog shows, for both Apply and Copy as Script, so a
+         * copied script runs with exactly what Apply would.
+         */
+        private InferenceConfig currentInferenceConfig() {
+            int overlapPixels = (int) Math.round(tileSizeSpinner.getValue() * overlapPercentSpinner.getValue() / 100.0);
+            return InferenceConfig.builder()
                     .tileSize(tileSizeSpinner.getValue())
                     .overlap(overlapPixels)
                     .overlapPercent(overlapPercentSpinner.getValue())
@@ -1045,18 +1048,11 @@ public class InferenceDialog {
                     .separateTouchingObjects(separateTouchingCheck.isSelected())
                     .watershedTolerance(watershedToleranceSpinner.getValue())
                     .addShapeMeasurements(shapeMeasurementsCheck.isSelected())
-                    .useGPU(useGPUCheck.isSelected())
                     .useTTA(useTTACheck.isSelected())
                     .multiPassAveraging(DLClassifierPreferences.isMultiPassAveraging())
                     .overlaySmoothingSigma(DLClassifierPreferences.getOverlaySmoothing())
                     .useCompactArgmaxOutput(DLClassifierPreferences.isUseCompactArgmaxOutput())
                     .build();
-
-            // Normalization comes from the model, whatever the panel holds.
-            ChannelConfiguration channelConfig =
-                    channelPanel.getChannelConfiguration().withNormalizationOf(classifier);
-
-            return new InferenceDialogResult(classifier, inferenceConfig, channelConfig, scope);
         }
 
         private void copyInferenceScript(Button sourceButton) {
@@ -1066,40 +1062,14 @@ public class InferenceDialog {
                 return;
             }
 
-            // Build current config from dialog state
-            int overlapPixels = (int) Math.round(tileSizeSpinner.getValue() * overlapPercentSpinner.getValue() / 100.0);
-
-            InferenceConfig config = InferenceConfig.builder()
-                    .tileSize(tileSizeSpinner.getValue())
-                    .overlap(overlapPixels)
-                    .blendMode(blendModeCombo.getValue())
-                    .outputType(outputTypeCombo.getValue())
-                    .objectType(objectTypeCombo.getValue())
-                    .minObjectSize(minObjectSizeSpinner.getValue())
-                    .maxObjectSize(maxObjectSizeSpinner.getValue())
-                    .holeFilling(holeFillingSpinner.getValue())
-                    .smoothing(smoothingSpinner.getValue())
-                    .separateTouchingObjects(separateTouchingCheck.isSelected())
-                    .watershedTolerance(watershedToleranceSpinner.getValue())
-                    .addShapeMeasurements(shapeMeasurementsCheck.isSelected())
-                    .useGPU(useGPUCheck.isSelected())
-                    .useTTA(useTTACheck.isSelected())
-                    .overlaySmoothingSigma(DLClassifierPreferences.getOverlaySmoothing())
-                    .useCompactArgmaxOutput(DLClassifierPreferences.isUseCompactArgmaxOutput())
-                    .build();
+            // The same config Apply runs with: a second builder here drifted and left
+            // out multi-pass averaging and the overlap percent.
+            InferenceConfig config = currentInferenceConfig();
 
             // Normalization comes from the model, whatever the panel holds.
             ChannelConfiguration channelConfig =
                     channelPanel.getChannelConfiguration().withNormalizationOf(classifier);
-
-            InferenceConfig.ApplicationScope scope;
-            if (applyToWholeImageRadio.isSelected()) {
-                scope = InferenceConfig.ApplicationScope.WHOLE_IMAGE;
-            } else if (applyToSelectedRadio.isSelected()) {
-                scope = InferenceConfig.ApplicationScope.SELECTED_ANNOTATIONS;
-            } else {
-                scope = InferenceConfig.ApplicationScope.ALL_ANNOTATIONS;
-            }
+            InferenceConfig.ApplicationScope scope = currentScope();
 
             String script = ScriptGenerator.generateInferenceScript(classifier.getId(), config, channelConfig, scope);
 

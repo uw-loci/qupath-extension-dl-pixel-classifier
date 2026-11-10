@@ -2534,7 +2534,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 // training -- see NORMALIZATION_ROUNDTRIP.md.
                 .perChannelNormalization(classifier.isPerChannelNormalization())
                 .clipPercentile(classifier.getClipPercentile())
-                .build();
+                .build()
+                // The rest of the model's normalization, including its fixed range.
+                .withNormalizationOf(classifier);
         Map<String, Object> inputConfig = ApposeClassifierBackend.buildInputConfig(channelConfig);
 
         // Temp tile dir
@@ -2778,7 +2780,9 @@ public class SetupDLClassifier implements QuPathExtension, GitHubProject {
                 // training -- see NORMALIZATION_ROUNDTRIP.md.
                 .perChannelNormalization(metadata.isPerChannelNormalization())
                 .clipPercentile(metadata.getClipPercentile())
-                .build();
+                .build()
+                // The rest of the model's normalization, including its fixed range.
+                .withNormalizationOf(metadata);
 
         // Store selection and create overlay
         overlayService.selectModel(metadata, channelConfig);

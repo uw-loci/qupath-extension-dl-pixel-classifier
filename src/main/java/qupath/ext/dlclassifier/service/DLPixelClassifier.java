@@ -133,17 +133,32 @@ public class DLPixelClassifier implements PixelClassifier {
      *
      * @param metadata        classifier metadata from the server
      * @param channelConfig   channel configuration
-     * @param inferenceConfig inference configuration
+     * @param requestedConfig inference configuration as asked for; a context model replaces its tile
+     *                        geometry with the trained one (see InferenceConfig#withTrainedContextGeometry)
      * @param imageData       image data (used for pixel calibration)
      */
     public DLPixelClassifier(
             ClassifierMetadata metadata,
             ChannelConfiguration channelConfig,
-            InferenceConfig inferenceConfig,
+            InferenceConfig requestedConfig,
             ImageData<BufferedImage> imageData) {
         this.metadata = metadata;
         this.channelConfig = channelConfig;
-        this.inferenceConfig = inferenceConfig;
+        // A context model runs at the tile geometry it was trained on, whatever the
+        // Apply dialog or the overlay preference asked for (see withTrainedContextGeometry).
+        InferenceConfig trained = requestedConfig.withTrainedContextGeometry(metadata);
+        if (trained != requestedConfig) {
+            logger.info(
+                    "Context model '{}': using its trained tile size {} and overlap {} px "
+                            + "(asked for {} / {} px, blend {}), so detail and context keep the scale it learned",
+                    metadata.getName(),
+                    trained.getTileSize(),
+                    trained.getOverlap(),
+                    requestedConfig.getTileSize(),
+                    requestedConfig.getOverlap(),
+                    requestedConfig.getBlendMode());
+        }
+        this.inferenceConfig = trained;
         this.downsample = metadata.getDownsample();
         this.contextScale = metadata.getContextScale();
         this.inputPadding = inferenceConfig.effectivePadding();
@@ -170,10 +185,12 @@ public class DLPixelClassifier implements PixelClassifier {
         }
 
         // The cache holds probability maps so a repaint does not re-run
-        // inference. It does not blend -- see the note in TileBlendCache --
-        // and Blend Mode reaches Apply Classifier through TileProcessor
-        // instead. For the overlay the halo floor above is what controls the
-        // artifact. Measured on a 6-channel model at tileSize 256, shifting
+        // inference. It does not blend -- see the note in TileBlendCache.
+        // Every Blend Mode keeps only each tile's center; the mode's one effect
+        // is through effectivePadding(), where CENTER_CROP raises the margin to
+        // 25% of the tile. Apply DL Pixel Classifier runs this same class
+        // (InferenceWorkflow.classifyRegionUnified), so the halo floor above is
+        // what controls the artifact in both. Measured on a 6-channel model at tileSize 256, shifting
         // the tile grid by half a stride and counting pixels whose class
         // changed: 10.65% at 20% overlap, 7.08% at 25%, 3.42% at 37.5%.
         //

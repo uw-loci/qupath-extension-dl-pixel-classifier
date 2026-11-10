@@ -4152,7 +4152,7 @@ public class TrainingDialog {
             // Focus class min IoU threshold (hidden by default)
             focusClassMinIoULabel = new Label("Min Focus IoU:");
             double savedMinIoU = DLClassifierPreferences.getDefaultFocusClassMinIoU();
-            focusClassMinIoUSpinner = new Spinner<>(0.0, 1.0, savedMinIoU > 0 ? savedMinIoU : 0.5, 0.05);
+            focusClassMinIoUSpinner = new Spinner<>(0.0, 1.0, savedMinIoU, 0.05);
             focusClassMinIoUSpinner.setEditable(true);
             focusClassMinIoUSpinner.setPrefWidth(100);
             var minIoUFactory =
@@ -4582,14 +4582,14 @@ public class TrainingDialog {
 
             // Context scale
             contextScaleCombo = new ComboBox<>(FXCollections.observableArrayList(
-                    "None (single scale)", "2x context", "4x context (Recommended)", "8x context", "16x context"));
+                    "None (single scale)", "2x context", "4x context", "8x context", "16x context"));
             contextScaleCombo.setMaxWidth(Double.MAX_VALUE);
             contextScaleCombo.setValue(mapContextScaleToDisplay(DLClassifierPreferences.getDefaultContextScale()));
             contextScaleLabel = new Label("Surrounding context:");
             TooltipHelper.install(
-                    "Not sure? Leave at None (the default) for your first run. Try 4x,\n"
-                            + "marked Recommended, if classification depends on surrounding\n"
-                            + "tissue structure (e.g., tumor vs. stroma).\n\n"
+                    "Not sure? Leave at None (the default) for your first run. Try 4x\n"
+                            + "if classification depends on surrounding tissue structure\n"
+                            + "(e.g., tumor vs. stroma).\n\n"
                             + "Multi-scale context feeds the model two views of each location:\n"
                             + "the full-resolution tile for detail, plus a larger surrounding\n"
                             + "region (downsampled to the same pixel size) for spatial context.\n\n"
@@ -6409,10 +6409,9 @@ public class TrainingDialog {
                 String savedFocus = DLClassifierPreferences.getDefaultFocusClass();
                 if (savedFocus != null && !savedFocus.isEmpty() && items.contains(savedFocus)) {
                     focusClassCombo.setValue(savedFocus);
-                    double savedMinIoU = DLClassifierPreferences.getDefaultFocusClassMinIoU();
-                    if (savedMinIoU > 0) {
-                        focusClassMinIoUSpinner.getValueFactory().setValue(savedMinIoU);
-                    }
+                    focusClassMinIoUSpinner
+                            .getValueFactory()
+                            .setValue(DLClassifierPreferences.getDefaultFocusClassMinIoU());
                 } else {
                     focusClassCombo.setValue("None (use Mean IoU)");
                 }
@@ -8102,7 +8101,7 @@ public class TrainingDialog {
             return switch (value) {
                 case 16 -> "16x context";
                 case 8 -> "8x context";
-                case 4 -> "4x context (Recommended)";
+                case 4 -> "4x context";
                 case 2 -> "2x context";
                 default -> "None (single scale)";
             };

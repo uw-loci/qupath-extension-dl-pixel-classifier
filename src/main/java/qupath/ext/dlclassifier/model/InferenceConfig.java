@@ -81,7 +81,6 @@ public class InferenceConfig {
 
     // Processing options
     private final int maxTilesInMemory;
-    private final boolean useGPU;
     private final boolean useTTA;
     private final boolean multiPassAveraging;
 
@@ -108,7 +107,6 @@ public class InferenceConfig {
         this.watershedTolerance = builder.watershedTolerance;
         this.addShapeMeasurements = builder.addShapeMeasurements;
         this.maxTilesInMemory = builder.maxTilesInMemory;
-        this.useGPU = builder.useGPU;
         this.useTTA = builder.useTTA;
         this.multiPassAveraging = builder.multiPassAveraging;
         this.overlaySmoothingSigma = builder.overlaySmoothingSigma;
@@ -207,10 +205,6 @@ public class InferenceConfig {
         return maxTilesInMemory;
     }
 
-    public boolean isUseGPU() {
-        return useGPU;
-    }
-
     /**
      * Checks whether Test-Time Augmentation (TTA) is enabled.
      * <p>
@@ -292,7 +286,6 @@ public class InferenceConfig {
                 && Double.compare(that.watershedTolerance, watershedTolerance) == 0
                 && addShapeMeasurements == that.addShapeMeasurements
                 && maxTilesInMemory == that.maxTilesInMemory
-                && useGPU == that.useGPU
                 && useTTA == that.useTTA
                 && multiPassAveraging == that.multiPassAveraging
                 && Double.compare(that.overlaySmoothingSigma, overlaySmoothingSigma) == 0
@@ -319,7 +312,6 @@ public class InferenceConfig {
                 watershedTolerance,
                 addShapeMeasurements,
                 maxTilesInMemory,
-                useGPU,
                 useTTA,
                 multiPassAveraging,
                 overlaySmoothingSigma,
@@ -517,6 +509,76 @@ public class InferenceConfig {
     }
 
     /**
+     * A builder holding every value of this config. {@code toBuilder().build()} equals
+     * this config ({@code InferenceConfigToBuilderTest} pins that for every field).
+     *
+     * @return a new builder with this config's values
+     */
+    public Builder toBuilder() {
+        Builder b = new Builder();
+        b.tileSize = tileSize;
+        b.overlap = overlap;
+        b.overlapPercent = overlapPercent;
+        b.blendMode = blendMode;
+        b.outputType = outputType;
+        b.objectType = objectType;
+        b.minObjectSizeMicrons = minObjectSizeMicrons;
+        b.maxObjectSizeMicrons = maxObjectSizeMicrons;
+        b.holeFillingMicrons = holeFillingMicrons;
+        b.boundarySmoothing = boundarySmoothing;
+        b.separateTouchingObjects = separateTouchingObjects;
+        b.watershedTolerance = watershedTolerance;
+        b.addShapeMeasurements = addShapeMeasurements;
+        b.maxTilesInMemory = maxTilesInMemory;
+        b.useTTA = useTTA;
+        b.multiPassAveraging = multiPassAveraging;
+        b.overlaySmoothingSigma = overlaySmoothingSigma;
+        b.useCompactArgmaxOutput = useCompactArgmaxOutput;
+        return b;
+    }
+
+    /**
+     * This config with a context model's trained tile geometry.
+     * <p>
+     * A model trained with surrounding context learned on tiles of its training tile size
+     * with a margin of {@code computeEffectivePadding(tileSize, trainingOverlap)}, and its
+     * context window covers the tile size times the context scale. Applied at another tile
+     * size or overlap, or under CENTER_CROP (which widens the margin; training never did),
+     * the model sees detail and context at a different relative scale than it learned.
+     * This returns a copy with the trained tile size and overlap, and GAUSSIAN in place of
+     * CENTER_CROP (blend mode has no other effect: every mode keeps each tile's center).
+     * <p>
+     * Unchanged for a model without context, or one whose metadata records no training
+     * overlap (saved before the training settings carried it).
+     *
+     * @param model the classifier being applied
+     * @return this config, or a copy with the model's trained geometry
+     */
+    public InferenceConfig withTrainedContextGeometry(ClassifierMetadata model) {
+        if (model == null || model.getContextScale() <= 1) {
+            return this;
+        }
+        Object recorded = model.getTrainingSettings().get("overlap");
+        int trainedTile = model.getInputWidth();
+        if (!(recorded instanceof Number n) || trainedTile <= 0) {
+            return this;
+        }
+        int trainedOverlap = n.intValue();
+        boolean centerCrop = blendMode == BlendMode.CENTER_CROP;
+        if (tileSize == trainedTile && overlap == trainedOverlap && !centerCrop) {
+            return this;
+        }
+        Builder b = toBuilder();
+        b.tileSize = trainedTile;
+        b.overlap = trainedOverlap;
+        b.overlapPercent = 100.0 * trainedOverlap / trainedTile;
+        if (centerCrop) {
+            b.blendMode = BlendMode.GAUSSIAN;
+        }
+        return b.build();
+    }
+
+    /**
      * Builder for InferenceConfig.
      */
     public static class Builder {
@@ -529,12 +591,12 @@ public class InferenceConfig {
         private double minObjectSizeMicrons = 10.0;
         private double maxObjectSizeMicrons = 0.0;
         private double holeFillingMicrons = 5.0;
-        private double boundarySmoothing = 2.0;
+        // Matches the Apply dialog's default (dlclassifier.smoothing = 1.0); scripts used 2.0.
+        private double boundarySmoothing = 1.0;
         private boolean separateTouchingObjects = false;
         private double watershedTolerance = 0.5;
         private boolean addShapeMeasurements = false;
         private int maxTilesInMemory = 50;
-        private boolean useGPU = true;
         private boolean useTTA = false;
         private boolean multiPassAveraging = false;
         private double overlaySmoothingSigma = 2.0;
@@ -697,8 +759,16 @@ public class InferenceConfig {
             return this;
         }
 
+        /**
+         * Has no effect, and is kept so that scripts written by earlier versions'
+         * Copy as Script still run. Inference runs on the GPU whenever the Python
+         * environment has one; choose a CPU or GPU environment with
+         * Utilities &gt; Compute Environment (CPU / GPU)...
+         *
+         * @param useGPU ignored
+         * @return this builder
+         */
         public Builder useGPU(boolean useGPU) {
-            this.useGPU = useGPU;
             return this;
         }
 

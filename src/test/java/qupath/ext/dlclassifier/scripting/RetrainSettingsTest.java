@@ -70,4 +70,18 @@ class RetrainSettingsTest {
         assertEquals("fallback", DLClassifierScripts.overrideText(o, "missing", "fallback"));
         assertEquals("fallback", DLClassifierScripts.overrideText(null, "name", "fallback"));
     }
+
+    @Test
+    void scriptOutputTypesMapToWhatTheyCreate() {
+        var O = qupath.ext.dlclassifier.model.InferenceConfig.OutputType.OBJECTS;
+        var M = qupath.ext.dlclassifier.model.InferenceConfig.OutputType.MEASUREMENTS;
+        assertEquals(O, DLClassifierScripts.scriptOutputType("objects"));
+        assertEquals(O, DLClassifierScripts.scriptOutputType(" Objects "));
+        assertEquals(M, DLClassifierScripts.scriptOutputType("measurements"));
+        // A script cannot draw the live overlay: these have always created objects.
+        assertEquals(O, DLClassifierScripts.scriptOutputType("overlay"));
+        assertEquals(O, DLClassifierScripts.scriptOutputType("RENDERED_OVERLAY"));
+        assertEquals(M, DLClassifierScripts.scriptOutputType("object"), "a typo falls back, with a warning");
+        assertEquals(M, DLClassifierScripts.scriptOutputType(null));
+    }
 }

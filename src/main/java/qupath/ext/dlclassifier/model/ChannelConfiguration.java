@@ -22,13 +22,29 @@ public class ChannelConfiguration {
      */
     public enum NormalizationStrategy {
         /** Normalize to [0, 1] based on min/max values */
-        MIN_MAX,
+        MIN_MAX("Min to max"),
         /** Clip at 99th percentile, then normalize to [0, 1] */
-        PERCENTILE_99,
+        PERCENTILE_99("Percentile 1-99 (recommended)"),
         /** Z-score normalization: (x - mean) / std */
-        Z_SCORE,
+        Z_SCORE("Mean and spread (z-score)"),
         /** User-specified fixed min/max range */
-        FIXED_RANGE
+        FIXED_RANGE("Fixed range");
+
+        private final String displayName;
+
+        NormalizationStrategy(String displayName) {
+            this.displayName = displayName;
+        }
+
+        /**
+         * The name a user sees in the dialogs. The enum constant stays the stored
+         * value and the scripting name.
+         *
+         * @return the plain-language name
+         */
+        public String displayName() {
+            return displayName;
+        }
     }
 
     private final List<Integer> selectedChannels;
@@ -155,7 +171,11 @@ public class ChannelConfiguration {
                 .normalizationStrategy(metadata.getNormalizationStrategy())
                 .perChannelNormalization(metadata.isPerChannelNormalization())
                 .clipPercentile(metadata.getClipPercentile())
-                .fixedRange(fixedMin, fixedMax)
+                // The model's fixed range when it recorded one; older models did not,
+                // and keep the panel's.
+                .fixedRange(
+                        metadata.hasFixedRange() ? metadata.getFixedMin() : fixedMin,
+                        metadata.hasFixedRange() ? metadata.getFixedMax() : fixedMax)
                 .precomputedChannelStats(precomputedChannelStats)
                 .build();
     }

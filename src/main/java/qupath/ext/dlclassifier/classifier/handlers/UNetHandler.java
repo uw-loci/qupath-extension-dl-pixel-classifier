@@ -166,7 +166,6 @@ public class UNetHandler implements ClassifierHandler {
                 .holeFillingMicrons(5.0)
                 .boundarySmoothing(2.0)
                 .maxTilesInMemory(50)
-                .useGPU(true)
                 .build();
     }
 

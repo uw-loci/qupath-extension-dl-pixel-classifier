@@ -963,12 +963,11 @@ public class ScriptGenerator {
     }
 
     /**
-     * Emits {@code useGPU}, {@code useTTA}, {@code multiPassAveraging}, and
+     * Emits {@code useTTA}, {@code multiPassAveraging}, and
      * {@code maxTilesInMemory}. All always emitted.
      */
     private static void appendInferenceStrategyFields(StringBuilder sb, InferenceConfig config, EmissionStats stats) {
         appendLine(sb, BUILDER_INDENT + "// --- Inference Strategy ---");
-        emit(sb, stats, "useGPU", builderCall("useGPU", String.valueOf(config.isUseGPU())));
         emit(sb, stats, "useTTA", builderCall("useTTA", String.valueOf(config.isUseTTA())));
         emit(
                 sb,

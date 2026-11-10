@@ -183,7 +183,9 @@ public class DLClassifierScripts {
                 .perChannelNormalization(source.isPerChannelNormalization())
                 .clipPercentile(source.getClipPercentile())
                 .bitDepth(source.getBitDepthTrained())
-                .build();
+                .build()
+                // The rest of the model's normalization, including its fixed range.
+                .withNormalizationOf(source);
     }
 
     /**
@@ -229,11 +231,46 @@ public class DLClassifierScripts {
     }
 
     /**
+     * The output a script's output-type string asks for.
+     * <p>
+     * A script cannot draw the live overlay, so "overlay" and "rendered_overlay" create
+     * objects, as they always did here, and now say so in the log. An unrecognized value
+     * (a typo such as "object") used to become MEASUREMENTS silently; it still does, with
+     * a warning naming the value.
+     *
+     * @param outputType the script's string, case-insensitive; may be null
+     * @return OBJECTS or MEASUREMENTS
+     */
+    static InferenceConfig.OutputType scriptOutputType(String outputType) {
+        String key = outputType == null ? "" : outputType.trim().toLowerCase(java.util.Locale.ROOT);
+        switch (key) {
+            case "measurements":
+                return InferenceConfig.OutputType.MEASUREMENTS;
+            case "objects":
+                return InferenceConfig.OutputType.OBJECTS;
+            case "overlay":
+            case "rendered_overlay":
+                logger.warn(
+                        "Output type '{}' is not available from a script (there is no live overlay to draw); "
+                                + "creating objects instead. Use \"objects\" to say so, or Toggle Prediction "
+                                + "Overlay in the GUI to look at the result.",
+                        outputType);
+                return InferenceConfig.OutputType.OBJECTS;
+            default:
+                logger.warn(
+                        "Unknown output type '{}'; using \"measurements\". Use \"measurements\" or \"objects\".",
+                        outputType);
+                return InferenceConfig.OutputType.MEASUREMENTS;
+        }
+    }
+
+    /**
      * Classifies regions using a loaded classifier with specified output type.
      *
      * @param classifier  the classifier metadata
      * @param annotations annotations to classify
-     * @param outputType  output type: "measurements", "objects", or "overlay"
+     * @param outputType  "measurements" or "objects"; "overlay" and "rendered_overlay"
+     *                    create objects (a script cannot draw a live overlay), and are logged as such
      */
     public static void classifyRegions(
             ClassifierMetadata classifier, Collection<PathObject> annotations, String outputType) {
@@ -242,20 +279,12 @@ public class DLClassifierScripts {
             throw new IllegalStateException("No image is open");
         }
 
-        // Build configuration
-        InferenceConfig.OutputType outType =
-                switch (outputType.toLowerCase()) {
-                    case "objects" -> InferenceConfig.OutputType.OBJECTS;
-                    case "overlay" -> InferenceConfig.OutputType.OVERLAY;
-                    case "rendered_overlay" -> InferenceConfig.OutputType.RENDERED_OVERLAY;
-                    default -> InferenceConfig.OutputType.MEASUREMENTS;
-                };
+        InferenceConfig.OutputType outType = scriptOutputType(outputType);
 
         InferenceConfig config = InferenceConfig.builder()
                 .tileSize(DLClassifierPreferences.getTileSize())
                 .overlap(DLClassifierPreferences.getTileOverlap())
                 .outputType(outType)
-                .useGPU(DLClassifierPreferences.isUseGPU())
                 .build();
 
         // Build channel configuration
@@ -273,7 +302,9 @@ public class DLClassifierScripts {
                 // training -- see NORMALIZATION_ROUNDTRIP.md.
                 .perChannelNormalization(classifier.isPerChannelNormalization())
                 .clipPercentile(classifier.getClipPercentile())
-                .build();
+                .build()
+                // The rest of the model's normalization, including its fixed range.
+                .withNormalizationOf(classifier);
 
         // Run classification
         try {
@@ -332,13 +363,14 @@ public class DLClassifierScripts {
                 // training -- see NORMALIZATION_ROUNDTRIP.md.
                 .perChannelNormalization(classifier.isPerChannelNormalization())
                 .clipPercentile(classifier.getClipPercentile())
-                .build();
+                .build()
+                // The rest of the model's normalization, including its fixed range.
+                .withNormalizationOf(classifier);
 
         InferenceConfig config = InferenceConfig.builder()
                 .tileSize(DLClassifierPreferences.getTileSize())
                 .overlap(DLClassifierPreferences.getTileOverlap())
                 .outputType(InferenceConfig.OutputType.MEASUREMENTS)
-                .useGPU(DLClassifierPreferences.isUseGPU())
                 .build();
 
         try {
@@ -472,7 +504,7 @@ public class DLClassifierScripts {
      * Classifies all images in the current project.
      *
      * @param classifier      the classifier to use
-     * @param outputType      output type: "measurements", "objects", or "overlay"
+     * @param outputType      "measurements" or "objects" (see {@link #scriptOutputType(String)})
      * @param skipProcessed   if true, skip images that already have DL measurements
      * @param progressHandler optional callback for progress updates (imageName, index)
      * @return result summary
@@ -496,7 +528,7 @@ public class DLClassifierScripts {
      *
      * @param classifier      the classifier to use
      * @param entries         list of project image entries to process
-     * @param outputType      output type: "measurements", "objects", or "overlay"
+     * @param outputType      "measurements" or "objects" (see {@link #scriptOutputType(String)})
      * @param skipProcessed   if true, skip images that already have DL measurements
      * @param progressHandler optional callback for progress updates (imageName, index)
      * @return result summary

@@ -253,7 +253,7 @@ public class ProgressMonitorController {
         iouYAxis.setAutoRanging(false);
 
         iouChart = new LineChart<>(iouXAxis, iouYAxis);
-        iouChart.setTitle("Per-Class IoU");
+        iouChart.setTitle("Per-class overlap score (IoU)");
         iouChart.setCreateSymbols(false);
         iouChart.setAnimated(false);
         iouChart.setLegendVisible(false);
@@ -324,7 +324,7 @@ public class ProgressMonitorController {
                 VBox iouChartWithLegend = new VBox(0, iouChart, iouLegendBox);
                 VBox.setVgrow(iouChart, Priority.ALWAYS);
 
-                TitledPane iouPane = new TitledPane("Per-Class IoU", iouChartWithLegend);
+                TitledPane iouPane = new TitledPane("Per-class overlap score (IoU)", iouChartWithLegend);
                 TooltipHelper.install(
                         iouPane,
                         "Per-class overlap score (IoU): how well each class's predictions\n"
