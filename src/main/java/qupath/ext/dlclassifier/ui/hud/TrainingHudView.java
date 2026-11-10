@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -549,7 +550,7 @@ public final class TrainingHudView extends Region {
         }
         if (state.comparedTo() != null) {
             return HudGauge.fitTracked(
-                    "COMPARED TO " + state.comparedTo().toUpperCase(),
+                    "COMPARED TO " + state.comparedTo().toUpperCase(Locale.ROOT),
                     STRIP_LABEL_FONT,
                     HudGauge.TRACKING,
                     stripTextWidth);

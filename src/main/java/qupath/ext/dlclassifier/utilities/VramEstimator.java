@@ -1,5 +1,6 @@
 package qupath.ext.dlclassifier.utilities;
 
+import java.util.Locale;
 import qupath.ext.dlclassifier.model.InferenceConfig;
 
 /**
@@ -249,7 +250,7 @@ public final class VramEstimator {
             };
         }
         if (backbone == null) return 30.0;
-        return switch (backbone.toLowerCase()) {
+        return switch (backbone.toLowerCase(Locale.ROOT)) {
             case "resnet18" -> 47.0;
             case "resnet34" -> 87.0;
             case "resnet50" -> 100.0;

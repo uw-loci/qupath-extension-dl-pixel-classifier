@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -256,7 +257,7 @@ public class SSLPretrainingDialog {
         lrFactory.setConverter(new javafx.util.StringConverter<>() {
             @Override
             public String toString(Double value) {
-                return value == null ? "" : String.format("%.5f", value);
+                return value == null ? "" : String.format(Locale.ROOT, "%.5f", value);
             }
 
             @Override
@@ -290,7 +291,7 @@ public class SSLPretrainingDialog {
         wdFactory.setConverter(new javafx.util.StringConverter<Double>() {
             @Override
             public String toString(Double v) {
-                return v == null ? "" : String.format("%.2e", v);
+                return v == null ? "" : String.format(Locale.ROOT, "%.2e", v);
             }
 
             @Override
@@ -1373,7 +1374,7 @@ public class SSLPretrainingDialog {
      */
     private static double estimateModelSizeMb(String backbone) {
         if (backbone == null) return 30.0;
-        return switch (backbone.toLowerCase()) {
+        return switch (backbone.toLowerCase(Locale.ROOT)) {
             case "resnet18" -> 47.0;
             case "resnet34" -> 87.0;
             case "resnet50", "resnet50_lunit-swav", "resnet50_lunit-bt", "resnet50_kather100k", "resnet50_tcga-brca" ->
@@ -1429,7 +1430,7 @@ public class SSLPretrainingDialog {
                     try {
                         long count = Files.walk(dir.toPath())
                                 .filter(p -> IMAGE_EXTENSIONS.contains(
-                                        getExtension(p.toString()).toLowerCase()))
+                                        getExtension(p.toString()).toLowerCase(Locale.ROOT)))
                                 .count();
                         Platform.runLater(() -> {
                             if (count == 0) {

@@ -1377,7 +1377,7 @@ public class AnnotationExtractor {
             throws IOException {
         Path configPath = outputDir.resolve("config.json");
         List<String> channelNames = channelConfig.getChannelNames();
-        String normStrategy = channelConfig.getNormalizationStrategy().name().toLowerCase();
+        String normStrategy = channelConfig.getNormalizationStrategy().name().toLowerCase(Locale.ROOT);
 
         StringBuilder json = new StringBuilder();
         json.append("{\n");
@@ -1409,7 +1409,7 @@ public class AnnotationExtractor {
                     : 1.0;
             double multiplier = classWeightMultipliers.getOrDefault(classNames.get(i), 1.0);
             weight *= multiplier;
-            json.append("    ").append(String.format("%.6f", weight));
+            json.append("    ").append(String.format(Locale.ROOT, "%.6f", weight));
             if (i < classNames.size() - 1) json.append(",");
             json.append("\n");
         }
@@ -1880,7 +1880,7 @@ public class AnnotationExtractor {
         Path configPath = outputDir.resolve("config.json");
 
         List<String> channelNames = channelConfig.getChannelNames();
-        String normStrategy = channelConfig.getNormalizationStrategy().name().toLowerCase();
+        String normStrategy = channelConfig.getNormalizationStrategy().name().toLowerCase(Locale.ROOT);
 
         StringBuilder json = new StringBuilder();
         json.append("{\n");
@@ -1914,7 +1914,7 @@ public class AnnotationExtractor {
                     : 1.0;
             double multiplier = classWeightMultipliers.getOrDefault(classNames.get(i), 1.0);
             weight *= multiplier;
-            json.append("    ").append(String.format("%.6f", weight));
+            json.append("    ").append(String.format(Locale.ROOT, "%.6f", weight));
             if (i < classNames.size() - 1) json.append(",");
             json.append("\n");
         }

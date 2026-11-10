@@ -154,10 +154,10 @@ def elasticOn = (ts.get("augmentation_config") instanceof Map) &&
 
 // ---------------------------------------------------------------- RAM sampling
 
-boolean isWindows = System.getProperty("os.name", "").toLowerCase().contains("win")
+boolean isWindows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")
 def pythonPids = {
     ProcessHandle.current().descendants()
-            .filter { it.info().command().map { c -> c.toLowerCase().contains("python") }.orElse(false) }
+            .filter { it.info().command().map { c -> c.toLowerCase(Locale.ROOT).contains("python") }.orElse(false) }
             .map { it.pid() }
             .toList()
 }

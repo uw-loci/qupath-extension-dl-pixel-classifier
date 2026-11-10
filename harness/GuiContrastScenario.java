@@ -1,3 +1,4 @@
+import java.util.Locale;
 import javafx.application.Platform;
 import javafx.event.ActionEvent;
 import javafx.scene.Node;
@@ -235,7 +236,7 @@ public final class GuiContrastScenario {
         System.out.printf("[note] %-14s %-40s %4d texts, %d low%n", theme, title, counts[0], counts[1]);
         // Render: the scroll content in full where there is one, so nothing below the fold is missed.
         Path png = outDir.resolve((theme.contains("Dark") ? "dark-" : "light-")
-                + title.replaceAll("[^A-Za-z0-9]+", "-").toLowerCase() + ".png");
+                + title.replaceAll("[^A-Za-z0-9]+", "-").toLowerCase(Locale.ROOT) + ".png");
         onFx(() -> {
             Parent root = s.getScene().getRoot();
             var img = s.getScene().snapshot(null);
@@ -314,7 +315,7 @@ public final class GuiContrastScenario {
     }
 
     private static boolean large(Font f) {
-        boolean bold = f.getStyle().toLowerCase().contains("bold");
+        boolean bold = f.getStyle().toLowerCase(Locale.ROOT).contains("bold");
         return f.getSize() >= 24 || (bold && f.getSize() >= 18.66);
     }
 

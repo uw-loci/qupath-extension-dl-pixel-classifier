@@ -1670,7 +1670,7 @@ public class TrainingDialog {
 
                 // Build info label
                 StringBuilder info = new StringBuilder("Locked to SSL encoder:");
-                info.append(" ").append(sslMethod.toUpperCase());
+                info.append(" ").append(sslMethod.toUpperCase(Locale.ROOT));
                 if (encoderName != null) info.append(" ").append(encoderName);
                 if (inputChannels > 0) info.append(", ").append(inputChannels).append("ch");
                 if (tileSize > 0)
@@ -2251,7 +2251,7 @@ public class TrainingDialog {
             String timestamp = java.time.LocalDate.now().toString().replace("-", "");
             if (originalName != null
                     && !originalName.isEmpty()
-                    && !originalName.toUpperCase().endsWith(" CLASSIFIER")) {
+                    && !originalName.toUpperCase(Locale.ROOT).endsWith(" CLASSIFIER")) {
                 classifierNameField.setText(originalName);
             } else {
                 classifierNameField.setText("Retrain_" + originalName + "_" + timestamp);
@@ -4160,7 +4160,7 @@ public class TrainingDialog {
             minIoUFactory.setConverter(new javafx.util.StringConverter<Double>() {
                 @Override
                 public String toString(Double value) {
-                    return value == null ? "" : String.format("%.2f", value);
+                    return value == null ? "" : String.format(Locale.ROOT, "%.2f", value);
                 }
 
                 @Override
@@ -4876,7 +4876,7 @@ public class TrainingDialog {
             lrFactory.setConverter(new javafx.util.StringConverter<Double>() {
                 @Override
                 public String toString(Double value) {
-                    return value == null ? "" : String.format("%.5f", value);
+                    return value == null ? "" : String.format(Locale.ROOT, "%.5f", value);
                 }
 
                 @Override
@@ -4929,7 +4929,7 @@ public class TrainingDialog {
             discLrFactory.setConverter(new javafx.util.StringConverter<Double>() {
                 @Override
                 public String toString(Double value) {
-                    return value == null ? "" : String.format("%.2f", value);
+                    return value == null ? "" : String.format(Locale.ROOT, "%.2f", value);
                 }
 
                 @Override
@@ -4990,7 +4990,7 @@ public class TrainingDialog {
             wdFactory.setConverter(new javafx.util.StringConverter<Double>() {
                 @Override
                 public String toString(Double value) {
-                    return value == null ? "" : String.format("%.3f", value);
+                    return value == null ? "" : String.format(Locale.ROOT, "%.3f", value);
                 }
 
                 @Override
@@ -5497,7 +5497,8 @@ public class TrainingDialog {
             // Windows or macOS today, so even if the user toggled it the Python
             // side would log "torch.compile is Linux-gated" and fall back. Grey
             // the box + append a hint so that gate is visible in the UI.
-            boolean isLinux = System.getProperty("os.name", "").toLowerCase().contains("linux");
+            boolean isLinux =
+                    System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("linux");
             String compileLabel = isLinux
                     ? "torch.compile (experimental, Linux+CUDA)"
                     : "torch.compile (Linux-only, disabled on this OS)";

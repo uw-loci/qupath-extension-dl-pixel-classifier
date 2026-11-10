@@ -3,6 +3,7 @@ package qupath.ext.dlclassifier.ui.hud;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import javafx.scene.layout.Background;
 import javafx.scene.layout.Region;
@@ -47,7 +48,8 @@ final class HudPalette {
     HudPalette() {
         for (Token t : Token.values()) {
             Region r = new Region();
-            r.getStyleClass().add("hud-probe-" + t.name().toLowerCase().replace('_', '-'));
+            r.getStyleClass()
+                    .add("hud-probe-" + t.name().toLowerCase(Locale.ROOT).replace('_', '-'));
             r.setManaged(false);
             r.setMouseTransparent(true);
             r.resize(0, 0);

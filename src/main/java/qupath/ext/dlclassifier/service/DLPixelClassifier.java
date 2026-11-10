@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -719,7 +720,7 @@ public class DLPixelClassifier implements PixelClassifier {
             // toward the circuit breaker -- it would trip on startup when many tiles
             // are requested simultaneously.
             String msg = e.getMessage() != null ? e.getMessage() : "";
-            if (msg.toLowerCase().contains("thread death")) {
+            if (msg.toLowerCase(Locale.ROOT).contains("thread death")) {
                 logger.debug("Transient thread death for tile, will retry on repaint");
                 throw e;
             }

@@ -963,8 +963,8 @@ public class InferenceDialog {
             }
             // 2. Substring match (e.g., "DAPI" in "Channel_DAPI_01")
             for (String name : available) {
-                if (name.toLowerCase().contains(expectedName.toLowerCase())
-                        || expectedName.toLowerCase().contains(name.toLowerCase())) {
+                if (name.toLowerCase(Locale.ROOT).contains(expectedName.toLowerCase(Locale.ROOT))
+                        || expectedName.toLowerCase(Locale.ROOT).contains(name.toLowerCase(Locale.ROOT))) {
                     return name;
                 }
             }

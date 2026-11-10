@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -109,7 +110,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     return Boolean.TRUE.equals(healthy);
                 } catch (Exception e) {
                     String msg = e.getMessage() != null ? e.getMessage() : "";
-                    if (msg.toLowerCase().contains("thread death") && attempt < MAX_TASK_RETRIES - 1) {
+                    if (msg.toLowerCase(Locale.ROOT).contains("thread death") && attempt < MAX_TASK_RETRIES - 1) {
                         logger.debug(
                                 "Health check got transient 'thread death' "
                                         + "(attempt {}/{}), retrying after {}ms...",
@@ -600,7 +601,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             storeCheckpointInfo(jobId, checkpointPath.toString(), epochsCompleted, inputs);
             logger.info(
                     "{} pretraining paused: jobId={}, epoch={}/{}, checkpoint={}",
-                    label.toUpperCase(),
+                    label.toUpperCase(Locale.ROOT),
                     jobId,
                     epochsCompleted,
                     totalEpochs,
@@ -627,7 +628,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
         logger.info(
                 "{} pretraining {}: {} epochs, loss={}, path={}, quality={}, warnings={}",
-                label.toUpperCase(),
+                label.toUpperCase(Locale.ROOT),
                 status,
                 epochsCompleted,
                 finalLoss,
@@ -875,7 +876,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                             Files.writeString(cancelSignalPath, mode);
                             logger.info(
                                     "{} pretraining cancel signal written: " + "mode={} path={}",
-                                    label.toUpperCase(),
+                                    label.toUpperCase(Locale.ROOT),
                                     mode,
                                     cancelSignalPath);
                             cancelSignalWritten[0] = true;
@@ -884,7 +885,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         }
                     }
                     task.cancel();
-                    logger.info("{} pretraining canceled by user", label.toUpperCase());
+                    logger.info("{} pretraining canceled by user", label.toUpperCase(Locale.ROOT));
                 }
                 try {
                     // Tighter polling than the previous 200 ms reduces the
@@ -896,19 +897,19 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     task.cancel();
-                    throw new IOException(label.toUpperCase() + " pretraining interrupted", e);
+                    throw new IOException(label.toUpperCase(Locale.ROOT) + " pretraining interrupted", e);
                 }
             }
 
             if (task.status == org.apposed.appose.Service.TaskStatus.FAILED) {
                 String err = task.error == null ? "" : task.error;
-                boolean isThreadDeath = err.toLowerCase().contains("thread death");
+                boolean isThreadDeath = err.toLowerCase(Locale.ROOT).contains("thread death");
                 if (isThreadDeath && !pythonStarted[0] && attempt == 0) {
                     logger.warn(
                             "{} pretraining hit 'thread death' before Python started "
                                     + "(stale Appose worker); retrying on a fresh task. "
                                     + "Error: {}",
-                            label.toUpperCase(),
+                            label.toUpperCase(Locale.ROOT),
                             err);
                     try {
                         Thread.sleep(500);
@@ -918,12 +919,12 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                     }
                     continue;
                 }
-                throw new IOException(label.toUpperCase() + " pretraining failed: " + err);
+                throw new IOException(label.toUpperCase(Locale.ROOT) + " pretraining failed: " + err);
             }
 
             return buildPretrainingResult(task, jobId, label, inputs, outputDir);
         }
-        throw new IOException(label.toUpperCase() + " pretraining retry loop exited unexpectedly");
+        throw new IOException(label.toUpperCase(Locale.ROOT) + " pretraining retry loop exited unexpectedly");
     }
 
     /**
@@ -1243,8 +1244,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
             try {
                 return executeTrainingTaskOnce(appose, inputs, jobId, extensionCL, progressCallback, cancelledCheck);
             } catch (TrainingStartedException e) {
-                boolean threadDeath =
-                        e.getMessage() != null && e.getMessage().toLowerCase().contains("thread death");
+                boolean threadDeath = e.getMessage() != null
+                        && e.getMessage().toLowerCase(Locale.ROOT).contains("thread death");
                 if (!e.pythonStarted && threadDeath && attempt == 0) {
                     logger.warn("Training hit 'thread death' before Python started (stale Appose worker). "
                             + "Restarting the worker to kill any zombie relaunch, then retrying once.");
@@ -1920,7 +1921,8 @@ public class ApposeClassifierBackend implements ClassifierBackend {
                         }
                     } catch (IOException e) {
                         String msg = e.getMessage() != null ? e.getMessage() : "";
-                        if (msg.toLowerCase().contains("thread death") && attempt < MAX_THREAD_DEATH_RETRIES - 1) {
+                        if (msg.toLowerCase(Locale.ROOT).contains("thread death")
+                                && attempt < MAX_THREAD_DEATH_RETRIES - 1) {
                             lastError = e;
                             logger.debug(
                                     "Thread death on attempt {}, retrying after {}ms delay",
@@ -2155,7 +2157,7 @@ public class ApposeClassifierBackend implements ClassifierBackend {
 
         Map<String, Object> normalization = new HashMap<>();
         normalization.put(
-                "strategy", channelConfig.getNormalizationStrategy().name().toLowerCase());
+                "strategy", channelConfig.getNormalizationStrategy().name().toLowerCase(Locale.ROOT));
         // per_channel and clip MUST reflect what the model trained with. For the
         // apply path, callers build channelConfig from the model metadata
         // (ModelManager parses normalization.per_channel / clip_percentile), so

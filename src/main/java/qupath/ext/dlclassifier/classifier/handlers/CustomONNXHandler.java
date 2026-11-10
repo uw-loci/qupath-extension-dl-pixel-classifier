@@ -359,7 +359,7 @@ public class CustomONNXHandler implements ClassifierHandler {
                 return Optional.of("Selected model file does not exist");
             }
 
-            if (!modelPath.toLowerCase().endsWith(".onnx")) {
+            if (!modelPath.toLowerCase(Locale.ROOT).endsWith(".onnx")) {
                 return Optional.of("Model file must be an ONNX file (.onnx)");
             }
 

@@ -146,7 +146,7 @@ public class ModelManagementWorkflow {
         TableColumn<ClassifierMetadata, String> typeCol = new TableColumn<>("Architecture");
         typeCol.setCellValueFactory(data -> {
             ClassifierMetadata m = data.getValue();
-            String arch = m.getModelType().toUpperCase();
+            String arch = m.getModelType().toUpperCase(Locale.ROOT);
             if (m.getBackbone() != null && !m.getBackbone().isEmpty()) {
                 arch += " / " + m.getBackbone();
             }
@@ -255,7 +255,7 @@ public class ModelManagementWorkflow {
         archGrid.setVgap(5);
         int row = 0;
 
-        addDetailRow(archGrid, row++, "Model Type:", metadata.getModelType().toUpperCase());
+        addDetailRow(archGrid, row++, "Model Type:", metadata.getModelType().toUpperCase(Locale.ROOT));
         addDetailRow(archGrid, row++, "Backbone:", metadata.getBackbone());
         addDetailRow(archGrid, row++, "Input Size:", metadata.getInputWidth() + " x " + metadata.getInputHeight());
         String channelDisplay = String.valueOf(metadata.getInputChannels());

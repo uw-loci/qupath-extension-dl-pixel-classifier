@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -755,7 +756,9 @@ public class TrainingWorkflow {
         try {
             ApposeService appose = ApposeService.getInstance();
             if (appose.isAvailable() && !appose.isGpuAvailable()) {
-                boolean isMac = System.getProperty("os.name", "").toLowerCase().contains("mac");
+                boolean isMac = System.getProperty("os.name", "")
+                        .toLowerCase(Locale.ROOT)
+                        .contains("mac");
                 String message;
                 if (isMac) {
                     message = "No GPU acceleration detected. Training on CPU will be very slow "
@@ -840,8 +843,8 @@ public class TrainingWorkflow {
 
         // Generate classifierId early so model files can be saved directly
         // to the project directory during training (not just at the end).
-        String classifierId =
-                classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") + "_" + System.currentTimeMillis();
+        String classifierId = classifierName.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]", "_") + "_"
+                + System.currentTimeMillis();
 
         // Create project-local model output directory
         Path modelOutputDir = null;
@@ -1865,7 +1868,7 @@ public class TrainingWorkflow {
 
                 String effectiveId = classifierId != null
                         ? classifierId
-                        : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") + "_"
+                        : classifierName.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]", "_") + "_"
                                 + System.currentTimeMillis();
                 List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, classColors);
                 ClassifierMetadata cancelMetadata = ClassifierMetadata.builder()
@@ -1943,7 +1946,8 @@ public class TrainingWorkflow {
             // Use pre-generated classifierId if provided (GUI path), otherwise generate
             String effectiveId = classifierId != null
                     ? classifierId
-                    : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") + "_" + System.currentTimeMillis();
+                    : classifierName.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]", "_") + "_"
+                            + System.currentTimeMillis();
 
             List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, classColors);
 
@@ -2576,7 +2580,7 @@ public class TrainingWorkflow {
                     progress.setStatus("Saving classifier...");
                     String rId = classifierId != null
                             ? classifierId
-                            : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") + "_"
+                            : classifierName.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]", "_") + "_"
                                     + System.currentTimeMillis();
                     List<ClassifierMetadata.ClassInfo> rClassInfo = buildClassInfoList(classNames, null);
                     ClassifierMetadata rMeta = ClassifierMetadata.builder()
@@ -2638,7 +2642,7 @@ public class TrainingWorkflow {
                 // Use the same classifierId from the initial training
                 String effectiveId = classifierId != null
                         ? classifierId
-                        : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") + "_"
+                        : classifierName.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]", "_") + "_"
                                 + System.currentTimeMillis();
 
                 List<ClassifierMetadata.ClassInfo> classInfoList = buildClassInfoList(classNames, null);
@@ -2796,7 +2800,8 @@ public class TrainingWorkflow {
             progress.setStatus("Saving classifier...");
             String effectiveId = classifierId != null
                     ? classifierId
-                    : classifierName.toLowerCase().replaceAll("[^a-z0-9_-]", "_") + "_" + System.currentTimeMillis();
+                    : classifierName.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]", "_") + "_"
+                            + System.currentTimeMillis();
 
             // Compute effective tile size for metadata
             int effectiveTileSize = trainingConfig.getTileSize();

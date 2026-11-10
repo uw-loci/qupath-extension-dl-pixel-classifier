@@ -1,5 +1,7 @@
 package qupath.ext.dlclassifier.utilities;
 
+import java.util.Locale;
+
 /**
  * Shared blue -> yellow -> red colormap used for the per-pixel heatmaps and the
  * confidence slider track in the Training Area Issues dialog.
@@ -65,7 +67,7 @@ public final class HeatmapColormap {
         for (int i = 0; i < n; i++) {
             double f = (double) i / (n - 1);
             double t = t0 + (t1 - t0) * f;
-            sb.append(", ").append(hex(t)).append(' ').append(String.format("%.1f%%", f * 100));
+            sb.append(", ").append(hex(t)).append(' ').append(String.format(Locale.ROOT, "%.1f%%", f * 100));
         }
         sb.append(')');
         return sb.toString();

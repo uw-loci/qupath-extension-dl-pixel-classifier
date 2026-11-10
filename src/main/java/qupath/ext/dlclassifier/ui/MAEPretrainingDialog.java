@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -167,7 +168,7 @@ public class MAEPretrainingDialog {
         lrFactory.setConverter(new javafx.util.StringConverter<>() {
             @Override
             public String toString(Double value) {
-                return value == null ? "" : String.format("%.5f", value);
+                return value == null ? "" : String.format(Locale.ROOT, "%.5f", value);
             }
 
             @Override
@@ -933,7 +934,7 @@ public class MAEPretrainingDialog {
         try (var stream = Files.walk(imageDir)) {
             count = (int) stream.filter(Files::isRegularFile)
                     .filter(p -> {
-                        String name = p.getFileName().toString().toLowerCase();
+                        String name = p.getFileName().toString().toLowerCase(Locale.ROOT);
                         return IMAGE_EXTENSIONS.stream().anyMatch(name::endsWith);
                     })
                     .count();

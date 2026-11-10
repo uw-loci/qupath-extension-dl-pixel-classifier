@@ -6,6 +6,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 import org.apposed.appose.Appose;
@@ -575,7 +576,7 @@ public class ApposeService {
                     // tiles requested simultaneously). QuPath re-requests the tile on
                     // the next repaint, so this is harmless -- log at WARN, not ERROR.
                     String error = task.error != null ? task.error : "";
-                    if (error.toLowerCase().contains("thread death")) {
+                    if (error.toLowerCase(Locale.ROOT).contains("thread death")) {
                         logger.warn(
                                 "Appose task '{}' transient failure (will retry on repaint): {}", scriptName, error);
                     } else {
@@ -870,7 +871,7 @@ public class ApposeService {
                     return; // worker is responsive
                 }
                 String err = t.error == null ? "" : t.error;
-                if (err.toLowerCase().contains("thread death") && attempt == 0) {
+                if (err.toLowerCase(Locale.ROOT).contains("thread death") && attempt == 0) {
                     logger.warn("Worker warm-up hit 'thread death' (stale worker); "
                             + "restarting worker and warming up once more.");
                     restartWorker();
@@ -880,7 +881,7 @@ public class ApposeService {
                 return;
             } catch (Exception e) {
                 String msg = e.getMessage() == null ? "" : e.getMessage();
-                if (msg.toLowerCase().contains("thread death") && attempt == 0) {
+                if (msg.toLowerCase(Locale.ROOT).contains("thread death") && attempt == 0) {
                     logger.warn("Worker warm-up hit 'thread death' (stale worker); "
                             + "restarting worker and warming up once more.");
                     try {
@@ -1196,7 +1197,7 @@ public class ApposeService {
     private static String stripOnnxDependencies(String pixiToml) {
         StringBuilder sb = new StringBuilder();
         for (String line : pixiToml.split("\n")) {
-            String trimmed = line.trim().toLowerCase();
+            String trimmed = line.trim().toLowerCase(Locale.ROOT);
             // Skip lines that are ONNX dependency declarations
             if (trimmed.startsWith("onnx ")
                     || trimmed.startsWith("onnx=")

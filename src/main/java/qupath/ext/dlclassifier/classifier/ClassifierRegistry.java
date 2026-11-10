@@ -2,6 +2,7 @@ package qupath.ext.dlclassifier.classifier;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -88,7 +89,7 @@ public final class ClassifierRegistry {
             return;
         }
 
-        String normalizedType = type.toLowerCase().trim();
+        String normalizedType = type.toLowerCase(Locale.ROOT).trim();
         ClassifierHandler existing = HANDLERS.put(normalizedType, handler);
 
         if (existing != null) {
@@ -117,7 +118,7 @@ public final class ClassifierRegistry {
             return Optional.empty();
         }
 
-        String normalizedType = type.toLowerCase().trim();
+        String normalizedType = type.toLowerCase(Locale.ROOT).trim();
         ClassifierHandler handler = HANDLERS.get(normalizedType);
 
         if (handler != null) {
@@ -160,7 +161,7 @@ public final class ClassifierRegistry {
         if (type == null || type.trim().isEmpty()) {
             return false;
         }
-        return HANDLERS.containsKey(type.toLowerCase().trim());
+        return HANDLERS.containsKey(type.toLowerCase(Locale.ROOT).trim());
     }
 
     /**

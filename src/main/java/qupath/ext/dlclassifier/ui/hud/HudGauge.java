@@ -1,5 +1,6 @@
 package qupath.ext.dlclassifier.ui.hud;
 
+import java.util.Locale;
 import javafx.animation.Interpolator;
 import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
@@ -355,7 +356,7 @@ abstract class HudGauge extends Region {
      * @return the title, marked as an upper bound where the reading says so
      */
     static String title(Gauge g, GaugeReading r) {
-        String t = g.title().toUpperCase();
+        String t = g.title().toUpperCase(Locale.ROOT);
         // Total time is the one gauge whose only note is the early-stopping
         // upper bound, and a caveat that lives only in a tooltip is a caveat
         // nobody reads.
@@ -373,7 +374,7 @@ abstract class HudGauge extends Region {
      */
     static String[] endWords(Gauge g) {
         String[] w = words(g);
-        return new String[] {w[1].toUpperCase(), w[0].toUpperCase()};
+        return new String[] {w[1].toUpperCase(Locale.ROOT), w[0].toUpperCase(Locale.ROOT)};
     }
 
     private static String format(double f) {

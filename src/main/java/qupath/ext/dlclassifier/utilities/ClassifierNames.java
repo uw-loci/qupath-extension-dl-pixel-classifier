@@ -1,5 +1,7 @@
 package qupath.ext.dlclassifier.utilities;
 
+import java.util.Locale;
+
 /**
  * What a classifier may be called.
  *
@@ -42,7 +44,7 @@ public final class ClassifierNames {
 
     /** The same name the training workflow uses for the model folder, without its timestamp. */
     public static String toFolderStem(String name) {
-        return name.toLowerCase().replaceAll("[^a-z0-9_-]", "_");
+        return name.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]", "_");
     }
 
     private static String spaced(String chars) {

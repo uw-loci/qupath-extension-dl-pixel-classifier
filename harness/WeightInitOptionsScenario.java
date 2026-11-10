@@ -1,3 +1,4 @@
+import java.util.Locale;
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.Node;
@@ -180,7 +181,7 @@ public final class WeightInitOptionsScenario {
                 return null;
             });
             Thread.sleep(1500);
-            Path png = outDir.resolve("weight-init-" + theme.replace(' ', '-').toLowerCase() + ".png");
+            Path png = outDir.resolve("weight-init-" + theme.replace(' ', '-').toLowerCase(Locale.ROOT) + ".png");
             onFx(() -> {
                 TitledPane p = findTitledPane(root, "Weight Initialization");
                 var img = p.snapshot(null, null);
@@ -188,7 +189,7 @@ public final class WeightInitOptionsScenario {
                 return null;
             });
             System.out.println("[note] wrote " + png);
-            Path whole = outDir.resolve("train-dialog-" + theme.replace(' ', '-').toLowerCase() + ".png");
+            Path whole = outDir.resolve("train-dialog-" + theme.replace(' ', '-').toLowerCase(Locale.ROOT) + ".png");
             onFx(() -> {
                 ScrollPane sp = findScrollPane(root);
                 Node content = sp != null ? sp.getContent() : root;
@@ -198,7 +199,7 @@ public final class WeightInitOptionsScenario {
                 javax.imageio.ImageIO.write(javafx.embed.swing.SwingFXUtils.fromFXImage(img, null), "png", whole.toFile());
                 var head = root.snapshot(null, null);
                 javax.imageio.ImageIO.write(javafx.embed.swing.SwingFXUtils.fromFXImage(head, null), "png",
-                        outDir.resolve("train-window-" + theme.replace(' ', '-').toLowerCase() + ".png").toFile());
+                        outDir.resolve("train-window-" + theme.replace(' ', '-').toLowerCase(Locale.ROOT) + ".png").toFile());
                 return null;
             });
             System.out.println("[note] wrote " + whole);

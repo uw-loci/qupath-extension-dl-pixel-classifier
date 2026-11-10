@@ -103,8 +103,8 @@ public class ChannelSelectionPanel extends VBox {
         searchField.textProperty().addListener((obs, old, text) -> {
             filteredAvailableList.setPredicate(item -> {
                 if (text == null || text.isEmpty()) return true;
-                String lower = text.toLowerCase();
-                return item.name().toLowerCase().contains(lower)
+                String lower = text.toLowerCase(Locale.ROOT);
+                return item.name().toLowerCase(Locale.ROOT).contains(lower)
                         || String.valueOf(item.index()).contains(lower);
             });
         });

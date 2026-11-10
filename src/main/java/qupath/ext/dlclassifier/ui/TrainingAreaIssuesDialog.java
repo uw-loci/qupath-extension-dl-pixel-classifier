@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import javafx.application.Platform;
@@ -742,7 +743,7 @@ public class TrainingAreaIssuesDialog {
     private void updateFilter(String splitValue, double minLoss) {
         filteredRows.setPredicate(row -> {
             if (!"All".equals(splitValue)) {
-                String expected = splitValue.toLowerCase();
+                String expected = splitValue.toLowerCase(Locale.ROOT);
                 if (!row.getSplit().equalsIgnoreCase(expected)) {
                     return false;
                 }

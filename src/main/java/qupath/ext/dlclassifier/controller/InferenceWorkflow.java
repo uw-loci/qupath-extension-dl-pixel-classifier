@@ -11,6 +11,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -839,7 +840,7 @@ public class InferenceWorkflow {
             }
             if (progress != null) {
                 progress.log("Created " + objects.size() + " "
-                        + inferenceConfig.getObjectType().name().toLowerCase()
+                        + inferenceConfig.getObjectType().name().toLowerCase(Locale.ROOT)
                         + " objects from "
                         + processed + " tiles");
             }
@@ -1420,7 +1421,7 @@ public class InferenceWorkflow {
      * classifier, so it works when QuPath sets each image as current.
      */
     private static void addWorkflowStep(ImageData<?> imageData, ClassifierMetadata metadata, InferenceConfig config) {
-        String outputType = config.getOutputType().name().toLowerCase();
+        String outputType = config.getOutputType().name().toLowerCase(Locale.ROOT);
         String script = String.format(
                 "import qupath.ext.dlclassifier.scripting.DLClassifierScripts%n"
                         + "DLClassifierScripts.classifyRegions("
