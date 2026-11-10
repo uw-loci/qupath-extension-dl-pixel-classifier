@@ -11,6 +11,35 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+#: Strategy names the Java side sends (NormalizationStrategy.name() lowered
+#: with Locale.ROOT). Anything else is refused: an unknown name used to fall
+#: through every branch and return the tile unnormalized, without an error.
+KNOWN_STRATEGIES = ("percentile_99", "min_max", "z_score", "fixed_range")
+
+
+def check_strategy(strategy: Any) -> str:
+    """Return ``strategy`` if it is a known normalization name, else raise.
+
+    Args:
+        strategy: the ``normalization.strategy`` value from the input config
+
+    Returns:
+        the same name
+
+    Raises:
+        ValueError: for any name not in ``KNOWN_STRATEGIES``
+    """
+    if strategy in KNOWN_STRATEGIES:
+        return strategy
+    # ascii() keeps the message cp1252-safe and makes a dotless i visible
+    # (a Turkish-locale toLowerCase() turns "percentile_99" into
+    # "percent\u0131le_99").
+    raise ValueError(
+        "Unknown normalization strategy %s; expected one of %s. If the name "
+        "contains \\u0131 (dotless i), the Java side lowered it with a "
+        "Turkish locale." % (ascii(strategy), ", ".join(KNOWN_STRATEGIES))
+    )
+
 
 def normalize(img: np.ndarray, input_config: Dict[str, Any]) -> np.ndarray:
     """Normalize image data using config-specified strategy.
@@ -27,7 +56,7 @@ def normalize(img: np.ndarray, input_config: Dict[str, Any]) -> np.ndarray:
         Normalized image array
     """
     norm_config = input_config.get("normalization", {})
-    strategy = norm_config.get("strategy", "percentile_99")
+    strategy = check_strategy(norm_config.get("strategy", "percentile_99"))
     per_channel = norm_config.get("per_channel", False)
     precomputed = norm_config.get("precomputed", False)
     channel_stats = norm_config.get("channel_stats", None)
@@ -92,6 +121,7 @@ def _stats_usable(channel_stats: List[Dict[str, float]], strategy: str) -> bool:
             # User-specified bounds, not measured from data.
             ok = stats.get("max", 255.0) > stats.get("min", 0.0)
         else:
+            check_strategy(strategy)
             ok = True
         if not ok:
             return False
@@ -239,6 +269,9 @@ def _normalize_with_stats(
         if fixed_max > fixed_min:
             img = (img - fixed_min) / (fixed_max - fixed_min)
 
+    else:
+        check_strategy(strategy)
+
     return img
 
 
@@ -284,6 +317,9 @@ def _normalize_single(
         img = np.clip(img, fixed_min, fixed_max)
         if fixed_max > fixed_min:
             img = (img - fixed_min) / (fixed_max - fixed_min)
+
+    else:
+        check_strategy(strategy)
 
     return img
 
