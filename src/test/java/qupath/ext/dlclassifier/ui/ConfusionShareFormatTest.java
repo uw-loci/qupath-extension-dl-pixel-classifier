@@ -2,6 +2,9 @@ package qupath.ext.dlclassifier.ui;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.Locale;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -14,8 +17,24 @@ import org.junit.jupiter.api.Test;
  * had the same problem one decimal further out, printing "0.0%". A user
  * checking whether their deliberate annotation errors were caught would read
  * either as "not caught".
+ *
+ * <p>The share is display text and follows the user's number format, so these
+ * expectations are written for {@link Locale#US} and the test pins it.
  */
 class ConfusionShareFormatTest {
+
+    private Locale previous;
+
+    @BeforeEach
+    void pinUsLocale() {
+        previous = Locale.getDefault();
+        Locale.setDefault(Locale.US);
+    }
+
+    @AfterEach
+    void restoreLocale() {
+        Locale.setDefault(previous);
+    }
 
     @Test
     void aGenuineZeroReadsAsZero() {
