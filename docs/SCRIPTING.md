@@ -48,11 +48,11 @@ DLClassifierScripts.classifyRegions(classifier, annotations, "objects")
 DLClassifierScripts.classifyRegions(classifier, annotations, "measurements")
 ```
 
-The output type is `"measurements"` (the default) or `"objects"`. `"overlay"` and `"rendered_overlay"` are also accepted, but from a script they create objects exactly like `"objects"` and draw no overlay.
+The output type is `"measurements"` (the default) or `"objects"`. `"overlay"` and `"rendered_overlay"` are also accepted, but from a script they create objects exactly like `"objects"`, draw no overlay, and log a warning saying so. Any other value is treated as `"measurements"`, also with a warning.
 
 MEASUREMENTS adds, to each annotation and for each class, `DL: <class> area (um^2)` and `DL: <class> %`, plus `DL: Total pixels`.
 
-The simple API reads the channels and normalization from the model. It uses the tile size last used in the Apply dialog (`dlclassifier.tileSize`), the `dlclassifier.tileOverlap` preference (64 pixels per side unless changed), the **Use GPU** preference, and fixed defaults for everything else: blend mode GAUSSIAN, min object size 10 um^2, hole filling 5 um^2, boundary smoothing 2.0 um, probability smoothing sigma 2.0. To match an Apply dialog run exactly, use **Copy as Script** from the Apply dialog.
+The simple API reads the channels and normalization from the model. It uses the tile size last used in the Apply dialog (`dlclassifier.tileSize`), the `dlclassifier.tileOverlap` preference (64 pixels per side unless changed), and fixed defaults for everything else: blend mode GAUSSIAN, min object size 10 um^2, hole filling 5 um^2, boundary smoothing 1.0 um, probability smoothing sigma 2.0. A model trained with surrounding context uses its trained tile size and overlap instead. To match an Apply dialog run exactly, use **Copy as Script** from the Apply dialog.
 
 ### Choose channels by name
 
@@ -133,7 +133,6 @@ def inferenceConfig = InferenceConfig.builder()
         .overlap(64)
         .blendMode(InferenceConfig.BlendMode.CENTER_CROP)
         .outputType(InferenceConfig.OutputType.MEASUREMENTS)
-        .useGPU(true)
         .build()
 
 // Channels and normalization from the model, as the Apply dialog does
@@ -238,9 +237,9 @@ description.
 | `.minObjectSize(double)` | double | Min object area in um^2 |
 | `.maxObjectSize(double)` | double | Max object area in um^2 (0 = no limit) |
 | `.holeFilling(double)` | double | Hole filling threshold in um^2 |
-| `.smoothing(double)` | double | Boundary smoothing in micrometers (default 2.0; the Apply dialog's default is 1.0) |
+| `.smoothing(double)` | double | Boundary smoothing in micrometers (default 1.0, as in the Apply dialog) |
 | `.addShapeMeasurements(boolean)` | boolean | Attach circularity and solidity to each object |
-| `.useGPU(boolean)` | boolean | Recorded in the config; inference uses the GPU whenever the environment can |
+| `.useGPU(boolean)` | boolean | Has no effect; kept so scripts from earlier versions still run. Inference uses the GPU whenever the environment has one: choose a CPU or GPU environment with **Utilities > Compute Environment (CPU / GPU)...** |
 | `.useTTA(boolean)` | boolean | Test-time augmentation (each tile run 8 times, flipped and rotated, and averaged) |
 | `.multiPassAveraging(boolean)` | boolean | Run each tile at multiple spatial offsets and average |
 | `.overlaySmoothingSigma(double)` | double | Gaussian sigma for probability-map smoothing, in model pixels (0 = off) |

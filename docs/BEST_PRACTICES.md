@@ -313,10 +313,10 @@ The extension supports four normalization strategies. The choice affects how pix
 
 | Strategy | Best for | Notes |
 |----------|----------|-------|
-| **PERCENTILE_99** (default) | Most images | Clips to 1st/99th percentile, robust to outliers |
-| **MIN_MAX** | Uniform-intensity images | Uses full dynamic range, sensitive to outliers |
-| **Z_SCORE** | Images with consistent intensity distributions | Mean/std normalization, good for fluorescence |
-| **FIXED_RANGE** | When you know the exact intensity range | Specify min/max values explicitly (e.g., 0-4095 for 12-bit) |
+| **Percentile 1-99 (recommended)** (`PERCENTILE_99`, the default) | Most images | Clips to 1st/99th percentile, robust to outliers |
+| **Min to max** (`MIN_MAX`) | Uniform-intensity images | Uses full dynamic range, sensitive to outliers |
+| **Mean and spread (z-score)** (`Z_SCORE`) | Images with consistent intensity distributions | Mean/std normalization, good for fluorescence |
+| **Fixed range** (`FIXED_RANGE`) | When you know the exact intensity range | Specify min/max values explicitly (e.g., 0-4095 for 12-bit) |
 
 **Image-level normalization** (enabled by default) computes statistics once across the entire image, then applies them consistently to every tile. This eliminates input-level tile boundary artifacts. Newly trained models also save training dataset statistics in their metadata for even better consistency across different images.
 

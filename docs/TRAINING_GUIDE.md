@@ -397,7 +397,7 @@ export.
 
 - For RGB brightfield images, channels are auto-configured
 - For fluorescence/spectral images, select and order channels manually
-- Set per-channel normalization strategy: PERCENTILE_99 (recommended), MIN_MAX, Z_SCORE, or FIXED_RANGE
+- Set per-channel normalization strategy: **Percentile 1-99 (recommended)**, **Min to max**, **Mean and spread (z-score)** or **Fixed range**
 - Channel order must match at inference time
 
 ### Annotation Classes

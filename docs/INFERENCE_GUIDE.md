@@ -65,7 +65,7 @@ OBJECTS holds a class map of each annotation's whole bounding box in memory. An 
 | **Min Object Size** | Discard objects smaller than this area (um^2) | 10-100 um^2 |
 | **Max Object Size** | Discard objects larger than this area (um^2); 0 = no limit | 0 (off), or set to drop mis-merged sheets |
 | **Hole Filling** | Fill holes smaller than this area (um^2) | 5-50 um^2 |
-| **Boundary Smoothing** | Simplify jagged boundaries (tolerance in micrometers, um) | 0.5-2.0 um |
+| **Boundary Smoothing (um)** | Simplify jagged boundaries (tolerance in micrometers, um) | 0.5-2.0 um |
 | **Add shape measurements** | Attach circularity and solidity to each object | ON when filtering objects by shape |
 
 ### Touching objects of the same class
@@ -84,12 +84,11 @@ These options are collapsed by default. Expand **PROCESSING OPTIONS** to adjust.
 | **Tile Size** | Auto-set from classifier | Should match training tile size. Range: 64-8192. |
 | **Tile Overlap (%)** | 12.5% | Margin of real image read on each side of a tile. Higher = fewer seams but slower (max 50%). See below. |
 | **Blend Mode** | GAUSSIAN | Every mode keeps only the center of each tile. CENTER_CROP also widens each tile's margin to at least 25% of the tile, which removes rectangular blocks of the wrong class that line up with the tile grid but needs about twice as many tiles at the default overlap. GAUSSIAN, LINEAR and NONE use your overlap as set and give the same result. See [Rectangular blocks of the wrong class](TROUBLESHOOTING.md#rectangular-blocks-of-the-wrong-class-aligned-to-a-grid). |
-| **Use GPU if available** | Yes | Saved with your settings. In this release inference uses the GPU whenever the environment can, whatever this box says. |
 | **Test-Time Augmentation (TTA)** | No | Runs each tile 8 times (flipped and rotated) and averages the answers. About 8x slower; the tooltip estimates 1-3% better quality. Best for final runs. |
 
 ### Tile overlap and context
 
-The overlap sets how many pixels of real image the model sees around each tile's kept center. The overlay and Apply DL Pixel Classifier compute it the same way: your overlap is used as set, limited only so the kept center is at least one pixel wide. The one exception is Blend Mode CENTER_CROP, which raises the margin to 25% of the tile.
+The overlap sets how many pixels of real image the model sees around each tile's kept center. The overlay and Apply DL Pixel Classifier compute it the same way: your overlap is used as set, limited only so the kept center is at least one pixel wide. The one exception is Blend Mode CENTER_CROP, which raises the margin to 25% of the tile. For a model trained with **Surrounding context**, Apply and the overlay use the tile size and overlap it was trained with, whatever is set here (and GAUSSIAN in place of CENTER_CROP), so the model sees detail and context at the scale it learned; the log says when this happens.
 
 The kept center (the stride) is `tileSize - 2 * margin`. For a 512 px tile at the default 12.5%, the margin is 64 px on each side and the stride is 384 px; with CENTER_CROP the margin is 128 px and the stride 256 px.
 
@@ -146,7 +145,7 @@ Applying MEASUREMENTS again replaces the earlier `DL:` measurements of the same 
 
 *Left: input tissue sections. Right: the same sections after applying a trained classifier, with per-class predictions rendered as a color overlay.*
 
-> **Note:** The dialog remembers output type, blend mode, smoothing, tile size, overlap, the GPU box, object type, min and max object size, hole filling, shape measurements and application scope across sessions.
+> **Note:** The dialog remembers output type, blend mode, smoothing, tile size, overlap, object type, min and max object size, hole filling, shape measurements and application scope across sessions.
 
 ## Live Overlay Mode
 

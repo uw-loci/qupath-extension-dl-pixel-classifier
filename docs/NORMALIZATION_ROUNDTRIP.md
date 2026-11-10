@@ -57,9 +57,13 @@ train/inference desync.
    and the Apply dialog through `ChannelConfiguration.withNormalizationOf(metadata)`)
    sets the field from the metadata getter, never from a live UI default.
    `withNormalizationOf` rebuilds the configuration field by field, so a new field
-   not copied there is silently dropped on the Apply dialog path. Known gap: the
-   metadata does not store FIXED_RANGE bounds, so `withNormalizationOf` takes
-   `fixedMin`/`fixedMax` from the dialog's panel, not from the model.
+   not copied there is silently dropped on the Apply dialog path. FIXED_RANGE
+   bounds: training saves them as `normalization.min`/`max` (`buildInputConfig`),
+   `ModelManager` reads them into `ClassifierMetadata.getFixedMin/Max`, and
+   `withNormalizationOf` uses them when present (before 0.9.28 nothing read them
+   back, so the dialog's panel bounds were used). Every model-derived build
+   (overlay, AdaBN, scripting, retrain) now ends in `withNormalizationOf`, so the
+   rule lives in one place.
 6. **Handler build**: the per-architecture handlers
    (`UNetHandler`, `TinyUNetHandler`, `FastPretrainedHandler`, `MuViTHandler`,
    `CustomONNXHandler`) that construct the trained `ClassifierMetadata` copy the

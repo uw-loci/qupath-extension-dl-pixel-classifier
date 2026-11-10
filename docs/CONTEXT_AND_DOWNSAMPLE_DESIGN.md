@@ -185,6 +185,11 @@ Ranked by expected impact (to be confirmed with the Phase 0 harness, `tools/diag
    byte-identical input these can differ (ONNX export, static-shape handling, BatchNorm/BatchRenorm).
 3. **Geometry mismatch (Section 4).** Detail/context relative scale diverges, but **only when
    `inputPadding != contextInferencePad`** (smaller overlaps). Not present in the recommended config.
+   *Addressed in 0.9.28:* `InferenceConfig.withTrainedContextGeometry` gives a context model its
+   trained tile size and overlap (from `training_settings.overlap`), and GAUSSIAN in place of
+   CENTER_CROP, before `DLPixelClassifier` computes `inputPadding`, so the inference input equals
+   the trained `tileSize + 2*contextPadding` whatever the Apply dialog or overlay asked for.
+   Models saved without `training_settings.overlap` keep the old behavior.
 4. **Normalization of the 2C array.** Confirm `normalize_image` applies the intended per-channel
    statistics to the doubled channel set identically on both sides (the same `input_config`).
 5. **Displayed-vs-cropped maps.** Preview displays full padded maps (with a center-crop reminder)
